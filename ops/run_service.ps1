@@ -7,5 +7,19 @@ if (Test-Path $envFile) {
 }
 
 Set-Location $projectRoot
-$pythonExe = (Get-Command python).Source
+
+if (-not $env:PYTHONIOENCODING) {
+  $env:PYTHONIOENCODING = "utf-8"
+}
+if (-not $env:APP_PORT) {
+  $env:APP_PORT = "5001"
+}
+
+$venvPython = Join-Path $projectRoot ".venv\Scripts\python.exe"
+if (Test-Path $venvPython) {
+  $pythonExe = $venvPython
+} else {
+  $pythonExe = (Get-Command python -ErrorAction Stop).Source
+}
+
 & $pythonExe "app.py"
