@@ -6,7 +6,7 @@ if (Test-Path $envFile) {
   . $envFile
 }
 
-$baseUrl = if ($env:KEEPALIVE_BASE_URL) { $env:KEEPALIVE_BASE_URL } else { "http://127.0.0.1:5000" }
+$baseUrl = if ($env:KEEPALIVE_BASE_URL) { $env:KEEPALIVE_BASE_URL } else { "http://127.0.0.1:5001" }
 $name = if ($env:KEEPALIVE_TEST_NAME) { $env:KEEPALIVE_TEST_NAME } else { "testplayer#12345" }
 $region = if ($env:KEEPALIVE_TEST_REGION) { $env:KEEPALIVE_TEST_REGION } else { "HN1" }
 
@@ -74,3 +74,4 @@ try {
   Write-Log "exception: $detail"
   exit 1
 }
+
