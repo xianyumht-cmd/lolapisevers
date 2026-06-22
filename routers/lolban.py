@@ -20,7 +20,8 @@ TIMEOUT = float(os.getenv("LOL_BAN_TIMEOUT", "10"))
 NORMAL_CACHE_SECONDS = int(os.getenv("LOL_BAN_NORMAL_CACHE_SECONDS", "60"))
 BANNED_CACHE_SECONDS = int(os.getenv("LOL_BAN_BANNED_CACHE_SECONDS", "300"))
 
-_cache = TTLCache(ttl_seconds=BANNED_CACHE_SECONDS)
+_normal_cache = TTLCache(ttl_seconds=NORMAL_CACHE_SECONDS)
+_banned_cache = TTLCache(ttl_seconds=BANNED_CACHE_SECONDS)
 
 _HEADERS = {
     "accept": "application/json, text/javascript, */*; q=0.01",
@@ -31,9 +32,9 @@ _HEADERS = {
     "referer": "https://lol2099.top/",
 }
 
-_DANGEROUS_WORDS = (
+_UNSAFE_MESSAGE_WORDS = (
     "官网", "联系qq", "联系QQ", "请访问", "www.", "http://", "https://",
-    ".top", ".com", ".cn", "客服", "加q", "加Q", "充值", "购买", "广告",
+    "客服", "加q", "加Q", "充值", "购买", "广告",
 )
 
 
@@ -41,14 +42,17 @@ def _valid_qq(value: str) -> bool:
     return bool(re.fullmatch(r"\d{5,11}", str(value or "").strip()))
 
 
+def _message_is_unsafe(message: str) -> bool:
+    return any(word in message for word in _UNSAFE_MESSAGE_WORDS)
+
+
 def _clean_payload(qq: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    raw_text = json.dumps(payload, ensure_ascii=False)
-    if any(word in raw_text for word in _DANGEROUS_WORDS):
-        raise RuntimeError("upstream unsafe text blocked")
+    msg = str(payload.get("msg") or "").strip()
+    if _message_is_unsafe(msg):
+        raise RuntimeError("upstream unsafe message blocked")
 
     data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
     status = str(data.get("status") or "").strip()
-    msg = str(payload.get("msg") or "").strip()
     if status not in {"正常", "封禁"}:
         if "正常" in msg:
             status = "正常"
@@ -102,23 +106,26 @@ def _query_upstream(qq: str) -> Dict[str, Any]:
     return _clean_payload(qq, payload)
 
 
-def _cache_seconds(payload: Dict[str, Any]) -> int:
+def _select_cache(payload: Dict[str, Any]) -> Tuple[TTLCache, int]:
     data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
-    return BANNED_CACHE_SECONDS if data.get("status") == "封禁" else NORMAL_CACHE_SECONDS
+    if data.get("status") == "封禁":
+        return _banned_cache, BANNED_CACHE_SECONDS
+    return _normal_cache, NORMAL_CACHE_SECONDS
 
 
 async def _get_result(qq: str) -> Tuple[Dict[str, Any], str, int]:
     key = f"lolban:{qq}"
-    cached, ttl = _cache.get_with_remaining_ttl(key)
-    if isinstance(cached, dict):
-        result = dict(cached)
-        result["source"] = "cache"
-        result["cache_expires_in"] = ttl
-        return result, "cache", ttl
+    for cache in (_normal_cache, _banned_cache):
+        cached, ttl = cache.get_with_remaining_ttl(key)
+        if isinstance(cached, dict):
+            result = dict(cached)
+            result["source"] = "cache"
+            result["cache_expires_in"] = ttl
+            return result, "cache", ttl
+
     result = await asyncio.to_thread(_query_upstream, qq)
-    ttl = _cache_seconds(result)
-    if ttl > 0:
-        _cache.set(key, result)
+    cache, ttl = _select_cache(result)
+    cache.set(key, result)
     result = dict(result)
     result["source"] = "live"
     result["cache_expires_in"] = ttl
