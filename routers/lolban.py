@@ -1,0 +1,155 @@
+import asyncio
+import json
+import logging
+import os
+import re
+from typing import Any, Dict, Tuple
+
+import requests
+from fastapi import APIRouter, Query
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
+
+from cache import TTLCache
+
+
+router = APIRouter()
+logger = logging.getLogger("LOLDataSystem")
+
+UPSTREAM_URL = os.getenv("LOL_BAN_UPSTREAM_URL", "https://lol2099.top/").strip()
+TIMEOUT = float(os.getenv("LOL_BAN_TIMEOUT", "10"))
+NORMAL_CACHE_SECONDS = int(os.getenv("LOL_BAN_NORMAL_CACHE_SECONDS", "60"))
+BANNED_CACHE_SECONDS = int(os.getenv("LOL_BAN_BANNED_CACHE_SECONDS", "300"))
+
+_cache = TTLCache(ttl_seconds=BANNED_CACHE_SECONDS)
+
+_HEADERS = {
+    "accept": "application/json, text/javascript, */*; q=0.01",
+    "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+    "x-requested-with": "XMLHttpRequest",
+    "origin": "https://lol2099.top",
+    "referer": "https://lol2099.top/",
+}
+
+_DANGEROUS_WORDS = (
+    "官网", "联系qq", "联系QQ", "请访问", "www.", "http://", "https://",
+    ".top", ".com", ".cn", "客服", "加q", "加Q", "充值", "购买", "广告",
+)
+
+
+def _valid_qq(value: str) -> bool:
+    return bool(re.fullmatch(r"\d{5,11}", str(value or "").strip()))
+
+
+def _clean_payload(qq: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    raw_text = json.dumps(payload, ensure_ascii=False)
+    if any(word in raw_text for word in _DANGEROUS_WORDS):
+        raise RuntimeError("upstream unsafe text blocked")
+
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    status = str(data.get("status") or "").strip()
+    msg = str(payload.get("msg") or "").strip()
+    if status not in {"正常", "封禁"}:
+        if "正常" in msg:
+            status = "正常"
+        elif "封禁" in msg:
+            status = "封禁"
+    if status not in {"正常", "封禁"}:
+        raise RuntimeError("upstream status unknown")
+
+    safe_msg = "此账号状态正常" if status == "正常" else "此账号已被封禁"
+    return {
+        "code": 200,
+        "by": str(payload.get("by") or "q.lolmap.cn"),
+        "msg": safe_msg,
+        "data": {
+            "qq": str(data.get("qq") or qq).strip(),
+            "ban_time": str(data.get("ban_time") or "").strip(),
+            "end_time": str(data.get("end_time") or ("账号状态正常" if status == "正常" else "")).strip(),
+            "status": status,
+        },
+    }
+
+
+def _format_text(payload: Dict[str, Any]) -> str:
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    status = str(data.get("status") or "未知")
+    lines = ["账号封禁查询结果", str(payload.get("msg") or "查询完成"), ""]
+    lines.append(f"QQ号码：{data.get('qq') or '-'}")
+    lines.append(f"账号状态：{status}")
+    if status == "正常":
+        lines.append(f"解封时间：{data.get('end_time') or '账号状态正常'}")
+    elif status == "封禁":
+        if data.get("ban_time"):
+            lines.append(f"封禁时间：{data.get('ban_time')}")
+        if data.get("end_time"):
+            lines.append(f"剩余时间：{data.get('end_time')}")
+    return "\n".join(lines).strip()
+
+
+def _query_upstream(qq: str) -> Dict[str, Any]:
+    response = requests.post(
+        UPSTREAM_URL,
+        headers=_HEADERS,
+        data={"action": "query_lol", "qq": qq},
+        timeout=TIMEOUT,
+    )
+    response.raise_for_status()
+    text = response.content.decode("utf-8", errors="replace").strip().lstrip("\ufeff")
+    payload = json.loads(text)
+    if not isinstance(payload, dict):
+        raise RuntimeError("upstream payload is not object")
+    return _clean_payload(qq, payload)
+
+
+def _cache_seconds(payload: Dict[str, Any]) -> int:
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    return BANNED_CACHE_SECONDS if data.get("status") == "封禁" else NORMAL_CACHE_SECONDS
+
+
+async def _get_result(qq: str) -> Tuple[Dict[str, Any], str, int]:
+    key = f"lolban:{qq}"
+    cached, ttl = _cache.get_with_remaining_ttl(key)
+    if isinstance(cached, dict):
+        result = dict(cached)
+        result["source"] = "cache"
+        result["cache_expires_in"] = ttl
+        return result, "cache", ttl
+    result = await asyncio.to_thread(_query_upstream, qq)
+    ttl = _cache_seconds(result)
+    if ttl > 0:
+        _cache.set(key, result)
+    result = dict(result)
+    result["source"] = "live"
+    result["cache_expires_in"] = ttl
+    return result, "live", ttl
+
+
+def _error(message: str, output: str, status_code: int = 400) -> Response:
+    if output == "json":
+        return JSONResponse(status_code=status_code, content={"code": status_code, "msg": message, "data": {}})
+    return PlainTextResponse(message, status_code=status_code, media_type="text/plain; charset=utf-8")
+
+
+def _response(payload: Dict[str, Any], output: str) -> Response:
+    if output == "json":
+        return JSONResponse(content=payload)
+    return PlainTextResponse(_format_text(payload), media_type="text/plain; charset=utf-8")
+
+
+@router.get("/api/v2/lolban")
+@router.get("/lolban")
+async def lolban(qq: str = Query(..., description="QQ号码"), output: str = Query("text", description="text or json")):
+    qq = str(qq or "").strip()
+    output = (output or "text").strip().lower()
+    if output not in {"text", "json"}:
+        output = "text"
+    if not _valid_qq(qq):
+        return _error("请输入有效的QQ号（5-11位数字）", output, 400)
+    try:
+        payload, source, _ = await _get_result(qq)
+        logger.info("lolban query qq=%s status=%s source=%s", qq, payload.get("data", {}).get("status"), source)
+        return _response(payload, output)
+    except Exception as exc:
+        logger.warning("lolban query failed qq=%s error=%s", qq, exc)
+        return _error("查询失败：接口繁忙，请稍后再试", output, 503)
