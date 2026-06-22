@@ -7,6 +7,7 @@ import legacy_app
 from core.config import load_config
 from core.context import create_app_context
 from core.lifespan import lifespan
+from routers.aram_augments import router as aram_augments_router
 from routers.cross_query import router as cross_query_router
 from routers.cross_session import router as cross_session_router
 from routers.health import router as health_router
@@ -31,7 +32,7 @@ class DisabledCollector:
 
 
 def _remove_legacy_routes(app: FastAPI) -> None:
-    removed_paths = {"/query", "/hidden_query", "/health", "/cross_session_init", "/cross_query", "/shard_query"}
+    removed_paths = {"/query", "/hidden_query", "/health", "/cross_session_init", "/cross_query", "/shard_query", "/aram_augments"}
     app.router.routes = [route for route in app.router.routes if getattr(route, "path", "") not in removed_paths]
 
 
@@ -59,9 +60,10 @@ def build_app() -> FastAPI:
     app.include_router(cross_session_router)
     app.include_router(cross_query_router)
     app.include_router(shard_query_router)
+    app.include_router(aram_augments_router)
     app.include_router(lolban_router)
 
-    logger.info("API routers mounted; legacy health/session/cross/shard and deprecated LCU routes removed")
+    logger.info("API routers mounted; legacy health/session/cross/shard/aram and deprecated LCU routes removed")
     return app
 
 
