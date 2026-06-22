@@ -193,6 +193,21 @@ class So1Client:
                 try:
                     context = await self._new_context()
                     page = await context.new_page()
+                    await page.goto("https://lolso1.com/", wait_until="domcontentloaded", timeout=60000)
+                    await page.wait_for_selector("input", state="visible", timeout=30000)
+                    await self._validate_page_state(page)
+                    await self._login(page)
+                    if region_name:
+                        await page.evaluate("(region) => window.localStorage.setItem('default-area', region)", region_name)
+
+                    try:
+                        raw = await self._query_summoner_via_signed_api(page, summoner_name)
+                        await context.storage_state(path=self._state_path)
+                        return raw
+                    except So1ClientError as exc:
+                        self.logger.info("signed api query unavailable, falling back to page search: %s", exc)
+                        last_error = str(exc)
+
                     responses: Dict[str, Dict[str, Any]] = {}
                     response_tasks = []
 
@@ -204,13 +219,6 @@ class So1Client:
                         response_tasks.append(asyncio.create_task(self._parse_and_store_response(response, responses)))
 
                     page.on("response", handle_response)
-
-                    await page.goto("https://lolso1.com/", wait_until="domcontentloaded", timeout=60000)
-                    await page.wait_for_selector("input", state="visible", timeout=30000)
-                    await self._validate_page_state(page)
-                    await self._login(page)
-                    if region_name:
-                        await page.evaluate("(region) => window.localStorage.setItem('default-area', region)", region_name)
 
                     inputs = page.locator("input")
                     input_count = await inputs.count()
@@ -260,6 +268,141 @@ class So1Client:
                         except Exception:
                             pass
             raise So1ClientError(f"so1 query failed after retries: {last_error or 'unknown error'}")
+
+    async def _query_summoner_via_signed_api(self, page: Page, summoner_name: str) -> Dict[str, Any]:
+        game_name, tag_line = self._split_riot_id(summoner_name)
+        if not game_name or not tag_line:
+            raise So1ClientError("signed api requires Riot ID format: name#tag")
+
+        payload = await page.evaluate(
+            """async ({gameName, tagLine}) => {
+                const API_BASE_URL = 'https://r1.lolso1.com'
+                const SIGN_KEY = 'bnGke6jCHJLKvPt9N4DRhMCLCj9TVYG9'
+                const encoder = new TextEncoder()
+
+                const hex = (bytes) => [...new Uint8Array(bytes)]
+                    .map((byte) => byte.toString(16).padStart(2, '0'))
+                    .join('')
+
+                const stableStringify = (value) => {
+                    if (value == null) return ''
+                    if (value instanceof Date) return JSON.stringify(value.toISOString())
+                    if (Array.isArray(value)) {
+                        return `[${value.map((item) => stableStringify(item) || 'null').join(',')}]`
+                    }
+                    if (typeof value === 'object') {
+                        return `{${Object.keys(value)
+                            .sort()
+                            .filter((key) => value[key] !== undefined)
+                            .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key]) || 'null'}`)
+                            .join(',')}}`
+                    }
+                    return JSON.stringify(value)
+                }
+
+                const sha256 = async (text) => {
+                    const digest = await crypto.subtle.digest('SHA-256', encoder.encode(text))
+                    return hex(digest)
+                }
+
+                const hmacSha256 = async (key, text) => {
+                    const cryptoKey = await crypto.subtle.importKey(
+                        'raw',
+                        encoder.encode(key),
+                        {name: 'HMAC', hash: 'SHA-256'},
+                        false,
+                        ['sign']
+                    )
+                    const signature = await crypto.subtle.sign('HMAC', cryptoKey, encoder.encode(text))
+                    return hex(signature)
+                }
+
+                const nonce = () => {
+                    const bytes = new Uint8Array(16)
+                    crypto.getRandomValues(bytes)
+                    return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+                }
+
+                const signedPost = async (path, body) => {
+                    const bodyText = JSON.stringify(body)
+                    const bodyHash = await sha256(stableStringify(body))
+                    const timestamp = String(Math.floor(Date.now() / 1000))
+                    const requestNonce = nonce()
+                    const signBase = ['v1', 'POST', path, '', bodyHash, timestamp, requestNonce].join('\\n')
+                    const signature = await hmacSha256(SIGN_KEY, signBase)
+                    const response = await fetch(`${API_BASE_URL}${path}`, {
+                        method: 'POST',
+                        credentials: 'include',
+                        cache: 'no-store',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'x-leso-sign-version': 'v1',
+                            'x-leso-timestamp': timestamp,
+                            'x-leso-nonce': requestNonce,
+                            'x-leso-signature': signature
+                        },
+                        body: bodyText
+                    })
+                    const text = await response.text()
+                    let data = null
+                    try {
+                        data = text ? JSON.parse(text) : null
+                    } catch {
+                        data = {message: text}
+                    }
+                    return {ok: response.ok, status: response.status, data}
+                }
+
+                const serverInfo = await signedPost('/league/player/server_info', {gameName, tagLine})
+                const serverData = serverInfo && serverInfo.data && serverInfo.data.data
+                    ? serverInfo.data.data
+                    : null
+                const serverId = serverData && serverData.serverId
+                const puuid = serverData && serverData.puuid
+                if (!serverInfo.ok || !serverId || !puuid) {
+                    return {ok: false, stage: 'server_info', server_info: serverInfo.data, status: serverInfo.status}
+                }
+
+                const [overview, matchAnalysis] = await Promise.all([
+                    signedPost('/league/player/overview', {serverId, puuid}),
+                    signedPost('/league/player/match_analysis', {serverId, puuid, page: 1, size: 15, tag: -1})
+                ])
+                return {
+                    ok: overview.ok && matchAnalysis.ok,
+                    stage: overview.ok && matchAnalysis.ok ? 'done' : 'detail',
+                    server_info: serverInfo.data,
+                    overview: overview.data,
+                    match_analysis: matchAnalysis.data,
+                    statuses: {
+                        server_info: serverInfo.status,
+                        overview: overview.status,
+                        match_analysis: matchAnalysis.status
+                    }
+                }
+            }""",
+            {"gameName": game_name, "tagLine": tag_line},
+        )
+        if not isinstance(payload, dict) or not payload.get("ok"):
+            stage = payload.get("stage") if isinstance(payload, dict) else "unknown"
+            raise So1ClientError(f"signed api query failed at {stage}")
+
+        responses = {
+            "server_info": self._unwrap_new_response(payload.get("server_info")),
+            "overview": self._unwrap_new_response(payload.get("overview")),
+            "match_analysis": self._unwrap_new_response(payload.get("match_analysis")),
+        }
+        raw = self._build_legacy_payload(responses)
+        if not raw[LEGACY_BASIC_URL].get("success"):
+            raise So1ClientError(self._extract_response_error(raw[LEGACY_BASIC_URL]) or "signed api player lookup failed")
+        if not raw[LEGACY_HISTORY_URL].get("success"):
+            raise So1ClientError(self._extract_response_error(raw[LEGACY_HISTORY_URL]) or "signed api match history lookup failed")
+        return raw
+
+    def _split_riot_id(self, summoner_name: str) -> tuple[str, str]:
+        if "#" not in summoner_name:
+            return summoner_name.strip(), ""
+        game_name, tag_line = summoner_name.split("#", 1)
+        return game_name.strip(), tag_line.strip()
 
     async def _parse_and_store_response(self, response, responses_dict):
         try:
@@ -322,7 +465,7 @@ class So1Client:
 
         basic_payload = {"success": bool(base), "data": basic_data if base else None}
         ranked_payload = {"success": True, "data": {"queues": queues}}
-        history_payload = {"success": bool(history), "data": history}
+        history_payload = {"success": bool(match_analysis.get("success")), "data": history}
 
         if not basic_payload["success"]:
             basic_payload["error"] = self._legacy_error(responses.get("server_info"), responses.get("overview"))
