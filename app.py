@@ -1,13 +1,15 @@
 import logging
-import os
-from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 import uvicorn
 
 import legacy_app
+from core.config import load_config
+from core.context import create_app_context
+from core.lifespan import lifespan
+from routers.cross_session import router as cross_session_router
+from routers.health import router as health_router
 from routers.lolban import router as lolban_router
-from so1_client import So1Client
 
 
 class DisabledLCUClient:
@@ -26,24 +28,8 @@ class DisabledCollector:
         raise RuntimeError("LCU query has been removed")
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    logger = logging.getLogger("LOLDataSystem")
-    try:
-        client = app.state.so1_client
-        await client.init_browser()
-    except Exception as exc:
-        logger.error("startup browser init failed: %s", exc)
-    yield
-    try:
-        client = app.state.so1_client
-        await client.close_browser()
-    except Exception as exc:
-        logger.error("shutdown browser close failed: %s", exc)
-
-
-def _remove_deprecated_lcu_routes(app: FastAPI) -> None:
-    removed_paths = {"/query", "/hidden_query"}
+def _remove_legacy_routes(app: FastAPI) -> None:
+    removed_paths = {"/query", "/hidden_query", "/health", "/cross_session_init"}
     app.router.routes = [route for route in app.router.routes if getattr(route, "path", "") not in removed_paths]
 
 
@@ -59,34 +45,27 @@ def build_app() -> FastAPI:
     legacy_app.LCUConnectionError = RuntimeError
 
     app = legacy_app.build_app()
+    config = load_config()
+    app.state.config = config
+    app.state.ctx = create_app_context(config=config, so1_client=getattr(app.state, "so1_client", None))
+    app.state.so1_client = app.state.ctx.so1_client
+    app.state.db_config = config.db_config
+
     app.router.lifespan_context = lifespan
-    _remove_deprecated_lcu_routes(app)
+    _remove_legacy_routes(app)
+    app.include_router(health_router)
+    app.include_router(cross_session_router)
     app.include_router(lolban_router)
 
-    if not hasattr(app.state, "so1_client"):
-        username = os.getenv("SO1_USERNAME", "mengxin1").strip()
-        password = os.getenv("SO1_PASSWORD", "mengxin").strip()
-        app.state.so1_client = So1Client(
-            username=username,
-            password=password,
-            headless=os.getenv("SO1_HEADLESS", "1") != "0",
-            timeout_ms=int(os.getenv("SO1_TIMEOUT_MS", "20000")),
-        )
-    app.state.db_config = {
-        "host": os.getenv("MYSQL_HOST", "127.0.0.1"),
-        "port": int(os.getenv("MYSQL_PORT", "3306")),
-        "user": os.getenv("MYSQL_USER", "root"),
-        "password": os.getenv("MYSQL_PASSWORD", "123456"),
-        "database": os.getenv("MYSQL_DATABASE", "lol_data"),
-    }
-    logger.info("API routers mounted; deprecated LCU routes removed")
+    logger.info("API routers mounted; legacy health/session and deprecated LCU routes removed")
     return app
 
 
 if __name__ == "__main__":
     application = build_app()
+    config = load_config()
     uvicorn.run(
         application,
-        host=os.getenv("APP_HOST", "0.0.0.0"),
-        port=int(os.getenv("APP_PORT", "5001")),
+        host=config.app_host,
+        port=config.app_port,
     )
