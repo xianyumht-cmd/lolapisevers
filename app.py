@@ -3,7 +3,6 @@ import logging
 from fastapi import FastAPI
 import uvicorn
 
-import legacy_app
 from core.config import load_config
 from core.context import create_app_context
 from core.lifespan import lifespan
@@ -15,47 +14,20 @@ from routers.lolban import router as lolban_router
 from routers.shard_query import router as shard_query_router
 
 
-class DisabledLCUClient:
-    def __init__(self, *args, **kwargs):
-        pass
-
-    def get_rank(self, *args, **kwargs):
-        return ""
-
-
-class DisabledCollector:
-    def __init__(self, *args, **kwargs):
-        pass
-
-    def collect_player(self, *args, **kwargs):
-        raise RuntimeError("LCU query has been removed")
-
-
-def _remove_legacy_routes(app: FastAPI) -> None:
-    removed_paths = {"/query", "/hidden_query", "/health", "/cross_session_init", "/cross_query", "/shard_query", "/aram_augments"}
-    app.router.routes = [route for route in app.router.routes if getattr(route, "path", "") not in removed_paths]
-
-
 def build_app() -> FastAPI:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
     )
     logger = logging.getLogger("LOLDataSystem")
-
-    legacy_app.LCUClient = DisabledLCUClient
-    legacy_app.DataCollector = DisabledCollector
-    legacy_app.LCUConnectionError = RuntimeError
-
-    app = legacy_app.build_app()
     config = load_config()
+
+    app = FastAPI(lifespan=lifespan)
     app.state.config = config
-    app.state.ctx = create_app_context(config=config, so1_client=getattr(app.state, "so1_client", None))
+    app.state.ctx = create_app_context(config=config)
     app.state.so1_client = app.state.ctx.so1_client
     app.state.db_config = config.db_config
 
-    app.router.lifespan_context = lifespan
-    _remove_legacy_routes(app)
     app.include_router(health_router)
     app.include_router(cross_session_router)
     app.include_router(cross_query_router)
@@ -63,7 +35,7 @@ def build_app() -> FastAPI:
     app.include_router(aram_augments_router)
     app.include_router(lolban_router)
 
-    logger.info("API routers mounted; legacy health/session/cross/shard/aram and deprecated LCU routes removed")
+    logger.info("API routers mounted without legacy_app dependency")
     return app
 
 
