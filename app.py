@@ -11,6 +11,7 @@ from routers.cross_query import router as cross_query_router
 from routers.cross_session import router as cross_session_router
 from routers.health import router as health_router
 from routers.lolban import router as lolban_router
+from routers.shard_query import router as shard_query_router
 
 
 class DisabledLCUClient:
@@ -30,7 +31,7 @@ class DisabledCollector:
 
 
 def _remove_legacy_routes(app: FastAPI) -> None:
-    removed_paths = {"/query", "/hidden_query", "/health", "/cross_session_init", "/cross_query"}
+    removed_paths = {"/query", "/hidden_query", "/health", "/cross_session_init", "/cross_query", "/shard_query"}
     app.router.routes = [route for route in app.router.routes if getattr(route, "path", "") not in removed_paths]
 
 
@@ -57,9 +58,10 @@ def build_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(cross_session_router)
     app.include_router(cross_query_router)
+    app.include_router(shard_query_router)
     app.include_router(lolban_router)
 
-    logger.info("API routers mounted; legacy health/session/cross and deprecated LCU routes removed")
+    logger.info("API routers mounted; legacy health/session/cross/shard and deprecated LCU routes removed")
     return app
 
 
