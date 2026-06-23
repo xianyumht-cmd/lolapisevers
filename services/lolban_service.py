@@ -68,6 +68,31 @@ def clean_payload(qq: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def apply_compat_payload(payload: Dict[str, Any], compat: str = "") -> Dict[str, Any]:
+    """Return a JSON-compatible copy with optional legacy/NapCat fields.
+
+    The default JSON schema stays clean. When compat=napcat is requested, this
+    adds aliases used by existing bot parsers without changing the text output.
+    """
+    mode = str(compat or "").strip().lower()
+    result = dict(payload)
+    source_data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+    data = dict(source_data)
+    result["data"] = data
+    if mode not in {"napcat", "legacy", "plugin", "bot", "1", "true"}:
+        return result
+
+    status = str(data.get("status") or "").strip()
+    if status == "封禁":
+        end_time = str(data.get("end_time") or "").strip()
+        if end_time:
+            data.setdefault("left_time", f"剩余时间：{end_time}")
+        data.setdefault("banmsg", "账号封禁中")
+    elif status == "正常":
+        data.setdefault("banmsg", "账号状态正常")
+    return result
+
+
 def format_lolban_text(payload: Dict[str, Any]) -> str:
     data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
     status = str(data.get("status") or "未知")
