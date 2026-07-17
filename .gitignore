@@ -13,6 +13,11 @@ fid/
 .so1_token.txt
 .env
 *.log
+ops/*.bak.*
+
+lanzou_update_push_api_server/config.json
+lanzou_update_push_api_server/state.json
+lanzou_update_push_api_server/*.tmp
 
 2.0.0
 26.0.1

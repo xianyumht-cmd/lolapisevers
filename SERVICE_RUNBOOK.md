@@ -171,3 +171,140 @@ cd /d D:\project2\lolapisevers
 3. 将 `app.py` 拆分为 `routers/`、`services/`、`renderers/`、`schemas/`。
 4. 增加更明确的日志编码与日志轮转策略。
 5. 增加自动化健康检查与回滚脚本。
+## Lanzou Update Push API Server
+
+`lanzou_update_push_api_server` is the local Lanzou update monitor. It runs beside the main `lolapisevers` API and sends update events to SnowLuma when watched Lanzou links change.
+
+### Runtime
+
+When `LOLDataSystem` starts through NSSM, it runs:
+
+```text
+LOLDataSystem -> powershell.exe -> ops/run_service.ps1
+```
+
+`ops/run_service.ps1` starts two Python processes:
+
+```text
+1. python -m lanzou_update_push_api_server  -> http://192.168.3.100:6178
+2. python app.py                           -> http://127.0.0.1:5001
+```
+
+The Lanzou monitor is stopped when the parent service script exits.
+
+### Configuration
+
+Local config:
+
+```text
+D:\project2\lolapisevers\lanzou_update_push_api_server\config.json
+```
+
+This file is intentionally ignored by Git. It currently contains the Lanzou links extracted from the website nav page.
+
+Important fields:
+
+```json
+{
+  "scan_interval_seconds": 1800,
+  "scan_batch_size": 1,
+  "scan_batch_pause_seconds": 90,
+  "watchers": [],
+  "notify_targets": []
+}
+```
+
+Meaning:
+
+- `watchers`: Lanzou links to monitor.
+- `scan_interval_seconds`: pause after one full scan cycle.
+- `scan_batch_size`: number of links scanned before pausing during scheduled scans.
+- `scan_batch_pause_seconds`: pause between scheduled scan batches.
+- `notify_targets`: SnowLuma callback targets.
+
+The current production-friendly setting scans one link at a time and waits 90 seconds before the next link, so the nav links are not requested all at once.
+
+### SnowLuma Callback
+
+SnowLuma endpoint:
+
+```text
+http://192.168.3.89:6108/api/lanzou-update/event?token=YOUR_GROUPGUARD_WEBUI_TOKEN
+```
+
+Enable the callback in `config.json` only after the SnowLuma token and target groups/private users are configured:
+
+```json
+{
+  "name": "snowluma",
+  "enabled": true,
+  "url": "http://192.168.3.89:6108/api/lanzou-update/event?token=YOUR_GROUPGUARD_WEBUI_TOKEN",
+  "headers": {
+    "x-groupguard-token": "YOUR_GROUPGUARD_WEBUI_TOKEN"
+  }
+}
+```
+
+SnowLuma side documentation:
+
+```text
+D:\project2\napcatplugin\lengxi_repo\napcat-plugin-groupguard\docs\LANZOU_UPDATE_PUSH.md
+```
+
+### Health Check
+
+Run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "D:\project2\lolapisevers\ops\health_check.ps1"
+```
+
+Expected:
+
+```text
+http://127.0.0.1:5001/health  -> ok
+http://192.168.3.100:6178/health  -> ok
+LOLDataSystem                 -> Running
+```
+
+Manual endpoint checks:
+
+```powershell
+Invoke-RestMethod "http://192.168.3.100:6178/health"
+Invoke-RestMethod "http://192.168.3.100:6178/watchers"
+Invoke-RestMethod "http://192.168.3.100:6178/events"
+```
+
+Manual single-link scan:
+
+```powershell
+Invoke-RestMethod -Method Post "http://192.168.3.100:6178/scan?watcher_id=nav-029-jntm&notify=false"
+```
+
+Avoid running `POST /scan` without `watcher_id` during normal checks because it scans every configured Lanzou link immediately.
+
+### Logs
+
+Main API:
+
+```text
+D:\project2\lolapisevers\logs\service.stdout.log
+D:\project2\lolapisevers\logs\service.stderr.log
+```
+
+Lanzou monitor:
+
+```text
+D:\project2\lolapisevers\logs\lanzou_monitor.stdout.log
+D:\project2\lolapisevers\logs\lanzou_monitor.stderr.log
+```
+
+### Restart
+
+After changing `ops/run_service.ps1` or the monitor config, restart the Windows service:
+
+```powershell
+Restart-Service LOLDataSystem
+```
+
+Then run the health check script above.

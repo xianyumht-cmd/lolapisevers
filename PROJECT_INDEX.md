@@ -87,3 +87,52 @@ powershell -ExecutionPolicy Bypass -File "D:\project2\lolapisevers\ops\health_ch
 3. 不要直接执行破坏性命令，例如 `taskkill`、`net stop`、`nssm remove`、`git reset --hard`、`git push --force`。
 4. 涉及真实账号、密码、token、cookie、登录态文件时，只能让用户打码后提供。
 5. 优先做可回滚、小步提交的修改。
+## Lanzou Update Push API Server
+
+This project now also contains a local Lanzou update monitor:
+
+```text
+D:\project2\lolapisevers\lanzou_update_push_api_server
+```
+
+Purpose:
+
+- Monitor Lanzou links from the website nav page.
+- Store local snapshots in `lanzou_update_push_api_server/state.json`.
+- Detect added, removed, or changed files.
+- POST update events to SnowLuma.
+
+Runtime:
+
+```text
+LOLDataSystem / NSSM
+  -> ops/run_service.ps1
+     -> python -m lanzou_update_push_api_server  (port 6178)
+     -> python app.py                            (port 5001)
+```
+
+Important files:
+
+- `lanzou_update_push_api_server/config.json`: local monitor config, ignored by Git.
+- `lanzou_update_push_api_server/config.example.json`: safe example config.
+- `lanzou_update_push_api_server/README.md`: feature and API usage.
+- `ops/run_service.ps1`: starts both the monitor and the main API.
+- `ops/health_check.ps1`: checks both `5001` and `6178`.
+- `D:\project2\napcatplugin\lengxi_repo\napcat-plugin-groupguard\docs\LANZOU_UPDATE_PUSH.md`: SnowLuma receiver documentation.
+
+Current nav import:
+
+```text
+source: D:\project2\website-main src/pages/nav final data
+Lanzou watchers: 44
+scheduled scan: 1 link per batch, 90 seconds between links
+full cycle rest: 1800 seconds
+```
+
+Routine checks:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "D:\project2\lolapisevers\ops\health_check.ps1"
+Invoke-RestMethod "http://192.168.3.100:6178/health"
+Invoke-RestMethod "http://192.168.3.100:6178/watchers"
+```

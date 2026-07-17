@@ -22,4 +22,37 @@ if (Test-Path $venvPython) {
   $pythonExe = (Get-Command python -ErrorAction Stop).Source
 }
 
-& $pythonExe "app.py"
+$logsDir = Join-Path $projectRoot "logs"
+if (-not (Test-Path $logsDir)) {
+  New-Item -Path $logsDir -ItemType Directory | Out-Null
+}
+
+$lanzouConfig = Join-Path $projectRoot "lanzou_update_push_api_server\config.json"
+$lanzouExample = Join-Path $projectRoot "lanzou_update_push_api_server\config.example.json"
+if ((-not (Test-Path $lanzouConfig)) -and (Test-Path $lanzouExample)) {
+  Copy-Item $lanzouExample $lanzouConfig
+}
+
+$lanzouProcess = $null
+if (Test-Path (Join-Path $projectRoot "lanzou_update_push_api_server\__main__.py")) {
+  $env:LANZOU_MONITOR_CONFIG = $lanzouConfig
+  $lanzouStdout = Join-Path $logsDir "lanzou_monitor.stdout.log"
+  $lanzouStderr = Join-Path $logsDir "lanzou_monitor.stderr.log"
+  $lanzouProcess = Start-Process `
+    -FilePath $pythonExe `
+    -ArgumentList @("-m", "lanzou_update_push_api_server") `
+    -WorkingDirectory $projectRoot `
+    -WindowStyle Hidden `
+    -RedirectStandardOutput $lanzouStdout `
+    -RedirectStandardError $lanzouStderr `
+    -PassThru
+  Write-Output "Started Lanzou monitor PID=$($lanzouProcess.Id)"
+}
+
+try {
+  & $pythonExe "app.py"
+} finally {
+  if ($lanzouProcess -and -not $lanzouProcess.HasExited) {
+    Stop-Process -Id $lanzouProcess.Id -Force -ErrorAction SilentlyContinue
+  }
+}
