@@ -12,15 +12,14 @@ from fastapi.responses import HTMLResponse
 from .admin_api import build_admin_overview
 from .api_debugger import fetch_openapi, invoke_api
 from .config import AppConfig, sanitized_config
+from .config_facade import lanzou_environment_overrides, read_main_config, update_main_config
 from .management import (
     list_logs,
     read_lanzou_config,
     read_log,
-    read_main_config,
     repair_state,
     run_diagnostics,
     update_lanzou_config,
-    update_main_config,
 )
 from .monitor import LanzouMonitorService
 from .state_recovery import recover_state_file
@@ -115,6 +114,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             f"{app.state.main_base_url}/health",
         )
         overview["lanzou"]["baseUrl"] = app.state.lanzou_base_url
+        overview["lanzou"]["environmentOverrides"] = lanzou_environment_overrides()
         return overview
 
     @app.get("/admin/main-config")
@@ -127,7 +127,11 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     @app.get("/admin/lanzou-config")
     async def admin_lanzou_config() -> dict[str, Any]:
-        return {"ok": True, "config": await asyncio.to_thread(read_lanzou_config)}
+        return {
+            "ok": True,
+            "config": await asyncio.to_thread(read_lanzou_config),
+            "environment_overrides": lanzou_environment_overrides(),
+        }
 
     @app.post("/admin/lanzou-config")
     async def admin_save_lanzou_config(patch: dict[str, Any]) -> dict[str, Any]:
@@ -142,6 +146,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             "config": sanitized_config(next_config),
             "backup_path": backup_path,
             "state_recovery": app.state.state_recovery,
+            "environment_overrides": lanzou_environment_overrides(),
         }
 
     @app.get("/admin/openapi/{service_name}")
