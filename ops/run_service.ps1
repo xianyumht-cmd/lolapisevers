@@ -108,7 +108,7 @@ try {
       if ($exitCode -eq 0) {
         $exitCode = 1
       }
-      Write-Error "Main API exited unexpectedly with code $($mainProcess.ExitCode)."
+      Write-Warning "Main API exited unexpectedly with code $($mainProcess.ExitCode)."
       break
     }
 
