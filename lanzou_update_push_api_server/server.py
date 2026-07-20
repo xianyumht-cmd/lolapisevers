@@ -14,10 +14,9 @@ from .api_debugger import fetch_openapi, invoke_api
 from .config import AppConfig, sanitized_config
 from .config_facade import lanzou_environment_overrides, read_main_config, update_main_config
 from .control_extensions import install_control_extensions
+from .log_facade import list_logs, read_log
 from .management import (
-    list_logs,
     read_lanzou_config,
-    read_log,
     repair_state,
     run_diagnostics,
     update_lanzou_config,
@@ -65,7 +64,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     app = FastAPI(
         title="Lanzou Update Push API Server",
-        version="0.3.0",
+        version="0.3.1",
         lifespan=lifespan,
     )
     app.middleware("http")(control_api_guard)
