@@ -24,6 +24,7 @@ from .management import (
 from .monitor import LanzouMonitorService
 from .state_recovery import recover_state_file
 from .ui import render_dashboard_page
+from .ui_control import render_control_dashboard
 
 
 def create_app(config: AppConfig | None = None) -> FastAPI:
@@ -52,10 +53,14 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     async def dashboard() -> str:
-        return render_dashboard_page()
+        return render_control_dashboard()
 
     @app.get("/ui", response_class=HTMLResponse)
     async def dashboard_alias() -> str:
+        return render_control_dashboard()
+
+    @app.get("/legacy-ui", response_class=HTMLResponse)
+    async def legacy_dashboard() -> str:
         return render_dashboard_page()
 
     @app.get("/health")
