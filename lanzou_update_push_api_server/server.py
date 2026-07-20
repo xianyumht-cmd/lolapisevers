@@ -13,6 +13,7 @@ from .admin_api import build_admin_overview
 from .api_debugger import fetch_openapi, invoke_api
 from .config import AppConfig, sanitized_config
 from .config_facade import lanzou_environment_overrides, read_main_config, update_main_config
+from .control_extensions import install_control_extensions
 from .management import (
     list_logs,
     read_lanzou_config,
@@ -22,6 +23,7 @@ from .management import (
     update_lanzou_config,
 )
 from .monitor import LanzouMonitorService
+from .security import control_api_guard
 from .state_recovery import recover_state_file
 from .ui import render_dashboard_page
 from .ui_runtime import render_runtime_dashboard
@@ -63,9 +65,10 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     app = FastAPI(
         title="Lanzou Update Push API Server",
-        version="0.2.0",
+        version="0.3.0",
         lifespan=lifespan,
     )
+    app.middleware("http")(control_api_guard)
     app.state.config = app_config
     app.state.service = service
     app.state.state_recovery = state_recovery
@@ -222,4 +225,5 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     async def notify_test(watcher_id: str | None = None) -> dict[str, Any]:
         return await service.send_test_event(watcher_id)
 
+    install_control_extensions(app, service)
     return app

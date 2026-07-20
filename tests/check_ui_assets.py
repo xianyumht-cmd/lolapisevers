@@ -31,8 +31,15 @@ required_markers = [
     "/admin/openapi/main",
     "/admin/logs",
     "/admin/diagnostics",
+    "/admin/backups",
+    "/admin/audit",
+    "/admin/service/restart",
+    "/security/status",
+    "adminToken",
     "watcherRows",
     "targetRows",
+    "backupRows",
+    "auditRows",
 ]
 missing = [marker for marker in required_markers if marker not in html]
 if missing:
