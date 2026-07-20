@@ -19,6 +19,12 @@ _EXTRA_MAIN_FIELDS: list[dict[str, Any]] = [
         "section": "数据源",
         "type": "text",
     },
+    {
+        "key": "WEBUI_ADMIN_TOKEN",
+        "label": "WebUI 管理令牌",
+        "section": "控制台安全",
+        "type": "secret",
+    },
 ]
 
 _LANZOU_OVERRIDE_KEYS = [
