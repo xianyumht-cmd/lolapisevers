@@ -9,11 +9,13 @@ from fastapi.responses import HTMLResponse
 from .admin_api import build_admin_overview, read_lanzou_config_file, update_lanzou_config_file
 from .config import AppConfig, load_config, sanitized_config
 from .monitor import LanzouMonitorService
+from .state_recovery import recover_state_file
 from .ui import render_dashboard_page
 
 
 def create_app(config: AppConfig | None = None) -> FastAPI:
     app_config = config or load_config()
+    state_recovery = recover_state_file(app_config.state_path)
     service = LanzouMonitorService(app_config)
 
     @asynccontextmanager
@@ -31,6 +33,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     )
     app.state.config = app_config
     app.state.service = service
+    app.state.state_recovery = state_recovery
 
     @app.get("/", response_class=HTMLResponse)
     async def dashboard() -> str:
@@ -42,7 +45,9 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
-        return service.status()
+        status = service.status()
+        status["state_recovery"] = app.state.state_recovery
+        return status
 
     @app.get("/config")
     async def get_config() -> dict[str, Any]:
@@ -50,7 +55,9 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     @app.get("/admin/overview")
     async def admin_overview() -> dict[str, Any]:
-        return build_admin_overview(app.state.config, service.status())
+        status = service.status()
+        status["state_recovery"] = app.state.state_recovery
+        return build_admin_overview(app.state.config, status)
 
     @app.get("/admin/lanzou-config")
     async def admin_lanzou_config() -> dict[str, Any]:
@@ -59,12 +66,15 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     @app.post("/admin/lanzou-config")
     async def admin_save_lanzou_config(patch: dict[str, Any]) -> dict[str, Any]:
         next_config = update_lanzou_config_file(patch)
+        if service.store.path != next_config.state_path:
+            app.state.state_recovery = recover_state_file(next_config.state_path)
         service.reload_config(next_config)
         app.state.config = next_config
         return {
             "ok": True,
             "message": "蓝奏监控配置已保存并刷新运行时配置。",
             "config": sanitized_config(next_config),
+            "state_recovery": app.state.state_recovery,
         }
 
     @app.get("/watchers")
