@@ -1,9 +1,9 @@
 from pathlib import Path
 
-from lanzou_update_push_api_server.ui_control import render_control_dashboard
+from lanzou_update_push_api_server.server import _control_page
 
 
-html = render_control_dashboard()
+html = _control_page()
 start_marker = "<script>"
 end_marker = "</script>"
 start = html.rfind(start_marker)
