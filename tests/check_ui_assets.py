@@ -40,6 +40,14 @@ required_markers = [
     "targetRows",
     "backupRows",
     "auditRows",
+    "addWatcherButton",
+    "addTargetButton",
+    "S.watchers.unshift",
+    "S.targets.unshift",
+    "scrollIntoView",
+    "addEventListener('click',addWatcher)",
+    "addEventListener('click',addTarget)",
+    "请填写后点击“保存监控项”",
 ]
 missing = [marker for marker in required_markers if marker not in html]
 if missing:
