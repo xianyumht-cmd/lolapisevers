@@ -27,6 +27,14 @@ from .ui import render_dashboard_page
 from .ui_control import render_control_dashboard
 
 
+def _control_page() -> str:
+    return render_control_dashboard().replace(
+        "<title>lolapisevers 全功能控制台</title>",
+        "<title>lolapisevers 接口端总控台 · 全功能控制台</title>",
+        1,
+    )
+
+
 def create_app(config: AppConfig | None = None) -> FastAPI:
     from .config import load_config
 
@@ -53,11 +61,11 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     async def dashboard() -> str:
-        return render_control_dashboard()
+        return _control_page()
 
     @app.get("/ui", response_class=HTMLResponse)
     async def dashboard_alias() -> str:
-        return render_control_dashboard()
+        return _control_page()
 
     @app.get("/legacy-ui", response_class=HTMLResponse)
     async def legacy_dashboard() -> str:
