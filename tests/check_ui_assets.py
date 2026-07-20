@@ -1,9 +1,18 @@
 from pathlib import Path
+import sys
+import traceback
 
 from lanzou_update_push_api_server.server import _control_page
 
 
-html = _control_page()
+try:
+    html = _control_page()
+except Exception:
+    details = traceback.format_exc()
+    Path("ui-generation-error.txt").write_text(details, encoding="utf-8")
+    print(details, file=sys.stderr)
+    raise
+
 start_marker = "<script>"
 end_marker = "</script>"
 start = html.rfind(start_marker)
