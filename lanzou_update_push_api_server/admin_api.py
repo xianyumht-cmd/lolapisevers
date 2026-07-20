@@ -13,7 +13,7 @@ from .config import AppConfig, DEFAULT_CONFIG_PATH, load_config, sanitized_confi
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-APP_ENV_PATH = PROJECT_ROOT / "ops" / "app_env.ps1"
+APP_ENV_PATH = PROJECT_ROOT / "ops" / "app_env.local.ps1"
 
 
 FUNCTIONS = [

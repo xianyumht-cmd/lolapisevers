@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -141,7 +142,7 @@ async def query_aram_augments(ctx: AppContext, *, hero: str) -> Dict[str, Any]:
         cache_hit["source"] = "cache"
         cache_hit["cache_expires_in"] = cache_ttl
         return cache_hit
-    payload = build_aram_augment_payload(ctx, hero)
+    payload = await asyncio.to_thread(build_aram_augment_payload, ctx, hero)
     ctx.aram_augment_cache.set(cache_key, payload)
     return payload
 

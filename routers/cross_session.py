@@ -10,7 +10,10 @@ logger = logging.getLogger("LOLDataSystem")
 
 
 @router.post("/cross_session_init")
-async def cross_session_init(request: Request, wait_seconds: int = Query(180)):
+async def cross_session_init(
+    request: Request,
+    wait_seconds: int = Query(180, ge=10, le=600),
+):
     ctx = getattr(request.app.state, "ctx", None)
     client = getattr(ctx, "so1_client", None) or getattr(request.app.state, "so1_client", None)
     if client is None:

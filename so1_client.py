@@ -38,6 +38,7 @@ class So1Client:
         self._state_path = os.path.join(os.path.dirname(__file__), ".so1_state.json")
         self._token_path = os.path.join(os.path.dirname(__file__), ".so1_token.txt")
         self._browser_lock = asyncio.Lock()
+        self._manual_login_lock = asyncio.Lock()
         self._max_concurrent_pages = max(int(os.getenv("SO1_MAX_CONCURRENT_PAGES", "2")), 1)
         self._query_semaphore = asyncio.Semaphore(self._max_concurrent_pages)
         self._initialized = True
@@ -68,26 +69,32 @@ class So1Client:
         self.logger.info("Chromium browser closed")
 
     async def bootstrap_manual_login(self, wait_seconds: int = 180) -> None:
-        async with async_playwright() as pw:
-            browser = await pw.chromium.launch(headless=False)
-            context: BrowserContext
-            if os.path.exists(self._state_path):
-                context = await browser.new_context(storage_state=self._state_path)
-            else:
-                context = await browser.new_context()
-            page = await context.new_page()
-            await page.goto("https://lolso1.com/login", wait_until="domcontentloaded", timeout=60000)
-            deadline = time.time() + wait_seconds
-            while time.time() < deadline:
-                await page.wait_for_timeout(1000)
-                if await self._is_logged_in(page):
-                    await context.storage_state(path=self._state_path)
-                    await context.close()
-                    await browser.close()
-                    return
-            await context.close()
-            await browser.close()
-            raise So1ClientError("manual login timed out")
+        if self._manual_login_lock.locked():
+            raise So1ClientError("manual login is already in progress")
+        async with self._manual_login_lock:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(headless=False)
+                context: BrowserContext | None = None
+                try:
+                    if os.path.exists(self._state_path):
+                        context = await browser.new_context(storage_state=self._state_path)
+                    else:
+                        context = await browser.new_context()
+                    page = await context.new_page()
+                    await page.goto("https://lolso1.com/login", wait_until="domcontentloaded", timeout=60000)
+                    deadline = time.time() + wait_seconds
+                    while time.time() < deadline:
+                        await page.wait_for_timeout(1000)
+                        if await self._is_logged_in(page):
+                            await context.storage_state(path=self._state_path)
+                            return
+                    raise So1ClientError("manual login timed out")
+                finally:
+                    try:
+                        if context is not None:
+                            await context.close()
+                    finally:
+                        await browser.close()
 
     async def _is_logged_in(self, page: Page) -> bool:
         try:

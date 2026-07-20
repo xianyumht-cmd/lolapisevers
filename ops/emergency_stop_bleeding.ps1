@@ -3,7 +3,7 @@
 $ProjectRoot = "D:\project2\lolapisevers"
 $ServiceName = "LOLDataSystem"
 $KeepaliveFile = Join-Path $ProjectRoot "ops\keepalive.ps1"
-$AppEnvFile = Join-Path $ProjectRoot "ops\app_env.ps1"
+$AppEnvFile = Join-Path $ProjectRoot "ops\app_env.local.ps1"
 $Time = Get-Date -Format "yyyyMMdd-HHmmss"
 
 Write-Host "==== lolapisevers 一键止血开始 ====" -ForegroundColor Cyan
@@ -50,16 +50,16 @@ if (Test-Path $KeepaliveFile) {
     Write-Host "未找到 keepalive.ps1，跳过。" -ForegroundColor DarkYellow
 }
 
-# 5. 如果 app_env.ps1 里也写死了 5000，也改成 5001
+# 5. 如果 app_env.local.ps1 里也写死了 5000，也改成 5001
 if (Test-Path $AppEnvFile) {
     Copy-Item $AppEnvFile "$AppEnvFile.bak.$Time" -Force
     $envContent = Get-Content $AppEnvFile -Raw
     $newEnvContent = $envContent -replace 'http://127\.0\.0\.1:5000', 'http://127.0.0.1:5001'
     if ($newEnvContent -ne $envContent) {
         Set-Content -Path $AppEnvFile -Value $newEnvContent -Encoding UTF8
-        Write-Host "已修复 app_env.ps1 里的 5000，备份：$AppEnvFile.bak.$Time" -ForegroundColor Green
+        Write-Host "已修复 app_env.local.ps1 里的 5000，备份：$AppEnvFile.bak.$Time" -ForegroundColor Green
     } else {
-        Write-Host "app_env.ps1 未发现 5000，跳过。" -ForegroundColor DarkYellow
+        Write-Host "app_env.local.ps1 未发现 5000，跳过。" -ForegroundColor DarkYellow
     }
 }
 

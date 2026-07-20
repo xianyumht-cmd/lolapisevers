@@ -6,18 +6,20 @@
 
 ```text
 服务名：LOLDataSystem
-端口：5001
-健康检查：http://127.0.0.1:5001/health
+主 API：5001（http://127.0.0.1:5001/health）
+蓝奏监控：6178（http://127.0.0.1:6178/health）
 日志目录：D:\project2\lolapisevers\logs
 ```
 
 当前稳定方案：
 
 ```text
-NSSM -> powershell.exe -> ops\run_service.ps1 -> .venv\Scripts\python.exe app.py
+NSSM -> powershell.exe -> ops\run_service.ps1
+  -> .venv\Scripts\python.exe app.py
+  -> .venv\Scripts\python.exe -m lanzou_update_push_api_server
 ```
 
-说明：PowerShell 是启动壳，不代表异常。它负责加载 `ops/app_env.ps1` 和设置默认环境变量。
+说明：PowerShell 是启动壳，不代表异常。它负责加载本机专用的 `ops/app_env.local.ps1` 和设置默认环境变量。
 
 ## 日常检查
 

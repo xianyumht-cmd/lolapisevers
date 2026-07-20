@@ -50,10 +50,10 @@ def load_config() -> AppConfig:
         mysql_host=os.getenv("MYSQL_HOST", "127.0.0.1"),
         mysql_port=int(os.getenv("MYSQL_PORT", "3306")),
         mysql_user=os.getenv("MYSQL_USER", "root"),
-        mysql_password=os.getenv("MYSQL_PASSWORD", "123456"),
+        mysql_password=os.getenv("MYSQL_PASSWORD", ""),
         mysql_database=os.getenv("MYSQL_DATABASE", "lol_data"),
-        so1_username=os.getenv("SO1_USERNAME", "mengxin1").strip(),
-        so1_password=os.getenv("SO1_PASSWORD", "mengxin").strip(),
+        so1_username=os.getenv("SO1_USERNAME", "").strip(),
+        so1_password=os.getenv("SO1_PASSWORD", "").strip(),
         so1_headless=os.getenv("SO1_HEADLESS", "1") != "0",
         so1_timeout_ms=int(os.getenv("SO1_TIMEOUT_MS", "20000")),
     )

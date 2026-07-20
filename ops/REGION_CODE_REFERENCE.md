@@ -47,7 +47,7 @@
 | 联盟四区 | TJ100 |
 | 联盟五区 | TJ101 |
 
-## app_env.ps1 示例
+## app_env.local.ps1 示例
 
 ```powershell
 $env:KEEPALIVE_TEST_NAME = "testplayer#12345"

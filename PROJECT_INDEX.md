@@ -2,43 +2,56 @@
 
 ## 项目定位
 
-`lolapisevers` 是一个 Windows 本地运行的英雄联盟数据接口服务，基于 `FastAPI + MySQL + Playwright + LCU API`。
+`lolapisevers` 是一个 Windows 本地运行的英雄联盟数据接口服务，基于 `FastAPI + MySQL + Playwright`。
 
 它主要提供：
 
-1. 本地 LCU 战绩采集与查询。
-2. so1 站点驱动的跨区查询与快照回退。
-3. 分片、极地大乱斗强化等衍生查询能力。
-4. JSON、pretty、image、svg 等输出形式，供机器人或其他本地服务调用。
+1. so1 站点驱动的跨区查询与 MySQL 快照回退。
+2. 英雄碎片、极地大乱斗强化和 LOL 封禁等查询能力。
+3. JSON、pretty、image、svg 等输出形式，供机器人或其他本地服务调用。
+4. 独立的蓝奏云更新监控与 SnowLuma 通知能力。
 
 ## 核心入口
 
-- `app.py`：FastAPI 主入口，包含应用初始化、路由、输出格式构建和 uvicorn 启动。
+- `app.py`：FastAPI 主入口，负责创建应用、挂载路由和启动 uvicorn。
 - `so1_client.py`：so1 查询客户端，负责浏览器、登录态、页面抓取与解析。
-- `lcu_client.py`：本地 LCU 客户端。
-- `collector.py`：采集逻辑。
+- `core/`：配置、应用上下文与生命周期。
+- `routers/`：当前 HTTP 路由和参数校验。
+- `services/`：查询、上游请求、数据清洗、快照与业务缓存。
+- `renderers/`：PNG/SVG 输出渲染。
 - `db.py`：MySQL 初始化与数据访问。
 - `cache.py`：TTL 缓存。
 - `requirements.txt`：Python 依赖。
 
 ## 运维脚本
 
-- `run_server.bat`：手动启动入口，设置 `APP_PORT=5001` 后运行 `app.py`。
+- `run_server.bat`：手动启动入口，通过 `ops/run_service.ps1` 加载本机配置并启动服务。
 - `start_hidden.vbs`：隐藏窗口启动入口。
-- `ops/run_service.ps1`：Windows 服务启动脚本，会加载 `ops/app_env.ps1`，再启动 Python。
+- `ops/run_service.ps1`：Windows 服务启动脚本，会加载本机专用的 `ops/app_env.local.ps1`，再启动 Python。
 - `ops/install_persistence.ps1`：安装/重装 NSSM 服务和定时保活任务。
 - `ops/keepalive.ps1`：定时保活检测脚本。
 - `ops/health_check.ps1`：只读体检脚本，用于检查服务、端口、健康接口和日志。
-- `ops/app_env.ps1`：本机环境变量配置文件。可能包含账号、密码、路径，不应提交真实敏感值。
+- `ops/app_env.example.ps1`：可提交的安全配置模板，只能保留占位值。
+- `ops/app_env.local.ps1`：由模板复制得到的本机配置，已被 Git 忽略，不应提交真实敏感值。
 
 ## 当前推荐运行方式
 
 推荐让 `LOLDataSystem` Windows 服务作为唯一正式入口运行接口。
 
+首次运行先创建不会提交到 Git 的本机配置：
+
+```powershell
+Copy-Item .\ops\app_env.example.ps1 .\ops\app_env.local.ps1
+```
+
+填写本机值后，通过 `run_server.bat` 或 `ops/run_service.ps1` 启动；直接执行 `python app.py` 不会自动加载该 PowerShell 配置。
+
 目标状态：
 
 ```text
-LOLDataSystem / NSSM -> powershell.exe -> ops/run_service.ps1 -> .venv\Scripts\python.exe app.py
+LOLDataSystem / NSSM -> powershell.exe -> ops/run_service.ps1
+  -> python app.py                            (5001)
+  -> python -m lanzou_update_push_api_server (6178)
 ```
 
 当前服务已经验证可以正常监听：
@@ -47,21 +60,15 @@ LOLDataSystem / NSSM -> powershell.exe -> ops/run_service.ps1 -> .venv\Scripts\p
 http://127.0.0.1:5001/health
 ```
 
-如果后续追求更干净的进程结构，可以再升级为：
-
-```text
-LOLDataSystem / NSSM -> .venv\Scripts\python.exe app.py
-```
-
-但在环境变量没有完全整理前，不建议直接跳过 `ops/run_service.ps1`。
+`ops/run_service.ps1` 同时负责加载本机环境变量和启动两个进程，不应直接绕过。
 
 ## 已知重点风险
 
 1. 不要同时使用 `run_server.bat`、`start_hidden.vbs`、NSSM 服务三套方式启动同一个 `5001` 接口。
 2. 如果 5001 已被一个 Python 占用，服务再次启动会出现 `[Errno 10048]` 端口占用错误。
-3. `ops/app_env.ps1` 可能包含账号密码，不应把真实值提交到仓库。
+3. `ops/app_env.local.ps1` 可能包含账号密码，不应把真实值提交到仓库；`ops/app_env.example.ps1` 只能使用占位值。
 4. `logs/`、`.venv/`、`ms-playwright/`、`.so1_state.json`、`.so1_token.txt` 不应提交。
-5. `app.py` 已经承担较多职责，后续可以拆分为 routers / services / renderers / schemas。
+5. 直接执行 `python app.py` 不会自动加载 `ops/app_env.local.ps1`，应优先使用项目启动脚本。
 
 ## 排查优先级
 

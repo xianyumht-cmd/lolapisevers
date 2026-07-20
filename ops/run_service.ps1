@@ -1,7 +1,7 @@
 $ErrorActionPreference = "Stop"
 
 $projectRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-$envFile = Join-Path $projectRoot "ops\app_env.ps1"
+$envFile = Join-Path $projectRoot "ops\app_env.local.ps1"
 if (Test-Path $envFile) {
   . $envFile
 }

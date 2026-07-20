@@ -86,7 +86,7 @@ function Install-ServiceWithNssm([string]$projectRoot, [string]$serviceName) {
 }
 
 function Ensure-PlaywrightRuntime([string]$projectRoot) {
-  $envFile = Join-Path $projectRoot "ops\app_env.ps1"
+  $envFile = Join-Path $projectRoot "ops\app_env.local.ps1"
   if (Test-Path $envFile) {
     . $envFile
   }
@@ -98,7 +98,13 @@ function Ensure-PlaywrightRuntime([string]$projectRoot) {
   }
   Push-Location $projectRoot
   try {
-    python -m playwright install chromium | Out-Null
+    $venvPython = Join-Path $projectRoot ".venv\Scripts\python.exe"
+    if (Test-Path $venvPython) {
+      $pythonExe = $venvPython
+    } else {
+      $pythonExe = (Get-Command python -ErrorAction Stop).Source
+    }
+    & $pythonExe -m playwright install chromium | Out-Null
     if ($LASTEXITCODE -ne 0) {
       throw "playwright browser install failed"
     }

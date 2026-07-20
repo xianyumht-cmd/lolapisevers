@@ -22,7 +22,12 @@ function Test-Admin {
 function Test-Health {
     try {
         $res = Invoke-RestMethod $HealthUrl -TimeoutSec 8
-        return ($res.status -eq "ok")
+        return (
+            $res.status -eq "ok" -and
+            $res.ready -eq $true -and
+            $res.mysql -eq "up" -and
+            $res.so1_browser -eq "up"
+        )
     } catch {
         return $false
     }

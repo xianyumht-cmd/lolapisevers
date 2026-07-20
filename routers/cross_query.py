@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Optional
 
@@ -33,7 +34,7 @@ async def cross_query(
     try:
         payload = await query_cross(ctx, name=name, region=region_str, output_format=output_format)
         if output_format == "image":
-            return build_cross_image_response(payload)
+            return await asyncio.to_thread(build_cross_image_response, payload)
         if output_format == "svg":
             return build_cross_svg_response(payload)
         return payload

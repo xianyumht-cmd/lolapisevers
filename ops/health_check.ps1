@@ -11,6 +11,8 @@ $StderrLog = Join-Path $LogsDir "service.stderr.log"
 $StdoutLog = Join-Path $LogsDir "service.stdout.log"
 $LanzouStderrLog = Join-Path $LogsDir "lanzou_monitor.stderr.log"
 $LanzouStdoutLog = Join-Path $LogsDir "lanzou_monitor.stdout.log"
+$MainApiReady = $false
+$LanzouHealthy = $false
 
 Write-Host "==== lolapisevers health check ====" -ForegroundColor Cyan
 
@@ -22,6 +24,17 @@ Show-Section "HTTP health"
 try {
   $res = Invoke-RestMethod $HealthUrl -TimeoutSec 8
   $res | ConvertTo-Json -Depth 5
+  $MainApiReady = (
+    $res.status -eq "ok" -and
+    $res.ready -eq $true -and
+    $res.mysql -eq "up" -and
+    $res.so1_browser -eq "up"
+  )
+  if ($MainApiReady) {
+    Write-Host "main API readiness: ready" -ForegroundColor Green
+  } else {
+    Write-Host "main API readiness: not ready (the process may still be live)" -ForegroundColor Red
+  }
 } catch {
   Write-Host "health request failed: $($_.Exception.Message)" -ForegroundColor Red
 }
@@ -30,6 +43,12 @@ Show-Section "Lanzou monitor health"
 try {
   $res = Invoke-RestMethod $LanzouHealthUrl -TimeoutSec 8
   $res | ConvertTo-Json -Depth 5
+  $LanzouHealthy = ($res.ok -eq $true -and $res.running -eq $true)
+  if ($LanzouHealthy) {
+    Write-Host "lanzou monitor health: ready" -ForegroundColor Green
+  } else {
+    Write-Host "lanzou monitor health: not ready" -ForegroundColor Red
+  }
 } catch {
   Write-Host "lanzou health request failed: $($_.Exception.Message)" -ForegroundColor Red
 }
@@ -101,4 +120,10 @@ if (Test-Path $LanzouStdoutLog) {
   Write-Host "lanzou stdout log not found: $LanzouStdoutLog"
 }
 
-Write-Host "`n==== health check complete ====" -ForegroundColor Cyan
+if ($MainApiReady -and $LanzouHealthy) {
+  Write-Host "`n==== health check complete: ready ====" -ForegroundColor Cyan
+  exit 0
+}
+
+Write-Host "`n==== health check complete: one or more services are not ready ====" -ForegroundColor Red
+exit 1

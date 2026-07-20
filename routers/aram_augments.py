@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from fastapi import APIRouter, Query, Request
@@ -26,7 +27,7 @@ async def aram_augments(
     try:
         payload = await query_aram_augments(ctx, hero=hero)
         if output_format == "image":
-            return build_aram_augment_image_response(ctx, payload)
+            return await asyncio.to_thread(build_aram_augment_image_response, ctx, payload)
         return payload
     except Exception as exc:
         status_code = getattr(exc, "status_code", 503)

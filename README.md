@@ -1,86 +1,92 @@
 # lolapisevers
 
-一个基于 `FastAPI + MySQL + Playwright + LCU API` 的英雄联盟战绩查询服务。
+`lolapisevers` 是一个在 Windows 本地运行的英雄联盟数据 API 服务，基于 `FastAPI + MySQL + Playwright`。当前主要提供 so1 跨区查询、英雄碎片、极地大乱斗强化符文和 LOL 封禁查询，并可在实时抓取失败时使用 MySQL 快照回退。
 
-项目同时提供两类能力：
-
-1. `LCU` 本地采集与常规查询。
-2. `so1` 站点驱动的跨区查询与快照回退。
+仓库还包含一个独立的蓝奏云更新监控服务，默认运行在 `6178` 端口。详细配置见 `lanzou_update_push_api_server/README.md`。
 
 ## 环境要求
 
 - Python 3.10+
 - Windows
 - MySQL 8+
-- 已安装 Playwright Chromium
-- 如需 `LCU` 采集：本机需运行并登录 `LeagueClientUx.exe`
+- Playwright Chromium
 
-## 安装依赖
+## 安装
 
-```bash
-pip install -r requirements.txt
-playwright install chromium
+在项目目录打开 PowerShell：
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+$env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $PWD "ms-playwright"
+.\.venv\Scripts\python.exe -m playwright install chromium
 ```
 
-## 环境变量
+使用虚拟环境里的 Python 安装 Chromium，可避免浏览器被装到错误的 Python 环境。
 
-### MySQL
+## 本机配置
 
-```bash
-set MYSQL_HOST=127.0.0.1
-set MYSQL_PORT=3306
-set MYSQL_USER=root
-set MYSQL_PASSWORD=123456
-set MYSQL_DATABASE=lol_data
+先复制安全模板：
+
+```powershell
+Copy-Item .\ops\app_env.example.ps1 .\ops\app_env.local.ps1
 ```
 
-### so1 账号
+然后只在本机编辑 `ops/app_env.local.ps1`。该文件已被 Git 忽略，不要把真实密码、token、cookie 或登录状态提交到仓库。
 
-```bash
-set SO1_USERNAME=mengxin1
-set SO1_PASSWORD=mengxin
-set SO1_HEADLESS=1
-set SO1_TIMEOUT_MS=20000
-set SO1_MAX_CONCURRENT_PAGES=2
-set APP_PORT=5001
+关键配置示例：
+
+```powershell
+# MySQL
+$env:MYSQL_HOST = "127.0.0.1"
+$env:MYSQL_PORT = "3306"
+$env:MYSQL_USER = "CHANGE_ME"
+$env:MYSQL_PASSWORD = "CHANGE_ME"
+$env:MYSQL_DATABASE = "lol_data"
+
+# so1
+$env:SO1_USERNAME = "CHANGE_ME"
+$env:SO1_PASSWORD = "CHANGE_ME"
+$env:SO1_HEADLESS = "1"
+$env:SO1_TIMEOUT_MS = "20000"
+$env:SO1_MAX_CONCURRENT_PAGES = "2"
+
+# API
+$env:APP_HOST = "0.0.0.0"
+$env:APP_PORT = "5001"
 ```
-
-说明：
-
-- `SO1_HEADLESS=1` 表示后台无头运行。
-- `SO1_MAX_CONCURRENT_PAGES` 用于限制并发页面数，建议从 `2` 或 `3` 起步。
-- `APP_PORT` 用于指定监听端口，默认 `5001`。
 
 ## 启动服务
 
-```bash
-python app.py
+推荐使用统一启动入口，它会先加载 `ops/app_env.local.ps1`，再启动主 API 和蓝奏云监控：
+
+```powershell
+.\run_server.bat
 ```
 
-默认监听：
+也可以直接运行服务脚本：
 
-- `http://127.0.0.1:5001`
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\ops\run_service.ps1
+```
 
-后台静默启动：
+需要隐藏窗口时可双击 `start_hidden.vbs`。正式长期运行建议使用项目已有的 `LOLDataSystem` Windows 服务配置。
 
-- 双击 `start_hidden.vbs`
-- 启动日志会写入 `logs/server.log`
-
-开机自动运行：
-
-- 把 `start_hidden.vbs` 的快捷方式放入 `shell:startup` 打开的启动目录。
+直接执行 `python app.py` 不会自动加载 `ops/app_env.local.ps1`；只有在当前终端已经手动设置好全部环境变量时才应这样启动。
 
 ## 健康检查
 
-```bash
-curl "http://127.0.0.1:5001/health"
+```powershell
+Invoke-RestMethod "http://127.0.0.1:5001/health"
 ```
 
-正常返回示例：
+完全就绪时返回：
 
 ```json
 {
   "status": "ok",
+  "liveness": "up",
+  "ready": true,
   "mysql": "up",
   "mysql_error": "",
   "so1_browser": "up",
@@ -88,135 +94,101 @@ curl "http://127.0.0.1:5001/health"
 }
 ```
 
-## 接口说明
+健康端始终用 HTTP 200 表示 API 进程仍能响应，并通过字段区分状态：
 
-### 1. 常规查询
+- `liveness=up`：API 进程存活，健康端可访问。
+- `ready=true` 且 `status=ok`：MySQL 与 so1 浏览器均可用，可以接管业务流量。
+- `ready=false` 且 `status=degraded`：进程仍存活，但至少一个必要依赖不可用，不应判定为接管成功。
 
-`GET /query?name=召唤师名`
+完整只读诊断：
 
-### 2. 隐藏战绩碎片还原
+```powershell
+powershell -ExecutionPolicy Bypass -File .\ops\health_check.ps1
+```
 
-`GET /hidden_query?name=召唤师名`
+## 当前接口
 
-### 3. 跨区查询
+### 跨区查询
 
-`GET /cross_query?name=召唤师名&region=大区`
+```http
+GET /cross_query?name={召唤师名}&region={大区}&output=pretty|raw|image|svg
+```
 
 示例：
 
-```bash
-curl "http://127.0.0.1:5001/cross_query?name=如初见vzk%2342675&region=艾欧尼亚"
+```powershell
+Invoke-RestMethod "http://127.0.0.1:5001/cross_query?name=testplayer%2312345&region=HN1&output=pretty"
 ```
 
-### 4. 人工初始化会话
+### 人工初始化 so1 会话
 
-`POST /cross_session_init?wait_seconds=180`
-
-说明：
-
-- 当目标站点弹出验证码或自动登录失效时使用。
-- 调用后会打开一个可视浏览器，人工完成登录和验证，程序会自动保存会话。
-
-## 服务不可用时的修复方法
-
-### 1. `/health` 不通
-
-现象：
-
-- 浏览器访问或 curl 请求直接失败。
-
-处理：
-
-```bash
-python app.py
+```http
+POST /cross_session_init?wait_seconds=180
 ```
 
-如果提示端口占用：
+当 so1 出现验证码或自动登录失效时使用。接口会打开可视浏览器，等待人工完成登录和验证，并保存会话。
 
-```bash
-netstat -ano | findstr :5001
-taskkill /F /PID <PID>
-python app.py
+### 英雄碎片查询
+
+```http
+GET /shard_query?hero={英雄名}&output=image|json
 ```
 
-### 2. `mysql=down`
+### 极地大乱斗强化查询
 
-现象：
+```http
+GET /aram_augments?hero={英雄名}&output=image|json
+```
 
-- `/health` 返回 `mysql: down`
-- 查询接口返回 `MySQL不可用`
+### LOL 封禁查询
 
-处理：
+```http
+GET /lolban?qq={QQ号}&output=text|json
+GET /api/v2/lolban?qq={QQ号}&output=text|json
+```
 
-- 确认 MySQL 服务已启动。
-- 检查环境变量中的账号密码和库名。
+FastAPI 自动接口文档：
+
+- `http://127.0.0.1:5001/docs`
+- `http://127.0.0.1:5001/redoc`
+
+## 常见问题
+
+### 健康端无法访问
+
+依次检查服务、端口和日志：
+
+```powershell
+Get-Service LOLDataSystem
+Get-NetTCPConnection -LocalPort 5001 -State Listen
+Get-Content .\logs\service.stderr.log -Tail 80
+```
+
+不要同时通过 `run_server.bat`、`start_hidden.vbs` 和 Windows 服务启动多套 `app.py`，否则会出现端口占用。
+
+### `mysql=down`
+
+- 确认 MySQL 服务已经启动。
+- 检查 `ops/app_env.local.ps1` 中的主机、端口、账号、密码和库名。
 - 确认 `3306` 端口可达。
 
-### 3. `so1_browser=down`
+### `so1_browser=down`
 
-现象：
+- 重启服务并查看 `logs/service.stderr.log`。
+- 确认 Playwright Chromium 安装到了 `PLAYWRIGHT_BROWSERS_PATH` 指向的位置。
+- 必要时重新运行：
 
-- `/health` 返回 `so1_browser: down`
-- `cross_query` 报浏览器已关闭或未初始化
-
-处理：
-
-- 直接重启服务：
-
-```bash
-python app.py
+```powershell
+$env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $PWD "ms-playwright"
+.\.venv\Scripts\python.exe -m playwright install chromium
 ```
 
-- 当前版本已内置浏览器自动重建逻辑；若仍持续失败，多数是系统环境或 Playwright 内核损坏。
-- 可重新执行：
+### `cross_query` 返回 `source=snapshot`
 
-```bash
-playwright install chromium
+这表示实时抓取失败，系统回退到了 MySQL 中最近一次成功快照。先查看返回中的 `fallback_reason` 和服务日志；若是验证码问题，再调用 `/cross_session_init`。
+
+## 测试
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
-
-### 4. `cross_query` 返回 `source=snapshot`
-
-现象：
-
-- 接口还能返回数据，但 `source` 是 `snapshot`
-- `is_stale` 为 `true`
-
-说明：
-
-- 这代表实时抓取失败，系统自动回退到了数据库中的最近一次成功快照。
-- 服务未完全坏掉，但实时链路需要修复。
-
-处理顺序：
-
-1. 先查看 `fallback_reason`
-2. 再检查 `logs` 目录下最新截图和 `logs/server.log`
-3. 若为验证码问题，调用：
-
-```bash
-curl -X POST "http://127.0.0.1:5001/cross_session_init?wait_seconds=180"
-```
-
-4. 若为页面结构变化，需要更新 [so1_client.py](file:///d:/project2/lolapisevers/so1_client.py) 中的登录按钮、输入框或查询触发器选择器。
-
-### 5. 中文输出乱码
-
-现象：
-
-- 终端里中文显示乱码，但接口内容本身正常。
-
-处理：
-
-- 先确认 HTTP 客户端按 UTF-8 解码。
-- PowerShell 调试时可设置：
-
-```bash
-$env:PYTHONIOENCODING="utf-8"
-```
-
-### 6. 并发高时变慢
-
-处理：
-
-- 适当提高 `SO1_MAX_CONCURRENT_PAGES`，但建议小步增加。
-- 如果机器内存不足，不要盲目调大。
-- 生产场景建议优先让高频查询命中缓存，必要时引入账号池和任务队列。

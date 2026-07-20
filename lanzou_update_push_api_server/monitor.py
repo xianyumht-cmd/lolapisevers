@@ -65,13 +65,25 @@ class StateStore:
             return snapshot_from_state(raw)
 
     def set_snapshot(self, snapshot: ShareSnapshot) -> None:
+        self.record_scan_success(snapshot, commit_snapshot=True)
+
+    def record_scan_success(
+        self,
+        snapshot: ShareSnapshot,
+        *,
+        commit_snapshot: bool,
+        notification_pending: bool = False,
+    ) -> None:
         with self.lock:
-            self.data.setdefault("snapshots", {})[snapshot.watcher_id] = snapshot.to_dict()
+            if commit_snapshot:
+                self.data.setdefault("snapshots", {})[snapshot.watcher_id] = snapshot.to_dict()
             self.data.setdefault("last_scan", {})[snapshot.watcher_id] = {
                 "ok": True,
                 "at": utc_now_iso(),
                 "provider": snapshot.provider,
                 "file_count": len(snapshot.files),
+                "snapshot_committed": commit_snapshot,
+                "notification_pending": notification_pending,
             }
             self.save()
 
@@ -103,6 +115,8 @@ class LanzouMonitorService:
         self.provider_chain = ProviderChain(config)
         self._stop_event = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
+        self._watcher_locks: dict[str, threading.Lock] = {}
+        self._watcher_locks_guard = threading.Lock()
 
     def watcher_map(self) -> dict[str, WatcherConfig]:
         return {watcher.id: watcher for watcher in self.config.watchers}
@@ -171,12 +185,20 @@ class LanzouMonitorService:
         return await asyncio.to_thread(self._scan_watcher_sync, watcher, notify)
 
     def _scan_watcher_sync(self, watcher: WatcherConfig, notify: bool) -> dict[str, Any]:
+        with self._lock_for_watcher(watcher.id):
+            return self._scan_watcher_unlocked_sync(watcher, notify)
+
+    def _lock_for_watcher(self, watcher_id: str) -> threading.Lock:
+        with self._watcher_locks_guard:
+            return self._watcher_locks.setdefault(watcher_id, threading.Lock())
+
+    def _scan_watcher_unlocked_sync(self, watcher: WatcherConfig, notify: bool) -> dict[str, Any]:
         started = time.time()
         try:
             current = self.provider_chain.fetch(watcher)
             previous = self.store.snapshot_for(watcher.id)
-            self.store.set_snapshot(current)
             if previous is None:
+                self.store.set_snapshot(current)
                 return {
                     "ok": True,
                     "watcher_id": watcher.id,
@@ -189,11 +211,20 @@ class LanzouMonitorService:
             diff = compare_snapshots(previous, current)
             changed = bool(diff["added"] or diff["removed"] or diff["changed"])
             event = self._build_event(watcher, current, previous, diff) if changed else None
+            snapshot_committed = not changed
+            notification_pending = False
             if event and notify:
                 event["notify_results"] = self._notify_targets(event)
                 self.store.append_event(event)
+                snapshot_committed = all(result.get("ok") is True for result in event["notify_results"])
+                notification_pending = not snapshot_committed
             elif event:
-                self.store.append_event(event)
+                notification_pending = True
+            self.store.record_scan_success(
+                current,
+                commit_snapshot=snapshot_committed,
+                notification_pending=notification_pending,
+            )
             return {
                 "ok": True,
                 "watcher_id": watcher.id,
@@ -203,6 +234,8 @@ class LanzouMonitorService:
                 "provider": current.provider,
                 "diff": diff,
                 "event": event,
+                "snapshot_committed": snapshot_committed,
+                "notification_pending": notification_pending,
                 "elapsed_ms": int((time.time() - started) * 1000),
             }
         except Exception as exc:

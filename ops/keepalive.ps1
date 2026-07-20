@@ -1,7 +1,7 @@
 $ErrorActionPreference = "Stop"
 
 $projectRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-$envFile = Join-Path $projectRoot "ops\app_env.ps1"
+$envFile = Join-Path $projectRoot "ops\app_env.local.ps1"
 if (Test-Path $envFile) {
   . $envFile
 }
@@ -23,8 +23,14 @@ function Write-Log([string]$text) {
 
 try {
   $health = Invoke-RestMethod -Uri "$baseUrl/health" -Method GET -TimeoutSec 8
-  if ($health.status -ne "ok") {
-    Write-Log "health_status_not_ok: $($health | ConvertTo-Json -Compress)"
+  $ready = (
+    $health.status -eq "ok" -and
+    $health.ready -eq $true -and
+    $health.mysql -eq "up" -and
+    $health.so1_browser -eq "up"
+  )
+  if (-not $ready) {
+    Write-Log "health_not_ready: $($health | ConvertTo-Json -Compress)"
     exit 1
   }
 
