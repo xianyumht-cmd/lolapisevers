@@ -35,7 +35,9 @@ jobs:
         id: generate_ui
         continue-on-error: true
         shell: pwsh
-        run: python tests/check_ui_assets.py
+        run: |
+          python tests/check_ui_assets.py 2>&1 | Tee-Object -FilePath ui-generation-output.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Validate WebUI JavaScript
         id: node_check
@@ -55,14 +57,15 @@ jobs:
             ui_control.generated.js
             node-check.txt
             ui-generation-error.txt
-          if-no-files-found: warn
+            ui-generation-output.txt
+          if-no-files-found: error
           retention-days: 3
 
       - name: Fail on WebUI generation error
         if: steps.generate_ui.outcome == 'failure'
         shell: pwsh
         run: |
-          if (Test-Path ui-generation-error.txt) { Get-Content ui-generation-error.txt -Raw | Write-Error }
+          Get-Content ui-generation-output.txt -Raw | Write-Error
           exit 1
 
       - name: Fail on WebUI syntax error
@@ -90,4 +93,4 @@ jobs:
       - name: Remove generated diagnostics
         if: always()
         shell: pwsh
-        run: Remove-Item ui_control.generated.js,node-check.txt,ui-generation-error.txt -Force -ErrorAction SilentlyContinue
+        run: Remove-Item ui_control.generated.js,node-check.txt,ui-generation-error.txt,ui-generation-output.txt -Force -ErrorAction SilentlyContinue
