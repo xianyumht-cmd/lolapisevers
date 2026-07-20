@@ -30,3 +30,25 @@ jobs:
       - name: Run unit tests
         shell: pwsh
         run: python -m unittest discover -s tests -v
+
+      - name: Validate WebUI JavaScript
+        shell: pwsh
+        run: |
+          python tests/check_ui_assets.py
+          node --check ui_control.generated.js
+          Remove-Item ui_control.generated.js -Force
+
+      - name: Validate PowerShell supervisor syntax
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path "ops/run_service.ps1"),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
