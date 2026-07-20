@@ -39,8 +39,11 @@ function Install-ServiceWithNssm([string]$projectRoot, [string]$serviceName) {
   if (!(Test-Path $logsDir)) {
     New-Item -Path $logsDir -ItemType Directory | Out-Null
   }
-  $stdoutLog = Join-Path $logsDir "service.stdout.log"
-  $stderrLog = Join-Path $logsDir "service.stderr.log"
+
+  # NSSM captures the PowerShell supervisor only. Child Python processes use
+  # main_api.* and lanzou_monitor.* logs inside run_service.ps1.
+  $stdoutLog = Join-Path $logsDir "supervisor.stdout.log"
+  $stderrLog = Join-Path $logsDir "supervisor.stderr.log"
 
   $svc = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
   if ($svc) {
