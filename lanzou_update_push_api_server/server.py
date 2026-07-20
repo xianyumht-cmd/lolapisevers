@@ -24,20 +24,11 @@ from .management import (
 from .monitor import LanzouMonitorService
 from .state_recovery import recover_state_file
 from .ui import render_dashboard_page
-from .ui_control import render_control_dashboard
+from .ui_runtime import render_runtime_dashboard
 
 
 def _control_page() -> str:
-    page = render_control_dashboard().replace(
-        "<title>lolapisevers 全功能控制台</title>",
-        "<title>lolapisevers 接口端总控台 · 全功能控制台</title>",
-        1,
-    )
-    return page.replace(
-        "loadAll();setInterval(()=>loadAll(),30000);",
-        "loadAll();setInterval(()=>{const active=document.querySelector('.tab.active');if(active&&active.dataset.tab==='overview')loadAll()},30000);",
-        1,
-    )
+    return render_runtime_dashboard()
 
 
 def _fetch_json(url: str) -> dict[str, Any]:
