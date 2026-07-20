@@ -34,17 +34,26 @@ if ((-not (Test-Path $lanzouConfig)) -and (Test-Path $lanzouExample)) {
 }
 $env:LANZOU_MONITOR_CONFIG = $lanzouConfig
 
-$mainStdout = Join-Path $logsDir "service.stdout.log"
-$mainStderr = Join-Path $logsDir "service.stderr.log"
+# Child-process logs must not share files with NSSM's PowerShell supervisor logs.
+$mainStdout = Join-Path $logsDir "main_api.stdout.log"
+$mainStderr = Join-Path $logsDir "main_api.stderr.log"
 $lanzouStdout = Join-Path $logsDir "lanzou_monitor.stdout.log"
 $lanzouStderr = Join-Path $logsDir "lanzou_monitor.stderr.log"
 
-function Rotate-Log([string]$Path) {
+function Prepare-LogPath([string]$Path) {
   if (-not (Test-Path $Path)) {
-    return
+    return $Path
   }
+
   $previousPath = "$Path.previous"
-  Move-Item -Path $Path -Destination $previousPath -Force
+  try {
+    Move-Item -Path $Path -Destination $previousPath -Force -ErrorAction Stop
+    return $Path
+  } catch {
+    $fallbackPath = "$Path.$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+    Write-Warning "Could not rotate locked log '$Path': $($_.Exception.Message). Using '$fallbackPath'."
+    return $fallbackPath
+  }
 }
 
 function Start-ManagedPythonProcess(
@@ -52,15 +61,15 @@ function Start-ManagedPythonProcess(
   [string]$StdoutPath,
   [string]$StderrPath
 ) {
-  Rotate-Log $StdoutPath
-  Rotate-Log $StderrPath
+  $actualStdoutPath = Prepare-LogPath $StdoutPath
+  $actualStderrPath = Prepare-LogPath $StderrPath
   return Start-Process `
     -FilePath $pythonExe `
     -ArgumentList $ProcessArguments `
     -WorkingDirectory $projectRoot `
     -WindowStyle Hidden `
-    -RedirectStandardOutput $StdoutPath `
-    -RedirectStandardError $StderrPath `
+    -RedirectStandardOutput $actualStdoutPath `
+    -RedirectStandardError $actualStderrPath `
     -PassThru
 }
 
