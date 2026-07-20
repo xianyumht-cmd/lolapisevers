@@ -76,7 +76,7 @@ async function api(path,opt={}){
   return data;
 }'''
 
-_TOKEN_CONTROLS = r'''<input id="adminToken" type="password" placeholder="管理令牌（本机可留空）" style="width:240px;max-width:100%"><button onclick="saveAdminToken()">应用令牌</button>'''
+_TOKEN_CONTROLS = r'''<input id="adminToken" type="password" placeholder="管理令牌（本机可留空）" style="width:240px;max-width:100%"><button type="button" onclick="saveAdminToken()">应用令牌</button>'''
 
 _SYSTEM_TAB = r'''    <button class="tab" data-tab="system">系统与安全</button>
 '''
@@ -89,12 +89,12 @@ _SYSTEM_HTML = r'''
         <div id="securitySummary" class="result">尚未读取</div>
       </div>
       <div class="panel">
-        <div class="panel-head"><div><h2>Windows 服务</h2><div class="hint">重启会短暂中断 5001 和 6178，监管脚本会重新拉起两个进程。</div></div><button class="warn" onclick="restartManagedService()">重启 LOLDataSystem</button></div>
+        <div class="panel-head"><div><h2>Windows 服务</h2><div class="hint">重启会短暂中断 5001 和 6178，监管脚本会重新拉起两个进程。</div></div><button type="button" class="warn" onclick="restartManagedService()">重启 LOLDataSystem</button></div>
         <div id="serviceSummary" class="result">尚未读取</div>
       </div>
     </div>
     <div class="panel">
-      <div class="panel-head"><div><h2>配置备份与回滚</h2><div class="hint">每次保存配置都会自动备份；回滚前还会再备份当前版本。</div></div><button onclick="loadSystemPanel()">刷新</button></div>
+      <div class="panel-head"><div><h2>配置备份与回滚</h2><div class="hint">每次保存配置都会自动备份；回滚前还会再备份当前版本。</div></div><button type="button" onclick="loadSystemPanel()">刷新</button></div>
       <div class="table-wrap"><table><thead><tr><th>类型</th><th>备份文件</th><th>时间</th><th>大小</th><th>操作</th></tr></thead><tbody id="backupRows"></tbody></table></div>
     </div>
     <div class="panel">
@@ -121,7 +121,7 @@ async function loadSystemPanel(){
   $('serviceSummary').textContent=JSON.stringify(service,null,2);
   const backupItems=backups.backups||[];
   $('backupRows').innerHTML=backupItems.map(item=>
-    `<tr><td>${esc(item.kind)}</td><td>${esc(item.name)}</td><td>${esc(item.modified_at||'')}</td><td>${esc(item.size_bytes||0)}</td><td><button data-rollback="1" data-kind="${attr(item.kind)}" data-name="${attr(item.name)}">回滚</button></td></tr>`
+    `<tr><td>${esc(item.kind)}</td><td>${esc(item.name)}</td><td>${esc(item.modified_at||'')}</td><td>${esc(item.size_bytes||0)}</td><td><button type="button" data-rollback="1" data-kind="${attr(item.kind)}" data-name="${attr(item.name)}">回滚</button></td></tr>`
   ).join('')||'<tr><td colspan="5" class="hint">暂无配置备份</td></tr>';
   document.querySelectorAll('[data-rollback]').forEach(button=>button.onclick=()=>rollbackBackup(button.dataset.kind,button.dataset.name));
   const auditItems=audit.events||[];
@@ -141,6 +141,48 @@ async function restartManagedService(){
   const result=await safeApi('/admin/service/restart',{method:'POST',body:{delay_seconds:3}});
   showAction('服务重启结果',result);
   toast(result.ok?'已安排服务重启':'重启失败：'+(result.error||'未知错误'),!result.ok);
+}
+'''
+
+_ROW_INTERACTION_SCRIPT = r'''
+function revealNewTableRow(tbodyId,focusSelector){
+  requestAnimationFrame(()=>{
+    const body=$(tbodyId);
+    const row=body&&body.querySelector('tr');
+    if(!row)return;
+    row.style.background='#fff8e7';
+    row.scrollIntoView({behavior:'smooth',block:'nearest'});
+    const field=row.querySelector(focusSelector);
+    if(field){field.focus();field.select()}
+  });
+}
+function addWatcher(){
+  if(!Array.isArray(S.watchers))S.watchers=[];
+  const sequence=S.watchers.length+1;
+  S.watchers.unshift({
+    id:`watcher-${Date.now()}`,
+    title:`新监控 ${sequence}`,
+    url:'https://',
+    password:'',
+    enabled:true,
+    max_pages:20
+  });
+  renderWatchers();
+  revealNewTableRow('watcherRows','[data-f="id"]');
+  toast('已新增监控项，请填写后点击“保存监控项”');
+}
+function addTarget(){
+  if(!Array.isArray(S.targets))S.targets=[];
+  S.targets.unshift({
+    name:`target-${S.targets.length+1}`,
+    enabled:true,
+    url:'http://127.0.0.1:6108/',
+    timeout_seconds:8,
+    headers:{}
+  });
+  renderTargets();
+  revealNewTableRow('targetRows','[data-f="name"]');
+  toast('已新增通知目标，请填写后点击“保存通知目标”');
 }
 '''
 
@@ -173,11 +215,43 @@ def render_runtime_dashboard() -> str:
     if api_replacement_count != 1:
         raise RuntimeError("could not patch dashboard API client")
 
+    page, watcher_replacement_count = re.subn(
+        r"function addWatcher\(\)\{.*?\}\nfunction collectWatchers",
+        lambda _match: _ROW_INTERACTION_SCRIPT + "\nfunction collectWatchers",
+        page,
+        count=1,
+        flags=re.DOTALL,
+    )
+    if watcher_replacement_count != 1:
+        raise RuntimeError("could not patch dashboard watcher interaction")
+
+    page, target_replacement_count = re.subn(
+        r"function addTarget\(\)\{.*?\}\nfunction collectTargets",
+        lambda _match: "function collectTargets",
+        page,
+        count=1,
+        flags=re.DOTALL,
+    )
+    if target_replacement_count != 1:
+        raise RuntimeError("could not remove legacy target interaction")
+
     page = _replace_once(
         page,
         '<div class="actions"><button class="primary" onclick="loadAll()">刷新全部</button>',
-        '<div class="actions">' + _TOKEN_CONTROLS + '<button class="primary" onclick="loadAll()">刷新全部</button>',
+        '<div class="actions">' + _TOKEN_CONTROLS + '<button type="button" class="primary" onclick="loadAll()">刷新全部</button>',
         "token controls",
+    )
+    page = _replace_once(
+        page,
+        '<button onclick="addWatcher()">新增监控</button>',
+        '<button id="addWatcherButton" type="button">新增监控</button>',
+        "watcher add button",
+    )
+    page = _replace_once(
+        page,
+        '<button onclick="addTarget()">新增目标</button>',
+        '<button id="addTargetButton" type="button">新增目标</button>',
+        "target add button",
     )
     page = _replace_once(page, "  </nav>", _SYSTEM_TAB + "  </nav>", "system tab")
     page = _replace_once(page, "</main>", _SYSTEM_HTML + "</main>", "system panel")
@@ -190,7 +264,11 @@ def render_runtime_dashboard() -> str:
     page = _replace_once(
         page,
         "loadAll();setInterval(()=>loadAll(),30000);",
-        _SYSTEM_SCRIPT + "\n$('adminToken').value=currentAdminToken();\nloadAll();setInterval(()=>{const active=document.querySelector('.tab.active');if(active&&active.dataset.tab==='overview')loadAll()},30000);",
+        _SYSTEM_SCRIPT
+        + "\n$('adminToken').value=currentAdminToken();"
+        + "\n$('addWatcherButton').addEventListener('click',addWatcher);"
+        + "\n$('addTargetButton').addEventListener('click',addTarget);"
+        + "\nloadAll();setInterval(()=>{const active=document.querySelector('.tab.active');if(active&&active.dataset.tab==='overview')loadAll()},30000);",
         "runtime startup",
     )
     page = page.replace(
