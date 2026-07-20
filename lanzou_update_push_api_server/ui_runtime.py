@@ -144,7 +144,7 @@ async function restartManagedService(){
 }
 '''
 
-_ROW_INTERACTION_SCRIPT = r'''
+_WATCHER_INTERACTION_SCRIPT = r'''
 function revealNewTableRow(tbodyId,focusSelector){
   requestAnimationFrame(()=>{
     const body=$(tbodyId);
@@ -171,6 +171,9 @@ function addWatcher(){
   revealNewTableRow('watcherRows','[data-f="id"]');
   toast('已新增监控项，请填写后点击“保存监控项”');
 }
+'''
+
+_TARGET_INTERACTION_SCRIPT = r'''
 function addTarget(){
   if(!Array.isArray(S.targets))S.targets=[];
   S.targets.unshift({
@@ -217,7 +220,7 @@ def render_runtime_dashboard() -> str:
 
     page, watcher_replacement_count = re.subn(
         r"function addWatcher\(\)\{.*?\}\nfunction collectWatchers",
-        lambda _match: _ROW_INTERACTION_SCRIPT + "\nfunction collectWatchers",
+        lambda _match: _WATCHER_INTERACTION_SCRIPT + "\nfunction collectWatchers",
         page,
         count=1,
         flags=re.DOTALL,
@@ -227,13 +230,13 @@ def render_runtime_dashboard() -> str:
 
     page, target_replacement_count = re.subn(
         r"function addTarget\(\)\{.*?\}\nfunction collectTargets",
-        lambda _match: "function collectTargets",
+        lambda _match: _TARGET_INTERACTION_SCRIPT + "\nfunction collectTargets",
         page,
         count=1,
         flags=re.DOTALL,
     )
     if target_replacement_count != 1:
-        raise RuntimeError("could not remove legacy target interaction")
+        raise RuntimeError("could not patch dashboard target interaction")
 
     page = _replace_once(
         page,
