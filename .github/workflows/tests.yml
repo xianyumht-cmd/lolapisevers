@@ -31,12 +31,35 @@ jobs:
         shell: pwsh
         run: python -m unittest discover -s tests -v
 
+      - name: Generate WebUI JavaScript
+        shell: pwsh
+        run: python tests/check_ui_assets.py
+
       - name: Validate WebUI JavaScript
+        id: node_check
+        continue-on-error: true
         shell: pwsh
         run: |
-          python tests/check_ui_assets.py
-          node --check ui_control.generated.js
-          Remove-Item ui_control.generated.js -Force
+          node --check ui_control.generated.js 2>&1 | Tee-Object -FilePath node-check.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload WebUI syntax diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: webui-syntax-diagnostics
+          path: |
+            ui_control.generated.js
+            node-check.txt
+          if-no-files-found: warn
+          retention-days: 3
+
+      - name: Fail on WebUI syntax error
+        if: steps.node_check.outcome == 'failure'
+        shell: pwsh
+        run: |
+          Get-Content node-check.txt -Raw | Write-Error
+          exit 1
 
       - name: Validate PowerShell supervisor syntax
         shell: pwsh
@@ -52,3 +75,8 @@ jobs:
             $errors | ForEach-Object { Write-Error $_.Message }
             exit 1
           }
+
+      - name: Remove generated diagnostics
+        if: always()
+        shell: pwsh
+        run: Remove-Item ui_control.generated.js,node-check.txt -Force -ErrorAction SilentlyContinue
