@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from contextlib import asynccontextmanager
 from typing import Any
 
+import requests
 from fastapi import FastAPI, Query
 from fastapi.responses import HTMLResponse
 
 from .admin_api import build_admin_overview
+from .api_debugger import fetch_openapi, invoke_api
 from .config import AppConfig, sanitized_config
 from .management import (
-    fetch_openapi,
-    invoke_local_api,
     list_logs,
     read_lanzou_config,
     read_log,
@@ -40,12 +41,27 @@ def _control_page() -> str:
     )
 
 
+def _fetch_json(url: str) -> dict[str, Any]:
+    response = requests.get(url, timeout=5, headers={"accept": "application/json"})
+    try:
+        data = response.json()
+    except ValueError:
+        data = {"ok": False, "status_code": response.status_code, "error": response.text[:2000]}
+    if isinstance(data, dict):
+        data.setdefault("ok", response.ok)
+        return data
+    return {"ok": response.ok, "status_code": response.status_code, "data": data}
+
+
 def create_app(config: AppConfig | None = None) -> FastAPI:
     from .config import load_config
 
     app_config = config or load_config()
     state_recovery = recover_state_file(app_config.state_path)
     service = LanzouMonitorService(app_config)
+    main_port = int(os.getenv("APP_PORT", "5001"))
+    main_base_url = f"http://127.0.0.1:{main_port}"
+    lanzou_base_url = f"http://127.0.0.1:{app_config.port}"
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -63,6 +79,8 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     app.state.config = app_config
     app.state.service = service
     app.state.state_recovery = state_recovery
+    app.state.main_base_url = main_base_url
+    app.state.lanzou_base_url = lanzou_base_url
 
     @app.get("/", response_class=HTMLResponse)
     async def dashboard() -> str:
@@ -90,7 +108,14 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     async def admin_overview() -> dict[str, Any]:
         status = service.status()
         status["state_recovery"] = app.state.state_recovery
-        return build_admin_overview(app.state.config, status)
+        overview = build_admin_overview(app.state.config, status)
+        overview["mainApi"]["baseUrl"] = app.state.main_base_url
+        overview["mainApi"]["health"] = await asyncio.to_thread(
+            _fetch_json,
+            f"{app.state.main_base_url}/health",
+        )
+        overview["lanzou"]["baseUrl"] = app.state.lanzou_base_url
+        return overview
 
     @app.get("/admin/main-config")
     async def admin_main_config() -> dict[str, Any]:
@@ -121,10 +146,12 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     @app.get("/admin/openapi/{service_name}")
     async def admin_openapi(service_name: str) -> dict[str, Any]:
-        if service_name not in {"main", "lanzou"}:
+        if service_name == "lanzou":
+            return {"ok": True, "service": service_name, "schema": app.openapi()}
+        if service_name != "main":
             return {"ok": False, "error": "service must be main or lanzou"}
         try:
-            schema = await asyncio.to_thread(fetch_openapi, service_name)
+            schema = await asyncio.to_thread(fetch_openapi, app.state.main_base_url)
             return {"ok": True, "service": service_name, "schema": schema}
         except Exception as exc:
             return {"ok": False, "service": service_name, "error": str(exc)}
@@ -132,7 +159,14 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     @app.post("/admin/invoke")
     async def admin_invoke(payload: dict[str, Any]) -> dict[str, Any]:
         try:
-            return await asyncio.to_thread(invoke_local_api, payload)
+            service_name = str(payload.get("service") or "main")
+            if service_name == "main":
+                base_url = app.state.main_base_url
+            elif service_name == "lanzou":
+                base_url = app.state.lanzou_base_url
+            else:
+                raise ValueError("service must be main or lanzou")
+            return await asyncio.to_thread(invoke_api, base_url, payload)
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
