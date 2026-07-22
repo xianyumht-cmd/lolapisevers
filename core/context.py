@@ -20,6 +20,12 @@ class AppContext:
         self.cross_cache = TTLCache(ttl_seconds=config.cache_seconds)
         self.shard_cache = TTLCache(ttl_seconds=config.shard_cache_seconds)
         self.aram_augment_cache = TTLCache(ttl_seconds=config.aram_augment_cache_seconds)
+        # Remote icons are shared by both image renderers. A bounded cache avoids
+        # repeated downloads without letting image bytes grow without limit.
+        self.image_asset_cache = TTLCache(
+            ttl_seconds=max(config.aram_augment_cache_seconds, 3600),
+            max_size=512,
+        )
         self.so1_client = so1_client or So1Client(
             username=config.so1_username,
             password=config.so1_password,
