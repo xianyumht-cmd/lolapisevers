@@ -18,6 +18,23 @@ class ProviderError(RuntimeError):
     """Raised when a provider cannot fetch a usable file list."""
 
 
+def _stable_file_id(value: Any) -> str:
+    """Remove temporary Lanzou query/fragment data from file IDs."""
+    text = str(value or "").strip()
+    if "://" in text:
+        return text
+    return text.split("?", 1)[0].split("#", 1)[0].strip()
+
+
+def _stable_file_link(value: Any) -> str:
+    """Remove temporary query/fragment data from Lanzou share links."""
+    text = str(value or "").strip()
+    lowered = text.lower()
+    if not any(token in lowered for token in ("lanzou", "lanzn.com", "lanwp.com")):
+        return text
+    return text.split("?", 1)[0].split("#", 1)[0].strip()
+
+
 def _stable_modified_time(value: str) -> str:
     value = value.strip()
     if re.fullmatch(r"\d{4}[-/.]\d{1,2}[-/.]\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?", value):
@@ -201,7 +218,10 @@ class LanzouWebProvider:
             for row in rows:
                 if not isinstance(row, dict):
                     continue
-                file_id = str(row.get("id") or row.get("duan") or row.get("name_all") or "").strip()
+                raw_file_id = str(
+                    row.get("id") or row.get("duan") or row.get("name_all") or ""
+                ).strip()
+                file_id = _stable_file_id(raw_file_id)
                 if not file_id or file_id in seen_ids:
                     continue
                 seen_ids.add(file_id)
@@ -360,11 +380,11 @@ def snapshot_from_state(value: dict[str, Any]) -> ShareSnapshot:
         fetched_at=str(value.get("fetched_at") or ""),
         files=[
             FileEntry(
-                id=str(item.get("id") or ""),
+                id=_stable_file_id(item.get("id")),
                 name=str(item.get("name") or ""),
                 size=str(item.get("size") or ""),
                 modified_time=str(item.get("modified_time") or ""),
-                link=str(item.get("link") or ""),
+                link=_stable_file_link(item.get("link")),
                 icon=str(item.get("icon") or ""),
                 raw=item.get("raw") if isinstance(item.get("raw"), dict) else {},
             )
