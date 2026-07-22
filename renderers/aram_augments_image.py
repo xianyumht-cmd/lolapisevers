@@ -8,8 +8,8 @@ from core.context import AppContext
 from renderers.image_utils import (
     encode_png_limited,
     fit_text,
-    image_brand,
-    image_watermark,
+    image_footer_left,
+    image_footer_right,
     load_image_font,
     prefetch_image_urls,
 )
@@ -175,7 +175,7 @@ def build_aram_augment_image_response(ctx: AppContext, payload: Dict[str, Any]) 
         draw_metric_pill(metrics_x, outer + 28, "榜单", f"TOP {len(rows)}", cyan)
         draw_metric_pill(metrics_x + 138, outer + 28, "数据源", "OP.GG", green)
         draw_metric_pill(metrics_x, outer + 86, "缓存", f"{payload.get('cache_expires_in') or '-'}s", gold)
-        draw_metric_pill(metrics_x + 138, outer + 86, "品牌", image_brand(), purple)
+        draw_metric_pill(metrics_x + 138, outer + 86, "收录", str(payload.get("total") or len(rows)), purple)
 
         y = outer + hero_height
         if quick_height:
@@ -256,9 +256,14 @@ def build_aram_augment_image_response(ctx: AppContext, payload: Dict[str, Any]) 
 
         footer_y = height - footer_height - outer + 12
         draw.line((outer + 10, footer_y - 10, width - outer - 10, footer_y - 10), fill=line, width=1)
-        draw.text((outer + 14, footer_y + 5), image_watermark(), fill=muted, font=small_font)
-        updated_at = str(payload.get("updated_at") or "-")
-        draw.text((width - outer - 14, footer_y + 5), f"更新 {updated_at} · 已限制图片体积", fill=(113, 128, 151), font=tiny_font, anchor="ra")
+        draw.text((outer + 14, footer_y + 5), image_footer_left(), fill=muted, font=small_font)
+        draw.text(
+            (width - outer - 14, footer_y + 5),
+            image_footer_right(),
+            fill=(113, 128, 151),
+            font=small_font,
+            anchor="ra",
+        )
 
         encoded = encode_png_limited(image)
         return Response(
