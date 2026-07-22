@@ -69,13 +69,14 @@ def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
     return max(minimum, min(value, maximum))
 
 
-def image_brand() -> str:
-    return str(os.getenv("IMAGE_BRAND", "LOLApiServers")).strip() or "LOLApiServers"
+def image_footer_left() -> str:
+    default = "GroupGuardKing-GGK"
+    return str(os.getenv("IMAGE_FOOTER_LEFT", default)).strip() or default
 
 
-def image_watermark() -> str:
-    default = f"{image_brand()} · xianyumht-cmd"
-    return str(os.getenv("IMAGE_WATERMARK", default)).strip() or default
+def image_footer_right() -> str:
+    default = "致力于企业级群管解决方案"
+    return str(os.getenv("IMAGE_FOOTER_RIGHT", default)).strip() or default
 
 
 def image_limits() -> Dict[str, int]:
