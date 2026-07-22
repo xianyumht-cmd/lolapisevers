@@ -9,8 +9,8 @@ from renderers.cross_svg import build_cross_svg_response
 from renderers.image_utils import (
     encode_png_limited,
     fit_text,
-    image_brand,
-    image_watermark,
+    image_footer_left,
+    image_footer_right,
     load_image_font,
     prefetch_image_urls,
 )
@@ -199,7 +199,6 @@ def build_cross_image_response(ctx: AppContext, payload: Dict[str, Any]) -> Resp
         draw.rounded_rectangle((outer, section_y, width - outer, section_y + section_height), radius=13, fill=panel)
         draw.text((outer + 20, section_y + 17), "近期战绩", fill=text, font=heading_font)
         draw.text((outer + 122, section_y + 19), f"最近{len(rows)}场 · 最后在线 {last_online}", fill=muted, font=small_font)
-        draw.text((width - outer - 20, section_y + 27), image_brand(), fill=cyan, font=small_font, anchor="rm")
 
         rows_y = section_y + section_height
         if not rows:
@@ -270,8 +269,14 @@ def build_cross_image_response(ctx: AppContext, payload: Dict[str, Any]) -> Resp
 
         footer_y = height - footer_height - outer + 12
         draw.line((outer + 10, footer_y - 10, width - outer - 10, footer_y - 10), fill=line, width=1)
-        draw.text((outer + 14, footer_y + 5), image_watermark(), fill=muted, font=small_font)
-        draw.text((width - outer - 14, footer_y + 5), "图片已压缩并限制尺寸", fill=(112, 126, 148), font=tiny_font, anchor="ra")
+        draw.text((outer + 14, footer_y + 5), image_footer_left(), fill=muted, font=small_font)
+        draw.text(
+            (width - outer - 14, footer_y + 5),
+            image_footer_right(),
+            fill=(112, 126, 148),
+            font=small_font,
+            anchor="ra",
+        )
 
         encoded = encode_png_limited(image)
         return Response(

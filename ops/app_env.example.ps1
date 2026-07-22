@@ -17,9 +17,9 @@ $env:SHARD_CACHE_SECONDS = "600"
 $env:ARAM_AUGMENT_CACHE_SECONDS = "1800"
 
 # Image rendering
-# Defaults already use the repository's own brand. Adjust locally without modifying source code.
-$env:IMAGE_BRAND = "LOLApiServers"
-$env:IMAGE_WATERMARK = "LOLApiServers · xianyumht-cmd"
+# Footer branding can be adjusted locally without modifying source code.
+$env:IMAGE_FOOTER_LEFT = "GroupGuardKing-GGK"
+$env:IMAGE_FOOTER_RIGHT = "致力于企业级群管解决方案"
 $env:IMAGE_MAX_BYTES = "760000"
 $env:IMAGE_MAX_WIDTH = "1080"
 $env:IMAGE_MAX_HEIGHT = "1800"
