@@ -1,13 +1,28 @@
 import io
 import random
 import unittest
+from unittest.mock import patch
 
 from PIL import Image, ImageDraw
 
-from renderers.image_utils import encode_png_limited
+from renderers.image_utils import encode_png_limited, image_footer_left, image_footer_right
 
 
 class ImageUtilsTests(unittest.TestCase):
+    def test_footer_branding_defaults(self):
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(image_footer_left(), "GroupGuardKing-GGK")
+            self.assertEqual(image_footer_right(), "致力于企业级群管解决方案")
+
+    def test_footer_branding_can_be_overridden(self):
+        with patch.dict(
+            "os.environ",
+            {"IMAGE_FOOTER_LEFT": "左侧", "IMAGE_FOOTER_RIGHT": "右侧"},
+            clear=True,
+        ):
+            self.assertEqual(image_footer_left(), "左侧")
+            self.assertEqual(image_footer_right(), "右侧")
+
     def test_encode_png_limited_caps_dimensions_and_bytes(self):
         image = Image.new("RGB", (1500, 2400), (18, 24, 39))
         draw = ImageDraw.Draw(image)
