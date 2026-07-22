@@ -16,6 +16,14 @@ $env:CACHE_SECONDS = "300"
 $env:SHARD_CACHE_SECONDS = "600"
 $env:ARAM_AUGMENT_CACHE_SECONDS = "1800"
 
+# Image rendering
+# Defaults already use the repository's own brand. Adjust locally without modifying source code.
+$env:IMAGE_BRAND = "LOLApiServers"
+$env:IMAGE_WATERMARK = "LOLApiServers · xianyumht-cmd"
+$env:IMAGE_MAX_BYTES = "760000"
+$env:IMAGE_MAX_WIDTH = "1080"
+$env:IMAGE_MAX_HEIGHT = "1800"
+
 # Data sources
 $env:SHARD_DATA_URL = "https://raw.githubusercontent.com/badspacebar/release/master/files/shards.json"
 $env:SHARD_HERO_URL = "https://game.gtimg.cn/images/lol/act/img/js/heroList/hero_list.js"
