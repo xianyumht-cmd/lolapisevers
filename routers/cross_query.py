@@ -18,7 +18,7 @@ async def cross_query(
     request: Request,
     name: str = Query(..., description="召唤师名称"),
     region: Optional[str] = Query(None, description="大区名称"),
-    output: str = Query("pretty", description="输出格式：pretty 或 raw"),
+    output: str = Query("pretty", description="输出格式：pretty、raw、image 或 svg"),
 ):
     name = name.strip()
     region_str = region.strip() if region else None
@@ -34,7 +34,7 @@ async def cross_query(
     try:
         payload = await query_cross(ctx, name=name, region=region_str, output_format=output_format)
         if output_format == "image":
-            return await asyncio.to_thread(build_cross_image_response, payload)
+            return await asyncio.to_thread(build_cross_image_response, ctx, payload)
         if output_format == "svg":
             return build_cross_svg_response(payload)
         return payload
