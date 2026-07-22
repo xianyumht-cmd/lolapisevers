@@ -1,123 +1,284 @@
 import io
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from fastapi.responses import Response
 
+from core.context import AppContext
 from renderers.cross_svg import build_cross_svg_response
-from renderers.image_utils import fit_text, load_image_font
+from renderers.image_utils import (
+    encode_png_limited,
+    fit_text,
+    image_brand,
+    image_watermark,
+    load_image_font,
+    prefetch_image_urls,
+)
 from utils.convert import safe_int
 from utils.time_utils import format_duration
 
 logger = logging.getLogger("LOLDataSystem")
 
+CDRAGON_BASE = "https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1"
+GTIMG_BASE = "https://game.gtimg.cn/images/lol/act/img"
 
-def build_cross_image_response(payload: Dict[str, Any]) -> Response:
+
+def _profile_icon_url(profile_icon_id: Any) -> str:
+    icon_id = safe_int(profile_icon_id, 0)
+    return f"{GTIMG_BASE}/profileicon/{icon_id}.png" if icon_id else ""
+
+
+def _champion_icon_url(champion_id: Any) -> str:
+    icon_id = safe_int(champion_id, 0)
+    return f"{CDRAGON_BASE}/champion-icons/{icon_id}.png" if icon_id else ""
+
+
+def _item_icon_url(item_id: Any) -> str:
+    icon_id = safe_int(item_id, 0)
+    return f"{GTIMG_BASE}/item/{icon_id}.png" if icon_id else ""
+
+
+def build_cross_image_response(ctx: AppContext, payload: Dict[str, Any]) -> Response:
     try:
-        from PIL import Image, ImageDraw
+        from PIL import Image, ImageDraw, ImageOps
 
         rows = payload.get("recent_matches") if isinstance(payload.get("recent_matches"), list) else []
+        rows = [row for row in rows[:10] if isinstance(row, dict)]
+        ranked_queues = payload.get("ranked_queues") if isinstance(payload.get("ranked_queues"), list) else []
+        ranked_queues = [row for row in ranked_queues[:2] if isinstance(row, dict)]
         name_text = str(payload.get("name") or "-")
         region_text = str(payload.get("region") or "未指定")
         level_text = str(payload.get("level") if payload.get("level") is not None else "-")
-        rank_text = str(payload.get("rank") or "未知")
+        rank_text = str(payload.get("rank") or "未定级")
         last_online = str(payload.get("last_online_time") or "未知")
         winrate = str(payload.get("winrate_recent") or "未知")
         avg_kda = payload.get("avg_kda_recent")
         avg_kda_text = f"{avg_kda:.2f}" if isinstance(avg_kda, (int, float)) else "未知"
-        watermark = "战绩图由GroupGuardKing(GGK)生成"
+        source_text = "历史快照" if payload.get("is_stale") else "实时数据"
 
-        width = 1180
-        padding = 44
-        row_height = 112
-        header_height = 282
-        footer_height = 60
-        height = header_height + max(len(rows[:10]), 1) * row_height + footer_height
-        image = Image.new("RGB", (width, height), (246, 248, 251))
+        width = 980
+        outer = 22
+        header_height = 176
+        section_height = 54
+        row_height = 94
+        row_gap = 8
+        footer_height = 54
+        row_count = max(len(rows), 1)
+        height = (
+            outer
+            + header_height
+            + 14
+            + section_height
+            + row_count * row_height
+            + max(row_count - 1, 0) * row_gap
+            + footer_height
+            + outer
+        )
+
+        bg = (13, 17, 30)
+        panel = (24, 30, 49)
+        panel_soft = (28, 36, 58)
+        text = (240, 244, 251)
+        muted = (156, 168, 188)
+        cyan = (69, 207, 224)
+        green = (52, 211, 153)
+        red = (248, 113, 113)
+        gold = (245, 192, 84)
+        line = (47, 58, 82)
+
+        image = Image.new("RGB", (width, height), bg)
         draw = ImageDraw.Draw(image)
-        title_font = load_image_font(34, bold=True)
-        label_font = load_image_font(22, bold=True)
-        body_font = load_image_font(20)
-        small_font = load_image_font(18)
-        tiny_font = load_image_font(16)
+        title_font = load_image_font(29, bold=True)
+        heading_font = load_image_font(18, bold=True)
+        result_font = load_image_font(17, bold=True)
+        body_font = load_image_font(15)
+        body_bold_font = load_image_font(15, bold=True)
+        small_font = load_image_font(13)
+        tiny_font = load_image_font(11)
+        kda_font = load_image_font(19, bold=True)
 
-        def num_text(value: Any) -> str:
-            number = safe_int(value, 0)
-            return f"{number:,}" if number else "0"
+        profile_url = _profile_icon_url(payload.get("profile_icon"))
+        asset_urls: List[str] = [profile_url] if profile_url else []
+        for match in rows:
+            champion_url = _champion_icon_url(match.get("champion_id"))
+            if champion_url:
+                asset_urls.append(champion_url)
+            for item_id in [x for x in (match.get("item_ids") or []) if safe_int(x, 0)][:6]:
+                item_url = _item_icon_url(item_id)
+                if item_url:
+                    asset_urls.append(item_url)
+        asset_cache = getattr(ctx, "image_asset_cache", getattr(ctx, "aram_augment_cache", None))
+        assets = prefetch_image_urls(asset_cache, asset_urls, timeout=3.5, max_workers=8, max_assets=72)
 
-        draw.rounded_rectangle((22, 22, width - 22, height - 22), radius=18, fill=(255, 255, 255), outline=(218, 225, 235), width=2)
-        draw.text((padding, 38), "战绩查询（跨区）", fill=(28, 36, 52), font=title_font)
-        stat_x = width - 330
-        draw.rounded_rectangle((stat_x, 82, width - padding, 196), radius=12, fill=(239, 246, 255), outline=(197, 218, 247))
-        draw.text((stat_x + 22, 102), f"近10场胜率  {winrate}", fill=(24, 84, 154), font=label_font)
-        draw.text((stat_x + 22, 146), f"平均 KDA    {avg_kda_text}", fill=(24, 84, 154), font=label_font)
+        def paste_icon(
+            url: str,
+            x: int,
+            y: int,
+            size: int,
+            *,
+            radius: int = 7,
+            border: Optional[tuple] = None,
+            placeholder: str = "",
+        ) -> None:
+            icon_bytes = assets.get(url)
+            if icon_bytes:
+                try:
+                    icon = Image.open(io.BytesIO(icon_bytes)).convert("RGBA")
+                    icon = ImageOps.fit(icon, (size, size), method=Image.Resampling.LANCZOS)
+                    mask = Image.new("L", (size, size), 0)
+                    mask_draw = ImageDraw.Draw(mask)
+                    mask_draw.rounded_rectangle((0, 0, size - 1, size - 1), radius=radius, fill=255)
+                    image.paste(icon, (x, y), mask)
+                except Exception:
+                    icon_bytes = None
+            if not icon_bytes:
+                draw.rounded_rectangle((x, y, x + size, y + size), radius=radius, fill=(41, 51, 76))
+                if placeholder:
+                    draw.text(
+                        (x + size // 2, y + size // 2),
+                        placeholder[:1],
+                        fill=muted,
+                        font=heading_font,
+                        anchor="mm",
+                    )
+            if border:
+                draw.rounded_rectangle((x, y, x + size, y + size), radius=radius, outline=border, width=2)
 
-        info_width = stat_x - padding - 30
-        draw.text((padding, 92), fit_text(draw, f"玩家：{name_text}", body_font, info_width), fill=(45, 54, 72), font=body_font)
-        draw.text((padding, 128), fit_text(draw, f"大区：{region_text}    等级：{level_text}", body_font, info_width), fill=(45, 54, 72), font=body_font)
-        draw.text((padding, 164), fit_text(draw, f"段位：{rank_text}", body_font, info_width), fill=(45, 54, 72), font=body_font)
-        draw.text((padding, 200), fit_text(draw, f"最后在线：{last_online}", small_font, info_width), fill=(93, 103, 122), font=small_font)
+        def pill(x: int, y: int, value: str, fill: tuple, foreground: tuple = text, width_hint: int = 0) -> int:
+            try:
+                box = draw.textbbox((0, 0), value, font=small_font)
+                measured = box[2] - box[0]
+            except Exception:
+                measured = len(value) * 13
+            pill_width = max(width_hint, measured + 22)
+            draw.rounded_rectangle((x, y, x + pill_width, y + 26), radius=13, fill=fill)
+            draw.text((x + pill_width // 2, y + 13), value, fill=foreground, font=small_font, anchor="mm")
+            return pill_width
 
-        y = header_height - 18
-        draw.line((padding, y, width - padding, y), fill=(224, 229, 237), width=2)
-        y += 20
+        draw.rounded_rectangle(
+            (outer, outer, width - outer, outer + header_height),
+            radius=16,
+            fill=panel,
+            outline=line,
+            width=1,
+        )
+        avatar_x = outer + 22
+        avatar_y = outer + 26
+        paste_icon(profile_url, avatar_x, avatar_y, 88, radius=12, border=cyan, placeholder=name_text)
+        draw.rounded_rectangle((avatar_x + 54, avatar_y + 68, avatar_x + 92, avatar_y + 94), radius=12, fill=(13, 150, 139))
+        draw.text((avatar_x + 73, avatar_y + 81), f"Lv{level_text}", fill=text, font=tiny_font, anchor="mm")
+
+        name_x = avatar_x + 112
+        draw.text((name_x, outer + 28), fit_text(draw, name_text, title_font, 400), fill=text, font=title_font)
+        draw.text((name_x, outer + 70), fit_text(draw, region_text, body_font, 400), fill=muted, font=body_font)
+        draw.text((name_x, outer + 98), fit_text(draw, f"当前段位：{rank_text}", small_font, 400), fill=(197, 207, 224), font=small_font)
+        pill_x = name_x
+        pill_x += pill(pill_x, outer + 126, f"近10场 {winrate}", (31, 85, 83), green) + 8
+        pill_x += pill(pill_x, outer + 126, f"平均KDA {avg_kda_text}", (42, 63, 94), cyan) + 8
+        pill(pill_x, outer + 126, source_text, (57, 48, 79), gold)
+
+        card_w = 176
+        card_h = 88
+        rank_start_x = width - outer - 22 - card_w * 2 - 12
+        queue_defaults = [
+            {"queue_name": "单双排", "rank": rank_text, "wins": 0, "losses": 0},
+            {"queue_name": "灵活组排", "rank": "未定级", "wins": 0, "losses": 0},
+        ]
+        display_queues = ranked_queues + queue_defaults[len(ranked_queues):]
+        for idx, queue in enumerate(display_queues[:2]):
+            x = rank_start_x + idx * (card_w + 12)
+            y = outer + 42
+            draw.rounded_rectangle((x, y, x + card_w, y + card_h), radius=12, fill=panel_soft, outline=(55, 68, 95))
+            draw.text((x + 14, y + 14), str(queue.get("queue_name") or "排位"), fill=muted, font=small_font)
+            draw.text((x + 14, y + 40), fit_text(draw, queue.get("rank") or "未定级", body_bold_font, card_w - 28), fill=text, font=body_bold_font)
+            wins = safe_int(queue.get("wins"), 0)
+            losses = safe_int(queue.get("losses"), 0)
+            draw.text((x + 14, y + 66), f"{wins}胜  {losses}负", fill=cyan, font=tiny_font)
+
+        section_y = outer + header_height + 14
+        draw.rounded_rectangle((outer, section_y, width - outer, section_y + section_height), radius=13, fill=panel)
+        draw.text((outer + 20, section_y + 17), "近期战绩", fill=text, font=heading_font)
+        draw.text((outer + 122, section_y + 19), f"最近{len(rows)}场 · 最后在线 {last_online}", fill=muted, font=small_font)
+        draw.text((width - outer - 20, section_y + 27), image_brand(), fill=cyan, font=small_font, anchor="rm")
+
+        rows_y = section_y + section_height
         if not rows:
-            draw.text((padding, y), "最近战绩：暂无可用数据", fill=(120, 128, 142), font=body_font)
-        for idx, match in enumerate(rows[:10], start=1):
-            if not isinstance(match, dict):
-                continue
+            draw.rounded_rectangle((outer, rows_y, width - outer, rows_y + row_height), radius=13, fill=panel, outline=line)
+            draw.text((width // 2, rows_y + row_height // 2), "暂无可用战绩数据", fill=muted, font=heading_font, anchor="mm")
+        for index, match in enumerate(rows):
+            y = rows_y + index * (row_height + row_gap)
             win = bool(match.get("win"))
-            result = "胜" if win else "负"
-            color = (22, 132, 75) if win else (190, 55, 65)
+            accent = green if win else red
+            card_fill = (27, 55, 55) if win else (62, 42, 49)
+            draw.rounded_rectangle((outer, y, width - outer, y + row_height), radius=13, fill=card_fill, outline=accent, width=1)
+            draw.rounded_rectangle((outer, y, outer + 6, y + row_height), radius=3, fill=accent)
+
             champion = str(match.get("champion") or "-")
-            game_time = str(match.get("game_time") or "-")
-            kills = safe_int(match.get("kills", 0))
-            deaths = safe_int(match.get("deaths", 0))
-            assists = safe_int(match.get("assists", 0))
+            champion_url = _champion_icon_url(match.get("champion_id"))
+            paste_icon(champion_url, outer + 18, y + 17, 60, radius=10, border=(91, 105, 130), placeholder=champion)
+            champ_level = safe_int(match.get("champ_level"), 0)
+            if champ_level:
+                draw.ellipse((outer + 60, y + 59, outer + 82, y + 81), fill=(10, 14, 25))
+                draw.text((outer + 71, y + 70), str(champ_level), fill=text, font=tiny_font, anchor="mm")
+
+            info_x = outer + 92
+            result_text = "胜利" if win else "失败"
+            draw.text((info_x, y + 16), result_text, fill=accent, font=result_font)
+            draw.text((info_x + 48, y + 16), fit_text(draw, champion, body_bold_font, 150), fill=text, font=body_bold_font)
+            queue_position = " · ".join(filter(None, [str(match.get("queue") or ""), str(match.get("position") or "")]))
+            draw.text((info_x, y + 47), fit_text(draw, queue_position, small_font, 205), fill=muted, font=small_font)
+            draw.text((info_x, y + 68), fit_text(draw, str(match.get("mode") or ""), tiny_font, 205), fill=(126, 140, 163), font=tiny_font)
+
+            kills = safe_int(match.get("kills"), 0)
+            deaths = safe_int(match.get("deaths"), 0)
+            assists = safe_int(match.get("assists"), 0)
             kda = match.get("kda")
             kda_text = f"{kda:.2f}" if isinstance(kda, (int, float)) else "-"
-            queue = str(match.get("queue") or "")
+            kda_x = outer + 310
+            draw.text((kda_x, y + 20), f"{kills} / {deaths} / {assists}", fill=text, font=kda_font)
+            draw.text((kda_x, y + 55), f"KDA {kda_text}", fill=cyan, font=small_font)
+
+            stat_x = outer + 458
+            damage = safe_int(match.get("damage"), 0)
+            gold_value = safe_int(match.get("gold"), 0)
+            cs_value = safe_int(match.get("cs"), 0) + safe_int(match.get("jungle_cs"), 0)
+            vision = safe_int(match.get("vision_score"), 0)
+            draw.text((stat_x, y + 18), f"伤害 {damage:,}", fill=text, font=small_font)
+            draw.text((stat_x, y + 40), f"金币 {gold_value:,}", fill=muted, font=small_font)
+            draw.text((stat_x, y + 62), f"补刀 {cs_value} · 视野 {vision}", fill=muted, font=tiny_font)
+
+            items_x = outer + 602
+            item_ids = [x for x in (match.get("item_ids") or []) if safe_int(x, 0)][:6]
+            for item_index in range(6):
+                icon_x = items_x + item_index * 30
+                if item_index < len(item_ids):
+                    item_url = _item_icon_url(item_ids[item_index])
+                    paste_icon(item_url, icon_x, y + 18, 26, radius=5, border=(73, 86, 112))
+                else:
+                    draw.rounded_rectangle((icon_x, y + 18, icon_x + 26, y + 44), radius=5, fill=(38, 45, 62), outline=(62, 70, 90))
+            spells = " / ".join(str(x) for x in (match.get("spells") or [])[:2])
+            runes = " / ".join(str(x) for x in (match.get("runes") or [])[:2])
+            lower_text = " · ".join(filter(None, [spells, runes]))
+            draw.text((items_x, y + 57), fit_text(draw, lower_text, tiny_font, 184), fill=muted, font=tiny_font)
+
+            time_x = width - outer - 18
             duration = format_duration(match.get("duration"))
-            position = str(match.get("position") or "")
-            draw.text((padding, y), f"{idx}.", fill=(93, 103, 122), font=body_font)
-            draw.text((padding + 42, y), result, fill=color, font=label_font)
-            draw.text((padding + 88, y), fit_text(draw, champion, label_font, 185), fill=(28, 36, 52), font=label_font)
+            game_time = str(match.get("game_time") or "-")
+            draw.text((time_x, y + 20), duration, fill=text, font=small_font, anchor="ra")
+            draw.text((time_x, y + 48), fit_text(draw, game_time, tiny_font, 114), fill=muted, font=tiny_font, anchor="ra")
+            draw.text((time_x, y + 69), f"#{index + 1}", fill=(119, 132, 155), font=tiny_font, anchor="ra")
 
-            left_detail = f"{position}  {kills}/{deaths}/{assists}  KDA {kda_text}  {duration}".strip()
-            draw.text((padding + 286, y + 2), fit_text(draw, left_detail, body_font, 330), fill=(45, 54, 72), font=body_font)
-            draw.text((padding + 630, y + 2), fit_text(draw, queue, body_font, 170), fill=(45, 54, 72), font=body_font)
-            draw.text((width - 222, y + 4), fit_text(draw, game_time, tiny_font, 178), fill=(120, 128, 142), font=tiny_font)
+        footer_y = height - footer_height - outer + 12
+        draw.line((outer + 10, footer_y - 10, width - outer - 10, footer_y - 10), fill=line, width=1)
+        draw.text((outer + 14, footer_y + 5), image_watermark(), fill=muted, font=small_font)
+        draw.text((width - outer - 14, footer_y + 5), "图片已压缩并限制尺寸", fill=(112, 126, 148), font=tiny_font, anchor="ra")
 
-            spell_text = " / ".join(str(x) for x in (match.get("spells") or [])[:2])
-            rune_text = " / ".join(str(x) for x in (match.get("runes") or [])[:3])
-            item_text = "、".join(str(x) for x in (match.get("items") or [])[:6])
-            combat = (
-                f"伤害 {num_text(match.get('damage'))}  承伤 {num_text(match.get('damage_taken'))}  "
-                f"金币 {num_text(match.get('gold'))}  补刀 {num_text(match.get('cs'))}+{num_text(match.get('jungle_cs'))}  "
-                f"视野 {num_text(match.get('vision_score'))}"
-            )
-            draw.text((padding + 42, y + 36), fit_text(draw, combat, small_font, width - padding * 2 - 42), fill=(93, 103, 122), font=small_font)
-            more_parts = []
-            if spell_text:
-                more_parts.append(f"技能 {spell_text}")
-            if rune_text:
-                more_parts.append(f"符文 {rune_text}")
-            if item_text:
-                more_parts.append(f"装备 {item_text}")
-            draw.text((padding + 42, y + 66), fit_text(draw, "  ".join(more_parts), tiny_font, width - padding * 2 - 42), fill=(93, 103, 122), font=tiny_font)
-            draw.line((padding + 42, y + row_height - 16, width - padding, y + row_height - 16), fill=(238, 242, 247), width=1)
-            y += row_height
-
-        try:
-            watermark_box = draw.textbbox((0, 0), watermark, font=tiny_font)
-            watermark_width = watermark_box[2] - watermark_box[0]
-        except Exception:
-            watermark_width = 260
-        draw.text((width - padding - watermark_width, height - 44), watermark, fill=(154, 164, 181), font=tiny_font)
-
-        buffer = io.BytesIO()
-        image.save(buffer, format="PNG", optimize=True)
-        return Response(content=buffer.getvalue(), media_type="image/png")
+        encoded = encode_png_limited(image)
+        return Response(
+            content=encoded,
+            media_type="image/png",
+            headers={"X-Image-Bytes": str(len(encoded)), "Cache-Control": "no-store"},
+        )
     except Exception as exc:
         logger.warning("cross_query image png generation failed, falling back to svg: %s", exc)
         return build_cross_svg_response(payload)
