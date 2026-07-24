@@ -89,6 +89,20 @@ def read_main_config() -> dict[str, Any]:
     return _apply_missing_example_values(management.read_main_config())
 
 
+def _validate_patch_values(patch: dict[str, Any]) -> None:
+    for key, value in patch.items():
+        spec = management._FIELD_BY_KEY.get(key)
+        if spec is None or spec.get("type") == "secret":
+            continue
+        try:
+            management._normalize_main_value(spec, value)
+        except (TypeError, ValueError) as exc:
+            message = str(exc)
+            if key in message:
+                raise
+            raise ValueError(f"{key}: {message}") from exc
+
+
 def update_main_config(patch: dict[str, Any]) -> dict[str, Any]:
     _ensure_main_fields()
     if not isinstance(patch, dict):
@@ -112,6 +126,7 @@ def update_main_config(patch: dict[str, Any]) -> dict[str, Any]:
         if fallback is not None and str(fallback).strip() != "":
             normalized_patch[key] = fallback
 
+    _validate_patch_values(normalized_patch)
     return management.update_main_config(normalized_patch)
 
 
