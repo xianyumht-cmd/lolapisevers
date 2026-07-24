@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import requests
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 
 from .admin_api import build_admin_overview
@@ -116,7 +116,12 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     @app.post("/admin/main-config")
     async def admin_save_main_config(patch: dict[str, Any]) -> dict[str, Any]:
-        return await asyncio.to_thread(update_main_config, patch)
+        try:
+            return await asyncio.to_thread(update_main_config, patch)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f"主接口配置文件写入失败：{exc}") from exc
 
     @app.get("/admin/lanzou-config")
     async def admin_lanzou_config() -> dict[str, Any]:
