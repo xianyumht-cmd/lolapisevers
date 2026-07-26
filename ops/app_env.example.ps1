@@ -25,6 +25,14 @@ $env:IMAGE_MAX_BYTES = "760000"
 $env:IMAGE_MAX_WIDTH = "1080"
 $env:IMAGE_MAX_HEIGHT = "1800"
 
+# Persistent image assets
+# 0 days means permanent storage. Known assets use stable filenames such as champion\236.png.
+$env:IMAGE_ASSET_DISK_CACHE_ENABLED = "1"
+$env:IMAGE_ASSET_CACHE_DIR = "data\image-cache"
+$env:IMAGE_ASSET_CACHE_TTL_DAYS = "0"
+$env:IMAGE_ASSET_SYNC_WORKERS = "8"
+$env:IMAGE_ASSET_SYNC_TIMEOUT_SECONDS = "8"
+
 # Data sources
 $env:SHARD_DATA_URL = "https://raw.githubusercontent.com/badspacebar/release/master/files/shards.json"
 $env:SHARD_HERO_URL = "https://game.gtimg.cn/images/lol/act/img/js/heroList/hero_list.js"
