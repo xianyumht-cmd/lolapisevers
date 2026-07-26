@@ -16,6 +16,7 @@ fid/
 ops/*.bak.*
 ops/app_env.ps1
 ops/app_env.local.ps1
+build-info.json
 
 lanzou_update_push_api_server/config.json
 lanzou_update_push_api_server/state.json

@@ -75,19 +75,26 @@ jobs:
           Get-Content node-check.txt -Raw | Write-Error
           exit 1
 
-      - name: Validate PowerShell supervisor syntax
+      - name: Validate PowerShell operations scripts
         shell: pwsh
         run: |
-          $tokens = $null
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-            (Resolve-Path "ops/run_service.ps1"),
-            [ref]$tokens,
-            [ref]$errors
-          ) | Out-Null
-          if ($errors.Count -gt 0) {
-            $errors | ForEach-Object { Write-Error $_.Message }
-            exit 1
+          $files = @(
+            "ops/run_service.ps1",
+            "scripts/Generate-BuildInfo.ps1",
+            "scripts/RuntimeSourceManifest.ps1"
+          )
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $file),
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "$file`: $($_.Message)" }
+              exit 1
+            }
           }
 
       - name: Remove generated diagnostics

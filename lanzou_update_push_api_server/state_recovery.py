@@ -10,7 +10,15 @@ from typing import Any
 
 
 def default_state() -> dict[str, Any]:
-    return {"version": 1, "snapshots": {}, "events": [], "last_scan": {}}
+    return {
+        "version": 5,
+        "snapshots": {},
+        "events": [],
+        "last_scan": {},
+        "pending_deliveries": {},
+        "orphaned_watchers": {},
+        "guard_candidates": {},
+    }
 
 
 def _write_json_atomic(path: Path, data: dict[str, Any]) -> None:

@@ -105,12 +105,23 @@ class LanzouUpdateMonitorTests(unittest.TestCase):
 
         class FailingProvider:
             def fetch(self, _watcher, _config):
-                raise ProviderError("lanzou_web: anti-bot challenge page returned")
+                raise ProviderError("anti_bot_challenge")
 
         chain.providers["lanzou_web"] = FailingProvider()
 
-        with self.assertRaisesRegex(ProviderError, r"^lanzou_web: anti-bot challenge page returned$"):
+        with self.assertRaisesRegex(ProviderError, r"^providers_unavailable$") as raised:
             chain.fetch(config.watchers[0])
+        self.assertEqual(
+            raised.exception.attempts,
+            [
+                {
+                    "provider": "lanzou_web",
+                    "error_code": "anti_bot_challenge",
+                    "error_class": "ProviderError",
+                    "retryable": True,
+                }
+            ],
+        )
 
     def test_lanzou_web_provider_retries_browser_profile_after_challenge(self):
         original_session = providers.requests.Session
@@ -196,7 +207,7 @@ class LanzouUpdateMonitorTests(unittest.TestCase):
                     [{"target": "webhook", "ok": True, "status_code": 204}],
                 ]
             )
-            service._notify_targets = lambda _event: next(notify_results)
+            service._notify_targets = lambda _event, *_target_names: next(notify_results)
 
             failed = asyncio.run(service.scan_watcher("demo", notify=True))
 
@@ -204,12 +215,15 @@ class LanzouUpdateMonitorTests(unittest.TestCase):
             self.assertFalse(failed["snapshot_committed"])
             self.assertTrue(failed["notification_pending"])
             self.assertEqual(service.store.snapshot_for("demo").signature, previous.signature)
+            failed_event_id = failed["event"]["id"]
 
             retried = asyncio.run(service.scan_watcher("demo", notify=True))
 
             self.assertTrue(retried["changed"])
             self.assertTrue(retried["snapshot_committed"])
             self.assertFalse(retried["notification_pending"])
+            self.assertEqual(retried["event"]["id"], failed_event_id)
+            self.assertEqual(retried["event"]["delivery_state"], "complete")
             self.assertEqual(service.store.snapshot_for("demo").signature, current.signature)
 
     def test_non_notifying_scan_does_not_consume_next_notification(self):
@@ -231,7 +245,7 @@ class LanzouUpdateMonitorTests(unittest.TestCase):
 
             service.provider_chain = StaticProvider()
             notifications = []
-            service._notify_targets = lambda event: notifications.append(event) or [{"target": "webhook", "ok": True}]
+            service._notify_targets = lambda event, *_target_names: notifications.append(event) or [{"target": "webhook", "ok": True}]
 
             preview = asyncio.run(service.scan_watcher("demo", notify=False))
 
@@ -249,11 +263,77 @@ class LanzouUpdateMonitorTests(unittest.TestCase):
             self.assertTrue(delivered["snapshot_committed"])
             self.assertEqual(service.store.snapshot_for("demo").signature, current.signature)
 
+    def test_partial_delivery_retries_only_failed_target_with_stable_event_id(self):
+        with TemporaryDirectory() as temp_dir:
+            watcher = WatcherConfig(id="demo", title="Demo", url="https://example.test")
+            config = AppConfig(
+                state_path=Path(temp_dir) / "state.json",
+                watchers=[watcher],
+                notify_targets=[
+                    NotifyTargetConfig(name="groupguard-a", url="https://notify-a.test"),
+                    NotifyTargetConfig(name="groupguard-b", url="https://notify-b.test"),
+                ],
+            )
+            service = LanzouMonitorService(config)
+            previous = snapshot([FileEntry(id="old", name="old.zip")])
+            current = snapshot([FileEntry(id="new", name="new.zip")])
+            service.store.set_snapshot(previous)
+
+            class StaticProvider:
+                def fetch(self, _watcher):
+                    return current
+
+            service.provider_chain = StaticProvider()
+            attempts = []
+
+            def notify(_event, target_names):
+                attempts.append(set(target_names))
+                if len(attempts) == 1:
+                    return [
+                        {"target": "groupguard-a", "ok": True, "status_code": 200},
+                        {"target": "groupguard-b", "ok": False, "status_code": 503},
+                    ]
+                return [{"target": "groupguard-b", "ok": True, "status_code": 200}]
+
+            service._notify_targets = notify
+
+            first = asyncio.run(service.scan_watcher("demo", notify=True))
+            second = asyncio.run(service.scan_watcher("demo", notify=True))
+
+            self.assertEqual(first["event"]["delivery_state"], "partial")
+            self.assertFalse(first["snapshot_committed"])
+            self.assertEqual(second["event"]["delivery_state"], "complete")
+            self.assertTrue(second["snapshot_committed"])
+            self.assertEqual(first["event"]["id"], second["event"]["id"])
+            self.assertEqual(attempts[0], {"groupguard-a", "groupguard-b"})
+            self.assertEqual(attempts[1], {"groupguard-b"})
+
+    def test_test_notification_does_not_report_success_without_targets(self):
+        with TemporaryDirectory() as temp_dir:
+            watcher = WatcherConfig(id="demo", title="Demo", url="https://example.test")
+            service = LanzouMonitorService(
+                AppConfig(
+                    state_path=Path(temp_dir) / "state.json",
+                    watchers=[watcher],
+                    notify_targets=[],
+                )
+            )
+
+            result = asyncio.run(service.send_test_event("demo"))
+
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["delivery_state"], "skipped")
+
     def test_concurrent_scans_for_same_watcher_are_serialized(self):
         with TemporaryDirectory() as temp_dir:
             watcher = WatcherConfig(id="demo", title="Demo", url="https://example.test")
-            config = AppConfig(state_path=Path(temp_dir) / "state.json", watchers=[watcher])
+            config = AppConfig(
+                state_path=Path(temp_dir) / "state.json",
+                watchers=[watcher],
+                notify_targets=[NotifyTargetConfig(name="webhook", url="https://notify.test")],
+            )
             service = LanzouMonitorService(config)
+            service._notify_targets = lambda _event, *_target_names: [{"target": "webhook", "ok": True}]
             baseline = snapshot([FileEntry(id="baseline", name="baseline.zip")])
             first_current = snapshot([FileEntry(id="first", name="first.zip")])
             second_current = snapshot([FileEntry(id="second", name="second.zip")])

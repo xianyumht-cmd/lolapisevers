@@ -45,10 +45,20 @@ class AppConfig:
     wer_api_url_param: str = "url"
     wer_api_password_param: str = "pwd"
     wer_api_key: str = ""
-    notification_template: str = "hello，{title}网盘检测到更新"
+    notification_template: str = "检测到网盘更新：{title}\n{url}"
     state_path: Path = DEFAULT_STATE_PATH
     watchers: list[WatcherConfig] = field(default_factory=list)
     notify_targets: list[NotifyTargetConfig] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        names: set[str] = set()
+        for index, target in enumerate(self.notify_targets, start=1):
+            name = str(target.name or "").strip()
+            if not name:
+                raise ValueError(f"notify target name must be non-empty (index {index})")
+            if name in names:
+                raise ValueError(f"notify target names must be unique (index {index})")
+            names.add(name)
 
 
 def _as_bool(value: Any, fallback: bool) -> bool:
@@ -131,16 +141,23 @@ def _parse_notify_targets(raw: Any) -> list[NotifyTargetConfig]:
     if not isinstance(raw, list):
         return []
     targets: list[NotifyTargetConfig] = []
+    names: set[str] = set()
     for index, item in enumerate(raw, start=1):
         if not isinstance(item, dict):
             continue
         url = str(item.get("url") or "").strip()
         if not url:
             continue
+        name = str(item.get("name") or "").strip()
+        if not name:
+            raise ValueError(f"notify target name must be non-empty (index {index})")
+        if name in names:
+            raise ValueError(f"notify target names must be unique (index {index})")
+        names.add(name)
         headers = item.get("headers") if isinstance(item.get("headers"), dict) else {}
         targets.append(
             NotifyTargetConfig(
-                name=str(item.get("name") or f"target-{index}").strip(),
+                name=name,
                 url=url,
                 enabled=_as_bool(item.get("enabled"), True),
                 timeout_seconds=_as_float(item.get("timeout_seconds"), 8.0),
@@ -185,7 +202,7 @@ def load_config(path: str | os.PathLike[str] | None = None) -> AppConfig:
         wer_api_url_param=str(raw.get("wer_api_url_param") or "url").strip(),
         wer_api_password_param=str(raw.get("wer_api_password_param") or "pwd").strip(),
         wer_api_key=str(os.getenv("LANZOU_API_KEY") or raw.get("wer_api_key") or raw.get("api_key") or "").strip(),
-        notification_template=str(raw.get("notification_template") or "hello，{title}网盘检测到更新"),
+        notification_template=str(raw.get("notification_template") or "检测到网盘更新：{title}\n{url}"),
         state_path=state_path,
         watchers=_parse_watchers(raw.get("watchers")),
         notify_targets=_parse_notify_targets(raw.get("notify_targets")),

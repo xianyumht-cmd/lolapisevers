@@ -6,6 +6,7 @@
 $env:APP_HOST = "0.0.0.0"
 $env:APP_PORT = "5001"
 $env:PYTHONIOENCODING = "utf-8"
+$env:REQUIRE_BUILD_INFO = "1"
 
 # WebUI security
 # Leave empty for loopback-only administration. Set a strong random token before allowing LAN access.
@@ -27,6 +28,15 @@ $env:IMAGE_MAX_HEIGHT = "1800"
 # Data sources
 $env:SHARD_DATA_URL = "https://raw.githubusercontent.com/badspacebar/release/master/files/shards.json"
 $env:SHARD_HERO_URL = "https://game.gtimg.cn/images/lol/act/img/js/heroList/hero_list.js"
+
+# LOL ban providers
+# JSON array order is the fallback order. Put real URLs, tokens, headers, and form
+# fields only in ops\app_env.local.ps1; the example intentionally has no live provider.
+$env:LOL_BAN_PROVIDERS_JSON = "[]"
+$env:LOL_BAN_TIMEOUT = "10"
+$env:LOL_BAN_NORMAL_CACHE_SECONDS = "60"
+$env:LOL_BAN_BANNED_CACHE_SECONDS = "300"
+$env:LOL_BAN_STALE_CACHE_SECONDS = "86400"
 
 # MySQL
 $env:MYSQL_HOST = "127.0.0.1"

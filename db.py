@@ -115,6 +115,13 @@ class Database:
                 )
         self.logger.info("数据库与表初始化完成")
 
+    def ping(self) -> bool:
+        """Verify that the configured database can execute a trivial query."""
+        with self._connection(with_db=True) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+                return cur.fetchone() is not None
+
     def upsert_summoner(self, name: str, puuid: str, last_update: Optional[datetime] = None) -> None:
         """插入或更新召唤师记录。"""
         ts = last_update or datetime.now()

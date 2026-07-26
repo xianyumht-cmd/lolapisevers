@@ -29,9 +29,15 @@ MAIN_CONFIG_FIELDS: list[dict[str, Any]] = [
     {"key": "APP_HOST", "label": "主接口监听地址", "section": "主接口", "type": "text"},
     {"key": "APP_PORT", "label": "主接口端口", "section": "主接口", "type": "int", "min": 1, "max": 65535},
     {"key": "PYTHONIOENCODING", "label": "Python 输出编码", "section": "主接口", "type": "text"},
+    {"key": "REQUIRE_BUILD_INFO", "label": "托管启动强制构建追踪", "section": "主接口", "type": "bool"},
     {"key": "CACHE_SECONDS", "label": "通用缓存秒数", "section": "缓存", "type": "int", "min": 1, "max": 86400},
     {"key": "SHARD_CACHE_SECONDS", "label": "云顶合集缓存秒数", "section": "缓存", "type": "int", "min": 1, "max": 86400},
     {"key": "ARAM_AUGMENT_CACHE_SECONDS", "label": "大乱斗缓存秒数", "section": "缓存", "type": "int", "min": 1, "max": 86400},
+    {"key": "LOL_BAN_PROVIDERS_JSON", "label": "封号查询 Provider JSON", "section": "封号查询", "type": "secret"},
+    {"key": "LOL_BAN_TIMEOUT", "label": "封号上游超时秒数", "section": "封号查询", "type": "int", "min": 1, "max": 60},
+    {"key": "LOL_BAN_NORMAL_CACHE_SECONDS", "label": "正常状态缓存秒数", "section": "封号查询", "type": "int", "min": 1, "max": 86400},
+    {"key": "LOL_BAN_BANNED_CACHE_SECONDS", "label": "封禁状态缓存秒数", "section": "封号查询", "type": "int", "min": 1, "max": 86400},
+    {"key": "LOL_BAN_STALE_CACHE_SECONDS", "label": "最近成功结果最长降级秒数", "section": "封号查询", "type": "int", "min": 0, "max": 604800},
     {"key": "MYSQL_HOST", "label": "MySQL 地址", "section": "MySQL", "type": "text"},
     {"key": "MYSQL_PORT", "label": "MySQL 端口", "section": "MySQL", "type": "int", "min": 1, "max": 65535},
     {"key": "MYSQL_USER", "label": "MySQL 用户", "section": "MySQL", "type": "text"},
@@ -91,7 +97,7 @@ def _backup_file(path: Path) -> str:
 def _parse_ps_value(raw: str) -> str:
     value = raw.strip()
     if len(value) >= 2 and value[0] == value[-1] == '"':
-        return value[1:-1].replace('`"', '"').replace('``', '`')
+        return value[1:-1].replace('`$', '$').replace('`"', '"').replace('``', '`')
     if len(value) >= 2 and value[0] == value[-1] == "'":
         return value[1:-1].replace("''", "'")
     return value
@@ -99,7 +105,7 @@ def _parse_ps_value(raw: str) -> str:
 
 def _format_ps_value(value: Any) -> str:
     text = str(value)
-    escaped = text.replace('`', '``').replace('"', '`"')
+    escaped = text.replace('`', '``').replace('$', '`$').replace('"', '`"')
     return f'"{escaped}"'
 
 
@@ -304,15 +310,22 @@ def update_lanzou_config(patch: dict[str, Any]) -> tuple[AppConfig, str]:
         if not isinstance(patch["notify_targets"], list):
             raise ValueError("notify_targets must be a list")
         targets: list[dict[str, Any]] = []
+        target_names: set[str] = set()
         for index, raw in enumerate(patch["notify_targets"], start=1):
             if not isinstance(raw, dict):
                 raise ValueError(f"notify target {index} must be an object")
             headers = raw.get("headers") or {}
             if not isinstance(headers, dict):
                 raise ValueError(f"notify target {index} headers must be an object")
+            target_name = str(raw.get("name") or "").strip()
+            if not target_name:
+                raise ValueError(f"notify target name must be non-empty (index {index})")
+            if target_name in target_names:
+                raise ValueError(f"notify target names must be unique (index {index})")
+            target_names.add(target_name)
             targets.append(
                 {
-                    "name": str(raw.get("name") or f"target-{index}").strip(),
+                    "name": target_name,
                     "enabled": raw.get("enabled") is not False,
                     "url": _validate_http_url(raw.get("url"), f"notify target {index} url"),
                     "timeout_seconds": float(raw.get("timeout_seconds") or 8.0),

@@ -20,6 +20,15 @@ class AppContext:
         self.cross_cache = TTLCache(ttl_seconds=config.cache_seconds)
         self.shard_cache = TTLCache(ttl_seconds=config.shard_cache_seconds)
         self.aram_augment_cache = TTLCache(ttl_seconds=config.aram_augment_cache_seconds)
+        self.aram_image_cache_seconds = max(60, min(config.aram_augment_cache_seconds, 600))
+        self.aram_image_cache = TTLCache(
+            ttl_seconds=self.aram_image_cache_seconds,
+            max_size=128,
+        )
+        self._aram_image_locks = [
+            threading.Lock()
+            for _ in range(64)
+        ]
         # Remote icons are shared by both image renderers. A bounded cache avoids
         # repeated downloads without letting image bytes grow without limit.
         self.image_asset_cache = TTLCache(
@@ -33,6 +42,11 @@ class AppContext:
             timeout_ms=config.so1_timeout_ms,
         )
         self.ensure_db()
+
+    def aram_image_lock(self, key: str) -> threading.Lock:
+        return self._aram_image_locks[
+            hash(key) % len(self._aram_image_locks)
+        ]
 
     def ensure_db(self) -> Optional[Database]:
         if self.db is not None:

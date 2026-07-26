@@ -9,6 +9,13 @@ from lanzou_update_push_api_server import management
 
 
 class ManagementTests(unittest.TestCase):
+    def test_powershell_value_round_trip_escapes_variable_expansion(self):
+        value = '{"url":"https://example.test/query?literal=$env:SHOULD_NOT_EXPAND","note":"`quoted`"}'
+        formatted = management._format_ps_value(value)
+
+        self.assertIn("`$env:SHOULD_NOT_EXPAND", formatted)
+        self.assertEqual(management._parse_ps_value(formatted), value)
+
     def test_main_config_save_preserves_blank_secret_and_creates_backup(self):
         with TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

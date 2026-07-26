@@ -3,6 +3,7 @@ import logging
 from fastapi import FastAPI
 import uvicorn
 
+from core.build_info import load_build_info
 from core.config import load_config
 from core.context import create_app_context
 from core.lifespan import lifespan
@@ -22,8 +23,14 @@ def build_app() -> FastAPI:
     logger = logging.getLogger("LOLDataSystem")
     config = load_config()
 
-    app = FastAPI(lifespan=lifespan)
+    build_info = load_build_info()
+    app = FastAPI(
+        title="LOL API Services",
+        version=str(build_info.get("release") or "unknown"),
+        lifespan=lifespan,
+    )
     app.state.config = config
+    app.state.build_info = build_info
     app.state.ctx = create_app_context(config=config)
     app.state.so1_client = app.state.ctx.so1_client
     app.state.db_config = config.db_config

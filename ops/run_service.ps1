@@ -8,6 +8,46 @@ if (Test-Path $envFile) {
 
 Set-Location $projectRoot
 
+$requireBuildInfoValue = "$($env:REQUIRE_BUILD_INFO)".Trim().ToLowerInvariant()
+$requireBuildInfo = $requireBuildInfoValue -notin @("0", "false", "no", "off")
+if ($requireBuildInfo) {
+  $buildInfoPath = Join-Path $projectRoot "build-info.json"
+  $manifestScript = Join-Path $projectRoot "scripts\RuntimeSourceManifest.ps1"
+  if (-not (Test-Path -LiteralPath $buildInfoPath)) {
+    throw "Required deployment metadata is missing: $buildInfoPath"
+  }
+  if (-not (Test-Path -LiteralPath $manifestScript -PathType Leaf)) {
+    throw "Runtime source manifest verifier is missing: $manifestScript"
+  }
+  try {
+    $buildInfo = Get-Content -LiteralPath $buildInfoPath -Raw -Encoding utf8 | ConvertFrom-Json
+  } catch {
+    throw "Required deployment metadata is invalid JSON: $buildInfoPath"
+  }
+  if ("$($buildInfo.commit_sha)" -notmatch "^[0-9a-fA-F]{40}$") {
+    throw "build-info.json must contain a full 40-character commit_sha."
+  }
+  if ($buildInfo.dirty -ne $false) {
+    throw "build-info.json marks the artifact as dirty; refusing managed startup."
+  }
+  . $manifestScript
+  $validatedManifest = Assert-RuntimeSourceManifest `
+    -RepositoryRoot $projectRoot `
+    -ExpectedManifest $buildInfo.source_manifest
+  Write-Output "Validated runtime source manifest: files=$($validatedManifest.file_count) aggregate=$($validatedManifest.aggregate_sha256)"
+
+  # Pin public build metadata to the same validated file. This prevents stale
+  # inherited BUILD_* variables from making the health endpoints report a
+  # different release than the one the supervisor accepted.
+  $env:BUILD_INFO_PATH = $buildInfoPath
+  $env:BUILD_COMMIT_SHA = "$($buildInfo.commit_sha)"
+  $env:BUILD_DIRTY = "false"
+  $env:BUILD_TIME = "$($buildInfo.build_time_utc)"
+  $env:BUILD_RELEASE = "$($buildInfo.release)"
+  $env:CONTRACT_VERSION = "$($buildInfo.contract_version)"
+  $env:CONFIG_SCHEMA_VERSION = "$($buildInfo.config_schema_version)"
+}
+
 if (-not $env:PYTHONIOENCODING) {
   $env:PYTHONIOENCODING = "utf-8"
 }
