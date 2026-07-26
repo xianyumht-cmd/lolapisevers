@@ -9,6 +9,8 @@ tools/*.zip
 fid/
 *.lnk
 
+data/image-cache/
+
 .so1_state.json
 .so1_token.txt
 .env
