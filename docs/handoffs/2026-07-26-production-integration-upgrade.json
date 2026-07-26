@@ -1,0 +1,1023 @@
+{
+  "$schema": "./schema/cross-repo-upgrade-handoff.v1.schema.json",
+  "schema_version": "1.0.0",
+  "record_type": "cross_repository_production_integration_upgrade_handoff",
+  "handoff_id": "lol-groupguard-production-upgrade-20260726",
+  "release_id": "2026.07.26-integration-upgrade",
+  "generated_at": "2026-07-26T10:22:00Z",
+  "updated_at": "2026-07-26T10:22:00Z",
+  "state": "completed",
+  "overall_gate": "partial",
+  "source_audit": {
+    "audit_id": "lol-groupguard-prod-integration-20260726",
+    "record_type": "cross_repository_production_integration_audit",
+    "schema_version": "1.0.0",
+    "artifacts": [
+      {
+        "repository": "lolapisevers",
+        "path": "docs/audits/2026-07-26-production-integration-audit.json",
+        "sha256": "5650346076aa23be1474dd15327359a46e309ec21a16bb24ec4f0f4ef1719c58",
+        "media_type": "application/json"
+      },
+      {
+        "repository": "lolapisevers",
+        "path": "docs/audits/2026-07-26-production-integration-audit.md",
+        "sha256": "50b6913a75a5d1094b72b357f48bc0c4224f3ece7dd97dbfb569b8f33b683034",
+        "media_type": "text/markdown"
+      },
+      {
+        "repository": "my-napcat-sys",
+        "path": "onebot-plugin-groupguard/docs/audits/2026-07-26-production-integration-audit.json",
+        "sha256": "5650346076aa23be1474dd15327359a46e309ec21a16bb24ec4f0f4ef1719c58",
+        "media_type": "application/json"
+      },
+      {
+        "repository": "my-napcat-sys",
+        "path": "onebot-plugin-groupguard/docs/audits/2026-07-26-production-integration-audit.md",
+        "sha256": "50b6913a75a5d1094b72b357f48bc0c4224f3ece7dd97dbfb569b8f33b683034",
+        "media_type": "text/markdown"
+      }
+    ],
+    "finding_ids": [
+      "GG-INT-001",
+      "GG-CB-001",
+      "CROSS-HLT-001",
+      "LANZOU-CFG-001",
+      "LOL-PERF-001",
+      "LOL-BAN-001",
+      "GG-UI-001",
+      "GG-CFG-001",
+      "LANZOU-MON-001",
+      "LOL-REL-001",
+      "OPS-TRACE-001",
+      "REPO-HYGIENE-001"
+    ]
+  },
+  "repositories": [
+    {
+      "name": "lolapisevers",
+      "role": "LOL query API and Lanzou monitor producer",
+      "local_path": "D:\\project2\\lolapisevers",
+      "remote_url": "https://github.com/xianyumht-cmd/lolapisevers",
+      "branch": "codex/production-integration-audit-20260726",
+      "base_revision": "e092a2134d281c4bd4987cc18f98aaf4af8e7ce9",
+      "target_revision": "bbc8ea2d2687820e4c4a3b400c7568a771f10519",
+      "status": "deployed",
+      "pull_request": {
+        "number": 7,
+        "url": "https://github.com/xianyumht-cmd/lolapisevers/pull/7",
+        "state": "draft",
+        "head_revision": "bbc8ea2d2687820e4c4a3b400c7568a771f10519"
+      }
+    },
+    {
+      "name": "my-napcat-sys",
+      "role": "GroupGuard OneBot consumer and callback delivery service",
+      "local_path": "D:\\project2\\napcatplugin\\lengxi_repo",
+      "remote_url": "https://github.com/xianyumht-cmd/my-napcat-sys",
+      "branch": "codex/production-integration-audit-20260726",
+      "base_revision": "e44dfce91d49babaa9ddcaa1acde12b895b66f0e",
+      "target_revision": "d4cb5b7135fb30272ed60188d38e7fe0bbd566e8",
+      "status": "deployed",
+      "pull_request": {
+        "number": 6,
+        "url": "https://github.com/xianyumht-cmd/my-napcat-sys/pull/6",
+        "state": "draft",
+        "head_revision": "d4cb5b7135fb30272ed60188d38e7fe0bbd566e8"
+      }
+    }
+  ],
+  "contracts": [
+    {
+      "id": "groupguard-lol-api-v2",
+      "direction": "lolapisevers -> GroupGuard",
+      "status": "pass",
+      "summary": "GroupGuard uses the single intranet API base for battle, ban, and ARAM queries; the ban endpoint owns provider fallback and cache semantics.",
+      "version_before": "implicit legacy endpoints",
+      "version_after": "groupguard-lol-api.v2",
+      "producer_repository": "lolapisevers",
+      "consumer_repositories": [
+        "my-napcat-sys"
+      ],
+      "verification_run_ids": [
+        "contracts-20260726100237415",
+        "contracts-20260726100350856",
+        "production-query-tester-20260726"
+      ],
+      "evidence": [
+        {
+          "kind": "endpoint",
+          "reference": "Production /livez, /readyz, /build-info and query endpoints on 192.168.3.100",
+          "result": "pass",
+          "secret_free": true
+        },
+        {
+          "kind": "test",
+          "reference": "GroupGuard query tester used the configured local service for lol_ban, lol_battle and lol_aram_augments",
+          "result": "pass",
+          "secret_free": true
+        }
+      ]
+    },
+    {
+      "id": "lanzou-callback-receipt-v2",
+      "direction": "Lanzou monitor -> GroupGuard -> authorized test group",
+      "status": "pass",
+      "summary": "Stable event identifiers, complete delivery receipts, persistent per-target idempotency, and duplicate suppression were verified against the authorized test group only.",
+      "version_before": "best-effort callback",
+      "version_after": "stable-event-id-complete-receipt",
+      "producer_repository": "lolapisevers",
+      "consumer_repositories": [
+        "my-napcat-sys"
+      ],
+      "verification_run_ids": [
+        "contracts-20260726100350856",
+        "production-monitor-notify-test-20260726"
+      ],
+      "evidence": [
+        {
+          "kind": "test",
+          "reference": "First callback completed and the repeated identical event was suppressed for group 805402626",
+          "result": "pass",
+          "secret_free": true
+        },
+        {
+          "kind": "endpoint",
+          "reference": "Monitor /notify/test returned HTTP 200 through the rotated runtime callback configuration",
+          "result": "pass",
+          "secret_free": true
+        }
+      ]
+    },
+    {
+      "id": "production-health-and-build-traceability",
+      "direction": "operators -> both production components",
+      "status": "partial",
+      "summary": "Both components expose exact build revisions and live endpoints. Core query and messaging readiness pass; update-monitor readiness remains degraded by existing watcher data debt.",
+      "version_before": null,
+      "version_after": "build-info-v1-and-live-ready",
+      "producer_repository": "lolapisevers",
+      "consumer_repositories": [
+        "my-napcat-sys"
+      ],
+      "verification_run_ids": [
+        "production-build-verification-20260726",
+        "contracts-20260726100350856"
+      ],
+      "evidence": [
+        {
+          "kind": "endpoint",
+          "reference": "lolapisevers build bbc8ea2 and GroupGuard build d4cb5b7 reported complete, clean revisions",
+          "result": "pass",
+          "secret_free": true
+        },
+        {
+          "kind": "observation",
+          "reference": "Lanzou monitor is running with zero pending watchers but reports four failed and ten orphan watchers",
+          "result": "partial",
+          "secret_free": true
+        }
+      ]
+    }
+  ],
+  "changes": [
+    {
+      "id": "service-query-contract-hardening",
+      "repository": "lolapisevers",
+      "finding_ids": [
+        "LOL-BAN-001",
+        "LOL-PERF-001",
+        "CROSS-HLT-001",
+        "OPS-TRACE-001"
+      ],
+      "summary": "Added unified ban providers, bounded caches and fallback, ARAM single-flight/image caching, real dependency health, and source-manifest build traceability.",
+      "files": [
+        "services/lolban_service.py",
+        "services/aram_augments_service.py",
+        "routers/health.py",
+        "scripts/RuntimeSourceManifest.ps1"
+      ],
+      "status": "completed",
+      "verification_run_ids": [
+        "service-unittest-104",
+        "service-ci-pr7",
+        "contracts-20260726100350856"
+      ]
+    },
+    {
+      "id": "service-monitor-delivery-hardening",
+      "repository": "lolapisevers",
+      "finding_ids": [
+        "GG-CB-001",
+        "LANZOU-CFG-001",
+        "LANZOU-MON-001"
+      ],
+      "summary": "Migrated state to schema 5, sanitized historical errors, added watcher-change guards, stable events, complete-receipt enforcement, and retryable per-target state.",
+      "files": [
+        "lanzou_update_push_api_server/monitor.py",
+        "lanzou_update_push_api_server/config.py",
+        "lanzou_update_push_api_server/state_recovery.py"
+      ],
+      "status": "completed",
+      "verification_run_ids": [
+        "service-unittest-104",
+        "contracts-20260726100350856"
+      ]
+    },
+    {
+      "id": "groupguard-query-and-image-integration",
+      "repository": "my-napcat-sys",
+      "finding_ids": [
+        "GG-INT-001",
+        "GG-UI-001",
+        "GG-CFG-001"
+      ],
+      "summary": "Made the local API authoritative, aligned exact query parameters, bounded streamed image delivery, and added machine-readable query verification.",
+      "files": [
+        "onebot-plugin-groupguard/src/services/interaction_service.ts",
+        "onebot-plugin-groupguard/src/services/lol_image_delivery.ts",
+        "onebot-plugin-groupguard/src/standalone/admin/query_api.ts"
+      ],
+      "status": "completed",
+      "verification_run_ids": [
+        "plugin-npm-test",
+        "production-query-tester-20260726"
+      ]
+    },
+    {
+      "id": "groupguard-callback-idempotency",
+      "repository": "my-napcat-sys",
+      "finding_ids": [
+        "GG-CB-001",
+        "LANZOU-MON-001"
+      ],
+      "summary": "Added persistent per-target callback receipts, corruption isolation, duplicate suppression, and delivery-state enforcement.",
+      "files": [
+        "onebot-plugin-groupguard/src/standalone/admin/lanzou_update_api.ts",
+        "onebot-plugin-groupguard/src/core/state-infra/plugin_state_communication_adapter.ts"
+      ],
+      "status": "completed",
+      "verification_run_ids": [
+        "plugin-npm-test",
+        "contracts-20260726100350856"
+      ]
+    },
+    {
+      "id": "release-and-rollback-hardening",
+      "repository": "my-napcat-sys",
+      "finding_ids": [
+        "LOL-REL-001",
+        "OPS-TRACE-001",
+        "REPO-HYGIENE-001"
+      ],
+      "summary": "Added clean builds, verified archives, exact runtime revision checks, atomic switch and rollback, and production-layout-aware backups.",
+      "files": [
+        "onebot-plugin-groupguard/scripts/ops/Backup-SnowLuma.ps1",
+        "onebot-plugin-groupguard/scripts/ops/Deploy-SnowLuma.ps1",
+        "onebot-plugin-groupguard/scripts/ops/Rollback-SnowLuma.ps1"
+      ],
+      "status": "completed",
+      "verification_run_ids": [
+        "plugin-npm-test",
+        "plugin-ci-pr6",
+        "production-deploy-20260726"
+      ]
+    },
+    {
+      "id": "runtime-backup-repository-hygiene",
+      "repository": "lolapisevers",
+      "finding_ids": [
+        "REPO-HYGIENE-001"
+      ],
+      "summary": "Preserved runtime rollback files while excluding backup and damaged-state patterns from future Git staging.",
+      "files": [
+        ".gitignore"
+      ],
+      "status": "completed",
+      "verification_run_ids": [
+        "final-secret-and-stage-audit-20260726"
+      ]
+    }
+  ],
+  "config_migrations": [
+    {
+      "id": "lolapisevers-runtime-config-v5",
+      "component": "lolapisevers and Lanzou monitor",
+      "required": true,
+      "status": "completed",
+      "entries": [
+        {
+          "name": "REQUIRE_BUILD_INFO",
+          "action": "update",
+          "sensitive": false,
+          "value_recorded": true,
+          "runtime_source": "ops/app_env.local.ps1",
+          "notes": "Enabled for production startup."
+        },
+        {
+          "name": "LOL_BAN_PROVIDERS_JSON",
+          "action": "add",
+          "sensitive": true,
+          "value_recorded": false,
+          "runtime_source": "ops/app_env.local.ps1",
+          "notes": "One configured provider is loaded at runtime; its address is intentionally omitted."
+        },
+        {
+          "name": "monitor state schema",
+          "action": "update",
+          "sensitive": false,
+          "value_recorded": true,
+          "runtime_source": "lanzou_update_push_api_server/state.json",
+          "notes": "Migrated to version 5; legacy error context was removed."
+        },
+        {
+          "name": "GroupGuard callback credential",
+          "action": "update",
+          "sensitive": true,
+          "value_recorded": false,
+          "runtime_source": "lanzou_update_push_api_server/config.json",
+          "notes": "Rotated and reloaded after deployment."
+        }
+      ],
+      "verification_run_ids": [
+        "production-build-verification-20260726",
+        "production-secret-rotation-20260726"
+      ]
+    },
+    {
+      "id": "groupguard-config-v8",
+      "component": "GroupGuard SnowLuma",
+      "required": true,
+      "status": "completed",
+      "entries": [
+        {
+          "name": "configVersion",
+          "action": "update",
+          "sensitive": false,
+          "value_recorded": true,
+          "runtime_source": "/mnt/sda1/groupguard/app/config/config.json",
+          "notes": "Set to version 8."
+        },
+        {
+          "name": "lolApiBaseUrl",
+          "action": "update",
+          "sensitive": false,
+          "value_recorded": true,
+          "runtime_source": "/mnt/sda1/groupguard/app/config/config.json",
+          "notes": "Points to the intranet LOL service on 192.168.3.100."
+        },
+        {
+          "name": "lanzouUpdatePush",
+          "action": "update",
+          "sensitive": false,
+          "value_recorded": true,
+          "runtime_source": "/mnt/sda1/groupguard/app/config/config.json",
+          "notes": "Enabled for group 805402626 only; private target count is zero."
+        },
+        {
+          "name": "GROUPGUARD_WEBUI_TOKEN",
+          "action": "update",
+          "sensitive": true,
+          "value_recorded": false,
+          "runtime_source": "/mnt/sda1/groupguard/app/config/snowluma.env",
+          "notes": "Rotated and persisted with mode 0600."
+        }
+      ],
+      "verification_run_ids": [
+        "production-deploy-20260726",
+        "production-secret-rotation-20260726"
+      ]
+    }
+  ],
+  "builds": [
+    {
+      "id": "build-lolapisevers-bbc8ea2",
+      "repository": "lolapisevers",
+      "revision": "bbc8ea2d2687820e4c4a3b400c7568a771f10519",
+      "created_at": "2026-07-26T09:35:54.8968452Z",
+      "status": "pass",
+      "commands": [
+        "python -m unittest discover -s tests -v",
+        "powershell -File scripts/Generate-BuildInfo.ps1 -Release 2026.07.26-integration-upgrade"
+      ],
+      "artifacts": [
+        {
+          "path": "build-info.json",
+          "type": "build metadata and 54-file source manifest",
+          "sha256": "08ee5059c47bb2f1ccc4444e15abf4b29302e9319a5e70a4167125c7d1e8cfd4",
+          "size_bytes": 20889
+        }
+      ]
+    },
+    {
+      "id": "build-groupguard-d4cb5b7",
+      "repository": "my-napcat-sys",
+      "revision": "d4cb5b7135fb30272ed60188d38e7fe0bbd566e8",
+      "created_at": "2026-07-26T09:54:26.067Z",
+      "status": "pass",
+      "commands": [
+        "npm test",
+        "powershell -File scripts/ops/Deploy-SnowLuma.ps1"
+      ],
+      "artifacts": [
+        {
+          "path": "onebot-plugin-groupguard/dist/snowluma-service.mjs",
+          "type": "SnowLuma runtime bundle",
+          "sha256": "778bea27b04ab6b9c2905780b515a52ef4509476fa553a863167db8da8f711a8",
+          "size_bytes": 1126122
+        },
+        {
+          "path": "onebot-plugin-groupguard/dist/build-info.json",
+          "type": "build metadata",
+          "sha256": "88fa4262f491f7a05e9d40825ab60cd281be26a97fcb69bf97879e79efff9247",
+          "size_bytes": 477
+        },
+        {
+          "path": "release-archive-20260726-175417",
+          "type": "ephemeral verified deployment archive",
+          "sha256": "ebe5714ce289e302d2f66cd815fcd9f9254307976be7758e9abb71fa9af2b58e"
+        }
+      ]
+    }
+  ],
+  "deployments": [
+    {
+      "id": "deploy-lolapisevers-production-20260726",
+      "environment": "production",
+      "component": "LOLDataSystem and Lanzou monitor",
+      "host_ref": "prod-lol-host-192.168.3.100",
+      "deploy_path": "D:\\project2\\lolapisevers",
+      "build_id": "build-lolapisevers-bbc8ea2",
+      "revision": "bbc8ea2d2687820e4c4a3b400c7568a771f10519",
+      "state": "verified",
+      "started_at": "2026-07-26T09:38:56Z",
+      "finished_at": "2026-07-26T10:00:30Z",
+      "backup_references": [
+        "20260726-173856-integration-upgrade manifest c714fd338339b3bdeb351fbcdaafff6b701d7fd339ece19442b16f0232f9c867",
+        "ACL-protected runtime configuration backups"
+      ],
+      "checks": [
+        {
+          "id": "service-build-revision",
+          "status": "pass",
+          "checked_at": "2026-07-26T09:46:00Z",
+          "evidence": [
+            {
+              "kind": "endpoint",
+              "reference": "Both service processes reported revision bbc8ea2 and source manifest e177a5948b953d12b92486739def48dad235e8c7bc1a1f2fe0cf9605dd161641",
+              "result": "pass",
+              "secret_free": true
+            }
+          ]
+        },
+        {
+          "id": "service-query-acceptance",
+          "status": "pass",
+          "checked_at": "2026-07-26T10:04:30Z",
+          "evidence": [
+            {
+              "kind": "test",
+              "reference": "Ban QQ 2621735529 returned HTTP 200 and status 封禁; battle and ARAM adapters returned HTTP 200",
+              "result": "pass",
+              "secret_free": true
+            }
+          ]
+        },
+        {
+          "id": "monitor-readiness",
+          "status": "partial",
+          "checked_at": "2026-07-26T10:00:30Z",
+          "evidence": [
+            {
+              "kind": "endpoint",
+              "reference": "Monitor /livez is 200 and running; /readyz is 503 due to four failed and ten orphan watchers",
+              "result": "partial",
+              "secret_free": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "deploy-groupguard-production-20260726",
+      "environment": "production",
+      "component": "GroupGuard SnowLuma",
+      "host_ref": "prod-groupguard-host-192.168.3.89",
+      "deploy_path": "/mnt/sda1/groupguard/app",
+      "build_id": "build-groupguard-d4cb5b7",
+      "revision": "d4cb5b7135fb30272ed60188d38e7fe0bbd566e8",
+      "state": "verified",
+      "started_at": "2026-07-26T09:43:04Z",
+      "finished_at": "2026-07-26T09:58:30Z",
+      "backup_references": [
+        "manual-20260726-174304-55e713cb.tgz sha256 84039be2adb0e140621a40c86bf5fb1f16e308453a9b8e6eefcedaff77546c18",
+        "dist.backup-20260726-175417-f04fe197",
+        "config.json.pre-v8-20260726T095516Z"
+      ],
+      "checks": [
+        {
+          "id": "groupguard-artifact-revision",
+          "status": "pass",
+          "checked_at": "2026-07-26T09:55:30Z",
+          "evidence": [
+            {
+              "kind": "endpoint",
+              "reference": "Container build endpoint reported clean revision d4cb5b7 and runtime artifact hash 778bea27b04ab6b9c2905780b515a52ef4509476fa553a863167db8da8f711a8",
+              "result": "pass",
+              "secret_free": true
+            }
+          ]
+        },
+        {
+          "id": "groupguard-onebot-and-callback",
+          "status": "pass",
+          "checked_at": "2026-07-26T10:04:00Z",
+          "evidence": [
+            {
+              "kind": "test",
+              "reference": "OneBot status is connected with a bot identity; real test-group delivery completed and duplicate delivery was suppressed",
+              "result": "pass",
+              "secret_free": true
+            }
+          ]
+        },
+        {
+          "id": "runtime-credential-rotation",
+          "status": "pass",
+          "checked_at": "2026-07-26T10:01:00Z",
+          "evidence": [
+            {
+              "kind": "observation",
+              "reference": "Previous callback credential returned HTTP 401; rotated runtime credential returned HTTP 200 and is stored in a mode-0600 environment file",
+              "result": "pass",
+              "secret_free": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "rollback_plan": {
+    "status": "completed",
+    "recovery_target": "Restore both production components to their verified pre-upgrade runtime data and artifacts.",
+    "triggers": [
+      "Core query readiness fails after restart",
+      "GroupGuard cannot connect to OneBot or cannot deliver to the authorized test group",
+      "Running build revision or artifact hash differs from the selected release",
+      "Configuration migration cannot be parsed"
+    ],
+    "steps": [
+      "Stop the affected component and preserve current failure evidence without recording credentials.",
+      "For GroupGuard, run Rollback-SnowLuma.ps1 with an exact verified backup revision or restore dist.previous.",
+      "Restore the ACL-protected runtime configuration backup associated with the affected component.",
+      "Restart the exact service or container and verify build, live, ready, and one representative business contract.",
+      "Record a rollback_run object in a new handoff revision."
+    ],
+    "required_artifacts": [
+      "20260726-173856-integration-upgrade",
+      "manual-20260726-174304-55e713cb.tgz",
+      "dist.backup-20260726-175417-f04fe197",
+      "config.json.pre-v8-20260726T095516Z"
+    ]
+  },
+  "rollback_runs": [],
+  "acceptance_runs": [
+    {
+      "id": "service-unittest-104",
+      "layer": "local",
+      "scope": "lolapisevers full unit regression",
+      "contract_ids": [
+        "groupguard-lol-api-v2",
+        "lanzou-callback-receipt-v2",
+        "production-health-and-build-traceability"
+      ],
+      "started_at": "2026-07-26T09:32:00Z",
+      "finished_at": "2026-07-26T09:33:00Z",
+      "status": "pass",
+      "expected": "All 104 unit tests pass.",
+      "observed": "104 tests passed.",
+      "evidence": [
+        {
+          "kind": "test",
+          "reference": "python -m unittest discover -s tests -v",
+          "result": "pass",
+          "secret_free": true
+        }
+      ]
+    },
+    {
+      "id": "plugin-npm-test",
+      "layer": "local",
+      "scope": "GroupGuard full regression and release-safety verification",
+      "contract_ids": [
+        "groupguard-lol-api-v2",
+        "lanzou-callback-receipt-v2",
+        "production-health-and-build-traceability"
+      ],
+      "started_at": "2026-07-26T09:41:00Z",
+      "finished_at": "2026-07-26T09:43:00Z",
+      "status": "pass",
+      "expected": "Type checks, architecture checks, contract regressions, idempotency and release-safety checks pass.",
+      "observed": "npm test passed.",
+      "evidence": [
+        {
+          "kind": "test",
+          "reference": "npm test",
+          "result": "pass",
+          "secret_free": true
+        }
+      ]
+    },
+    {
+      "id": "service-ci-pr7",
+      "layer": "ci",
+      "scope": "GitHub PR 7 head bbc8ea2",
+      "contract_ids": [
+        "groupguard-lol-api-v2",
+        "lanzou-callback-receipt-v2",
+        "production-health-and-build-traceability"
+      ],
+      "started_at": "2026-07-26T09:37:00Z",
+      "finished_at": "2026-07-26T09:37:57Z",
+      "status": "pass",
+      "expected": "tests / unittest succeeds on the exact head revision.",
+      "observed": "1 of 1 required check passed.",
+      "evidence": [
+        {
+          "kind": "test",
+          "reference": "https://github.com/xianyumht-cmd/lolapisevers/actions/runs/30196780413",
+          "result": "pass",
+          "secret_free": true
+        }
+      ]
+    },
+    {
+      "id": "plugin-ci-pr6",
+      "layer": "ci",
+      "scope": "GitHub PR 6 head d4cb5b7",
+      "contract_ids": [
+        "groupguard-lol-api-v2",
+        "lanzou-callback-receipt-v2",
+        "production-health-and-build-traceability"
+      ],
+      "started_at": "2026-07-26T09:43:30Z",
+      "finished_at": "2026-07-26T09:45:30Z",
+      "status": "pass",
+      "expected": "All GroupGuard Build and GroupGuard CI checks succeed on the exact head revision.",
+      "observed": "4 of 4 checks passed.",
+      "evidence": [
+        {
+          "kind": "test",
+          "reference": "GitHub PR 6 checks for revision d4cb5b7",
+          "result": "pass",
+          "secret_free": true
+        }
+      ]
+    },
+    {
+      "id": "contracts-20260726100350856",
+      "layer": "production",
+      "scope": "Cross-repository live contracts plus authorized test-group callback",
+      "contract_ids": [
+        "groupguard-lol-api-v2",
+        "lanzou-callback-receipt-v2",
+        "production-health-and-build-traceability"
+      ],
+      "started_at": "2026-07-26T10:03:50.856Z",
+      "finished_at": "2026-07-26T10:03:53.692Z",
+      "status": "partial",
+      "expected": "Query, build, health, callback delivery, and duplicate suppression contracts pass.",
+      "observed": "Nine cases passed, including real group delivery and duplicate suppression; monitor health was partial because of existing watcher data debt.",
+      "evidence": [
+        {
+          "kind": "test",
+          "reference": "contracts-20260726100350856",
+          "result": "partial",
+          "secret_free": true
+        }
+      ]
+    },
+    {
+      "id": "production-query-tester-20260726",
+      "layer": "production",
+      "scope": "GroupGuard admin query adapter with user-specified inputs",
+      "contract_ids": [
+        "groupguard-lol-api-v2"
+      ],
+      "started_at": "2026-07-26T10:04:00Z",
+      "finished_at": "2026-07-26T10:06:30Z",
+      "status": "pass",
+      "expected": "Ban, battle, and ARAM adapters use the intranet API and preserve exact parameters.",
+      "observed": "All three adapters returned HTTP 200 through 192.168.3.100; QQ 2621735529 returned 封禁 and the exact battle Riot ID was preserved.",
+      "evidence": [
+        {
+          "kind": "test",
+          "reference": "GroupGuard /api/query/test for lol_ban, lol_battle and lol_aram_augments",
+          "result": "pass",
+          "secret_free": true
+        }
+      ]
+    }
+  ],
+  "release_gate": {
+    "decision": "partial",
+    "decided_at": "2026-07-26T10:22:00Z",
+    "criteria": [
+      {
+        "id": "exact-builds-and-ci",
+        "description": "Both deployed revisions are exact, clean, and have green CI.",
+        "status": "pass",
+        "acceptance_run_ids": [
+          "service-ci-pr7",
+          "plugin-ci-pr6"
+        ]
+      },
+      {
+        "id": "core-business-contracts",
+        "description": "Ban, battle, ARAM, callback delivery, and duplicate suppression pass in production.",
+        "status": "pass",
+        "acceptance_run_ids": [
+          "contracts-20260726100350856",
+          "production-query-tester-20260726"
+        ]
+      },
+      {
+        "id": "monitor-health-clean",
+        "description": "All enabled monitor watchers are healthy and no orphan records remain.",
+        "status": "partial",
+        "acceptance_run_ids": [
+          "contracts-20260726100350856"
+        ]
+      }
+    ],
+    "blocking_items": [],
+    "required_followups": [
+      "Review four failed watcher sources and either correct or explicitly disable them.",
+      "Add an operator-approved acknowledgement or cleanup path for ten orphan watcher records.",
+      "Have a human member send the two exact inbound chat commands once to complete end-user ingress evidence."
+    ]
+  },
+  "known_limits": [
+    {
+      "id": "LIMIT-MONITOR-DATA-DEBT",
+      "status": "open",
+      "scope": "Lanzou monitor readiness",
+      "impact": "The monitor is running with zero pending watchers, but /readyz remains HTTP 503 because four enabled watchers fail and ten removed watchers are retained as orphans.",
+      "next_action": "Review the four source URLs with the owner and add an explicit orphan acknowledgement or cleanup workflow before changing readiness policy.",
+      "related_finding_ids": [
+        "LANZOU-MON-001"
+      ]
+    },
+    {
+      "id": "LIMIT-BATTLE-UPSTREAM-TRANSIENT",
+      "status": "mitigated",
+      "scope": "Battle query upstream",
+      "impact": "The supplied Riot ID briefly returned three upstream not-found responses before succeeding; cache and retries reduce but do not eliminate upstream volatility.",
+      "next_action": "Track upstream outcome class and latency, then add bounded Retry-After or backoff behavior if the rate recurs.",
+      "related_finding_ids": [
+        "LOL-PERF-001"
+      ]
+    },
+    {
+      "id": "LIMIT-CALLBACK-AT-LEAST-ONCE",
+      "status": "accepted",
+      "scope": "Callback delivery semantics",
+      "impact": "A crash after external send but before durable receipt commit can still produce a duplicate.",
+      "next_action": "Keep stable event IDs and persistent consumer deduplication; consider a transactional outbox if exact-once semantics become mandatory.",
+      "related_finding_ids": [
+        "GG-CB-001"
+      ]
+    },
+    {
+      "id": "LIMIT-SINGLE-MONITOR-WRITER",
+      "status": "accepted",
+      "scope": "Monitor state file",
+      "impact": "State locking is process-local, so one state file must not be shared by multiple monitor processes.",
+      "next_action": "Keep one monitor instance per state path or add an inter-process lock before horizontal scaling.",
+      "related_finding_ids": [
+        "LANZOU-MON-001"
+      ]
+    },
+    {
+      "id": "LIMIT-QUERY-UI-SETTING-DRIFT",
+      "status": "open",
+      "scope": "GroupGuard query management UI",
+      "impact": "Some displayed query settings, especially ARAM controls, do not yet fully mirror runtime-effective behavior.",
+      "next_action": "Derive UI fields from one runtime schema and add round-trip tests for every exposed query setting.",
+      "related_finding_ids": [
+        "GG-UI-001",
+        "GG-CFG-001"
+      ]
+    },
+    {
+      "id": "LIMIT-CROSS-REPOSITORY-CI",
+      "status": "open",
+      "scope": "Continuous integration",
+      "impact": "Mock contract tests run in each repository, but CI does not yet compose the two exact candidate revisions in one job.",
+      "next_action": "Add an orchestrated workflow that checks out both PR revisions and runs the live-shaped contract runner against ephemeral services.",
+      "related_finding_ids": [
+        "GG-INT-001",
+        "OPS-TRACE-001"
+      ]
+    },
+    {
+      "id": "LIMIT-LEGACY-MOJIBAKE",
+      "status": "open",
+      "scope": "Unrelated legacy user-facing strings",
+      "impact": "Pre-existing mojibake remains outside the upgraded contract paths.",
+      "next_action": "Inventory and repair legacy strings in a dedicated, screenshot-verified change.",
+      "related_finding_ids": [
+        "GG-UI-001"
+      ]
+    },
+    {
+      "id": "LIMIT-LOLBAN-LKG-MEMORY",
+      "status": "accepted",
+      "scope": "Ban-query last-known-good cache",
+      "impact": "The stale fallback cache is memory-only and is empty after process restart.",
+      "next_action": "Persist only normalized, bounded non-secret results if restart continuity becomes necessary.",
+      "related_finding_ids": [
+        "LOL-BAN-001"
+      ]
+    },
+    {
+      "id": "LIMIT-INBOUND-CHAT-EVIDENCE",
+      "status": "open",
+      "scope": "End-user command ingress",
+      "impact": "The exact adapters and real outbound group delivery were verified separately, but a production bot cannot create a trusted inbound member event for its own sent message.",
+      "next_action": "Have a human member of group 805402626 send the exact ban and battle commands and attach the observed bot responses to the next handoff revision.",
+      "related_finding_ids": [
+        "GG-INT-001"
+      ]
+    }
+  ],
+  "secret_handling": {
+    "contains_plaintext_secrets": false,
+    "contains_embedded_credentials": false,
+    "prohibited_values_recorded": false,
+    "redactions_applied": true,
+    "redacted_fields": [
+      "production host login password",
+      "GroupGuard runtime callback credential",
+      "LOL ban provider address",
+      "database and upstream account credentials",
+      "message identifiers"
+    ],
+    "runtime_secret_references": [
+      "lolapisevers/ops/app_env.local.ps1 (ignored and ACL-restricted)",
+      "lolapisevers/lanzou_update_push_api_server/config.json (ignored and ACL-restricted)",
+      "/mnt/sda1/groupguard/app/config/snowluma.env (mode 0600)",
+      "ACL-restricted local rollback files and mode-0600 remote archive"
+    ],
+    "validation": "pass"
+  },
+  "git_safety": [
+    {
+      "repository": "lolapisevers",
+      "branch": "codex/production-integration-audit-20260726",
+      "status_checked_at": "2026-07-26T10:22:00Z",
+      "stage_allowlist": [
+        ".gitignore",
+        "docs/handoffs/2026-07-26-production-integration-upgrade.json",
+        "docs/handoffs/2026-07-26-production-integration-upgrade.md"
+      ],
+      "excluded_paths": [
+        "lanzou_update_push_api_server/*.bak.*",
+        "lanzou_update_push_api_server/*.bak-*",
+        "lanzou_update_push_api_server/*.bad.*",
+        "ops/app_env.local.ps1",
+        "build-info.json",
+        "logs/"
+      ],
+      "unrelated_changes_preserved": true
+    },
+    {
+      "repository": "my-napcat-sys",
+      "branch": "codex/production-integration-audit-20260726",
+      "status_checked_at": "2026-07-26T10:22:00Z",
+      "stage_allowlist": [
+        "onebot-plugin-groupguard/docs/handoffs/2026-07-26-production-integration-upgrade.json",
+        "onebot-plugin-groupguard/docs/handoffs/2026-07-26-production-integration-upgrade.md"
+      ],
+      "excluded_paths": [
+        "onebot-plugin-groupguard/node_modules/",
+        "onebot-plugin-groupguard/dist/",
+        "temporary reports and screenshots",
+        "runtime configuration and data"
+      ],
+      "unrelated_changes_preserved": true
+    }
+  ],
+  "machine_next_actions": [
+    {
+      "id": "NEXT-REVIEW-FAILED-WATCHERS",
+      "order": 1,
+      "state": "planned",
+      "action": "Review the four failed production watcher sources and correct or explicitly disable each one.",
+      "prerequisites": [
+        "Content owner confirms whether each share should remain active."
+      ],
+      "success_criteria": [
+        "failed_watcher_count is zero or every remaining failure has an approved exception."
+      ],
+      "safe_to_automate": false,
+      "requires_human": true,
+      "references": [
+        "LIMIT-MONITOR-DATA-DEBT",
+        "http://192.168.3.100:6178/health"
+      ]
+    },
+    {
+      "id": "NEXT-ORPHAN-ACKNOWLEDGEMENT",
+      "order": 2,
+      "state": "planned",
+      "action": "Design and implement an auditable acknowledgement or cleanup operation for orphan watcher records.",
+      "prerequisites": [
+        "Define retention and operator approval policy."
+      ],
+      "success_criteria": [
+        "Orphan records can be reviewed and acknowledged without direct state-file editing.",
+        "Readiness policy distinguishes unreviewed from acknowledged orphans."
+      ],
+      "safe_to_automate": false,
+      "requires_human": true,
+      "references": [
+        "LIMIT-MONITOR-DATA-DEBT"
+      ]
+    },
+    {
+      "id": "NEXT-INBOUND-COMMAND-EVIDENCE",
+      "order": 3,
+      "state": "planned",
+      "action": "Have a human member send the exact ban and battle commands in test group 805402626.",
+      "prerequisites": [
+        "Production bot remains connected.",
+        "A test-group member is available."
+      ],
+      "success_criteria": [
+        "The ban response reports 封禁 for QQ 2621735529.",
+        "The battle command produces either a valid result or a clearly classified upstream response for ZCG烧火棍丘丘人#73557."
+      ],
+      "safe_to_automate": false,
+      "requires_human": true,
+      "references": [
+        "LIMIT-INBOUND-CHAT-EVIDENCE"
+      ]
+    },
+    {
+      "id": "NEXT-CROSS-REPOSITORY-CI",
+      "order": 4,
+      "state": "planned",
+      "action": "Add a composed CI job that tests exact candidate revisions from both repositories together.",
+      "prerequisites": [
+        "Choose the workflow owner and ephemeral service strategy."
+      ],
+      "success_criteria": [
+        "One CI run records both commit SHAs.",
+        "The cross-repository contract runner completes without production access."
+      ],
+      "safe_to_automate": true,
+      "requires_human": false,
+      "references": [
+        "LIMIT-CROSS-REPOSITORY-CI"
+      ]
+    },
+    {
+      "id": "NEXT-QUERY-UPSTREAM-METRICS",
+      "order": 5,
+      "state": "planned",
+      "action": "Add outcome-class and latency metrics for battle-query upstream attempts.",
+      "prerequisites": [
+        "Define metric retention and alert thresholds."
+      ],
+      "success_criteria": [
+        "Transient not-found, timeout, and success outcomes are separately measurable.",
+        "No account credentials or raw upstream payloads are emitted."
+      ],
+      "safe_to_automate": true,
+      "requires_human": false,
+      "references": [
+        "LIMIT-BATTLE-UPSTREAM-TRANSIENT"
+      ]
+    },
+    {
+      "id": "NEXT-REVIEW-AND-MERGE-PRS",
+      "order": 6,
+      "state": "planned",
+      "action": "Review the final documentation commits, mark both draft pull requests ready when appropriate, and merge only after explicit owner confirmation.",
+      "prerequisites": [
+        "All checks on the final documentation heads are green.",
+        "The owner accepts the partial monitor-health gate and follow-up list."
+      ],
+      "success_criteria": [
+        "PR 7 and PR 6 are merged or explicitly deferred with a recorded reason."
+      ],
+      "safe_to_automate": false,
+      "requires_human": true,
+      "references": [
+        "https://github.com/xianyumht-cmd/lolapisevers/pull/7",
+        "https://github.com/xianyumht-cmd/my-napcat-sys/pull/6"
+      ]
+    }
+  ]
+}

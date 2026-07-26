@@ -21,6 +21,9 @@ build-info.json
 lanzou_update_push_api_server/config.json
 lanzou_update_push_api_server/state.json
 lanzou_update_push_api_server/*.tmp
+lanzou_update_push_api_server/*.bak.*
+lanzou_update_push_api_server/*.bak-*
+lanzou_update_push_api_server/*.bad.*
 
 2.0.0
 26.0.1
