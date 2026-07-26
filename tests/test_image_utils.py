@@ -1,11 +1,30 @@
 import io
 import random
+import time
 import unittest
 from unittest.mock import patch
 
 from PIL import Image, ImageDraw
 
-from renderers.image_utils import encode_png_limited, image_footer_left, image_footer_right
+from renderers.image_utils import (
+    NEGATIVE_IMAGE_CACHE_VALUE,
+    download_image_cached,
+    encode_png_limited,
+    image_footer_left,
+    image_footer_right,
+    prefetch_image_urls,
+)
+
+
+class FakeCache:
+    def __init__(self):
+        self.data = {}
+
+    def get(self, key):
+        return self.data.get(key)
+
+    def set(self, key, value):
+        self.data[key] = value
 
 
 class ImageUtilsTests(unittest.TestCase):
@@ -22,6 +41,44 @@ class ImageUtilsTests(unittest.TestCase):
         ):
             self.assertEqual(image_footer_left(), "左侧")
             self.assertEqual(image_footer_right(), "右侧")
+
+    def test_download_failure_is_negative_cached(self):
+        cache = FakeCache()
+        url = "https://assets.invalid/item/1.png"
+        with patch("requests.get", side_effect=TimeoutError("offline")):
+            self.assertIsNone(download_image_cached(cache, url, timeout=0.01))
+        self.assertEqual(cache.get(f"image_asset:{url}"), NEGATIVE_IMAGE_CACHE_VALUE)
+
+    def test_negative_cached_asset_is_not_retried(self):
+        cache = FakeCache()
+        url = "https://assets.invalid/item/2.png"
+        cache.set(f"image_asset:{url}", NEGATIVE_IMAGE_CACHE_VALUE)
+        with patch("renderers.image_utils.download_image_cached") as downloader:
+            self.assertEqual(prefetch_image_urls(cache, [url]), {})
+        downloader.assert_not_called()
+
+    def test_prefetch_returns_when_overall_budget_expires(self):
+        cache = FakeCache()
+        urls = [f"https://assets.invalid/item/{index}.png" for index in range(4)]
+
+        def slow_download(_cache, _url, _timeout):
+            time.sleep(0.2)
+            return b"image"
+
+        started = time.perf_counter()
+        with patch("renderers.image_utils.download_image_cached", side_effect=slow_download):
+            result = prefetch_image_urls(
+                cache,
+                urls,
+                max_workers=1,
+                overall_timeout=0.03,
+            )
+        elapsed = time.perf_counter() - started
+
+        self.assertEqual(result, {})
+        self.assertLess(elapsed, 0.15)
+        for url in urls:
+            self.assertEqual(cache.get(f"image_asset:{url}"), NEGATIVE_IMAGE_CACHE_VALUE)
 
     def test_encode_png_limited_caps_dimensions_and_bytes(self):
         image = Image.new("RGB", (1500, 2400), (18, 24, 39))
