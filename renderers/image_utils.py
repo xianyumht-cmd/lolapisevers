@@ -4,6 +4,9 @@ import os
 from typing import Any, Dict, Iterable, List, Optional
 
 
+NEGATIVE_IMAGE_CACHE_VALUE = b""
+
+
 def load_image_font(size: int, bold: bool = False):
     try:
         from PIL import ImageFont
@@ -69,6 +72,14 @@ def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
     return max(minimum, min(value, maximum))
 
 
+def _env_float(name: str, default: float, minimum: float, maximum: float) -> float:
+    try:
+        value = float(str(os.getenv(name, default)).strip())
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(value, maximum))
+
+
 def image_footer_left() -> str:
     default = "GroupGuardKing-GGK"
     return str(os.getenv("IMAGE_FOOTER_LEFT", default)).strip() or default
@@ -87,6 +98,15 @@ def image_limits() -> Dict[str, int]:
     }
 
 
+def _cache_image_result(cache: Any, cache_key: str, content: bytes) -> None:
+    if cache is None:
+        return
+    try:
+        cache.set(cache_key, content)
+    except Exception:
+        pass
+
+
 def download_image_cached(cache: Any, url: str, timeout: float = 4.0) -> Optional[bytes]:
     url = str(url or "").strip()
     if not url:
@@ -95,7 +115,7 @@ def download_image_cached(cache: Any, url: str, timeout: float = 4.0) -> Optiona
     if cache is not None:
         cached = cache.get(cache_key)
         if isinstance(cached, bytes):
-            return cached
+            return cached or None
     try:
         import requests
 
@@ -107,14 +127,27 @@ def download_image_cached(cache: Any, url: str, timeout: float = 4.0) -> Optiona
         content_type = str(response.headers.get("content-type") or "").lower()
         content = response.content
         if not response.ok or not content or len(content) > 2_500_000:
+            _cache_image_result(cache, cache_key, NEGATIVE_IMAGE_CACHE_VALUE)
             return None
         if content_type and "image" not in content_type:
+            _cache_image_result(cache, cache_key, NEGATIVE_IMAGE_CACHE_VALUE)
             return None
-        if cache is not None:
-            cache.set(cache_key, content)
+        _cache_image_result(cache, cache_key, content)
         return content
     except Exception:
+        _cache_image_result(cache, cache_key, NEGATIVE_IMAGE_CACHE_VALUE)
         return None
+
+
+def _image_asset_priority(url: str) -> int:
+    lowered = url.lower()
+    if "profileicon" in lowered:
+        return 0
+    if "champion-icons" in lowered or "/champion/" in lowered:
+        return 1
+    if "/item/" in lowered:
+        return 2
+    return 3
 
 
 def prefetch_image_urls(
@@ -124,6 +157,7 @@ def prefetch_image_urls(
     timeout: float = 4.0,
     max_workers: int = 8,
     max_assets: int = 72,
+    overall_timeout: Optional[float] = None,
 ) -> Dict[str, bytes]:
     unique: List[str] = []
     seen = set()
@@ -136,32 +170,68 @@ def prefetch_image_urls(
         if len(unique) >= max_assets:
             break
 
+    # Profile and champion icons are more important than item icons when the
+    # upstream image hosts are degraded and the total prefetch budget expires.
+    unique.sort(key=_image_asset_priority)
+
     result: Dict[str, bytes] = {}
     missing: List[str] = []
     for url in unique:
         cached = cache.get(f"image_asset:{url}") if cache is not None else None
         if isinstance(cached, bytes):
-            result[url] = cached
+            if cached:
+                result[url] = cached
         else:
             missing.append(url)
 
     if not missing:
         return result
 
+    request_timeout = min(
+        max(0.25, float(timeout)),
+        _env_float("IMAGE_ASSET_TIMEOUT_SECONDS", 1.5, 0.25, 5.0),
+    )
+    total_budget = overall_timeout
+    if total_budget is None:
+        total_budget = _env_float("IMAGE_ASSET_PREFETCH_BUDGET_SECONDS", 4.5, 0.5, 12.0)
+    else:
+        total_budget = max(0.1, float(total_budget))
+
     workers = max(1, min(max_workers, len(missing)))
-    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-        future_map = {
-            executor.submit(download_image_cached, cache, url, timeout): url
-            for url in missing
-        }
-        for future in concurrent.futures.as_completed(future_map):
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=workers)
+    future_map = {
+        executor.submit(download_image_cached, cache, url, request_timeout): url
+        for url in missing
+    }
+    try:
+        done, pending = concurrent.futures.wait(
+            tuple(future_map),
+            timeout=total_budget,
+            return_when=concurrent.futures.ALL_COMPLETED,
+        )
+        for future in done:
             url = future_map[future]
             try:
                 content = future.result()
             except Exception:
                 content = None
-            if isinstance(content, bytes):
+            if isinstance(content, bytes) and content:
                 result[url] = content
+
+        # Do not let slow or unreachable decoration hosts hold the whole battle
+        # result hostage. Cache a short-lived miss through the existing asset
+        # cache so an immediate repeat query uses placeholders instead of paying
+        # the same timeout again. A running request may still overwrite this with
+        # real bytes when it succeeds.
+        for future in pending:
+            url = future_map[future]
+            future.cancel()
+            _cache_image_result(cache, f"image_asset:{url}", NEGATIVE_IMAGE_CACHE_VALUE)
+    finally:
+        try:
+            executor.shutdown(wait=False, cancel_futures=True)
+        except TypeError:
+            executor.shutdown(wait=False)
     return result
 
 
