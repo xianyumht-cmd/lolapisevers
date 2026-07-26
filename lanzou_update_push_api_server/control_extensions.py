@@ -4,8 +4,12 @@ import asyncio
 from typing import Any
 
 from fastapi import FastAPI, Query
+from fastapi.responses import HTMLResponse
+
+from services.image_asset_store import get_image_asset_sync_manager
 
 from .config import sanitized_config
+from .image_cache_ui import render_image_cache_page
 from .maintenance import (
     list_config_backups,
     read_audit,
@@ -21,6 +25,22 @@ def install_control_extensions(app: FastAPI, service) -> None:
     @app.get("/security/status")
     async def get_security_status() -> dict[str, object]:
         return security_status()
+
+    @app.get("/image-cache", response_class=HTMLResponse)
+    async def image_cache_page() -> str:
+        return render_image_cache_page()
+
+    @app.get("/admin/image-cache")
+    async def admin_image_cache() -> dict[str, Any]:
+        return await asyncio.to_thread(get_image_asset_sync_manager().status)
+
+    @app.post("/admin/image-cache/sync")
+    async def admin_image_cache_sync(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        mode = str((payload or {}).get("mode") or "missing").strip().lower()
+        try:
+            return await asyncio.to_thread(get_image_asset_sync_manager().start, mode)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
 
     @app.get("/admin/backups")
     async def admin_backups() -> dict[str, Any]:
