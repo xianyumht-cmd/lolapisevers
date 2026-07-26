@@ -7,6 +7,7 @@ from db import Database
 from so1_client import So1Client
 
 from core.config import AppConfig, load_config
+from services.image_asset_store import PersistentImageAssetCache
 
 
 class AppContext:
@@ -29,9 +30,10 @@ class AppContext:
             threading.Lock()
             for _ in range(64)
         ]
-        # Remote icons are shared by both image renderers. A bounded cache avoids
-        # repeated downloads without letting image bytes grow without limit.
-        self.image_asset_cache = TTLCache(
+        # Existing renderers still use the same get/set contract. Positive image
+        # bytes are persisted by stable resource ID on disk, while the bounded
+        # memory layer keeps hot reads fast.
+        self.image_asset_cache = PersistentImageAssetCache(
             ttl_seconds=max(config.aram_augment_cache_seconds, 3600),
             max_size=512,
         )
