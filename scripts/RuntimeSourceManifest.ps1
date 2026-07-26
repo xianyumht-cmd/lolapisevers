@@ -155,7 +155,7 @@ function New-RuntimeSourceManifest {
         }
         [pscustomobject][ordered]@{
             path = $relativePath
-            sha256 = (Get-FileHash -LiteralPath $absolutePath -Algorithm SHA256).Hash.ToLowerInvariant()
+            sha256 = Get-Sha256Hex -Bytes ([IO.File]::ReadAllBytes($absolutePath))
             size_bytes = (Get-Item -LiteralPath $absolutePath).Length
         }
     }
