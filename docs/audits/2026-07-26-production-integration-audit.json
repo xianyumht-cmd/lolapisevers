@@ -1,0 +1,783 @@
+{
+  "schema_version": "1.0.0",
+  "record_type": "cross_repository_production_integration_audit",
+  "audit_id": "lol-groupguard-prod-integration-20260726",
+  "language": "zh-CN",
+  "generated_at": "2026-07-26T15:20:00+08:00",
+  "status": "completed_with_findings",
+  "overall_result": "partial_pass",
+  "scope": {
+    "objective": "在内网生产拓扑中验证 onebot-plugin-groupguard 与 lolapisevers 的业务对接，并为后续 ChatGPT 维护保存可机器读取的事实、证据和验收条件。",
+    "included": [
+      "GroupGuard/SnowLuma 到 LOL API 的战绩、合集、海符榜和封号查询链路",
+      "蓝奏监控服务到 GroupGuard 再到测试群的回调推送链路",
+      "生产配置、运行状态、错误语义、超时、降级、重试和可观测性",
+      "本地自动测试与生产只读/受控实测"
+    ],
+    "excluded": [
+      "公网暴露风险",
+      "接口鉴权设计",
+      "互联网攻击面"
+    ],
+    "authorized_test_group_id": "805402626",
+    "secret_handling": {
+      "production_password_recorded": false,
+      "admin_tokens_recorded": false,
+      "onebot_tokens_recorded": false,
+      "full_message_ids_recorded": false
+    }
+  },
+  "repositories": [
+    {
+      "name": "lolapisevers",
+      "local_path": "D:/project2/lolapisevers",
+      "remote": "https://github.com/xianyumht-cmd/lolapisevers",
+      "default_branch": "master",
+      "audited_revision": "e092a2134d281c4bd4987cc18f98aaf4af8e7ce9",
+      "baseline_matches_remote": true
+    },
+    {
+      "name": "onebot-plugin-groupguard",
+      "local_path": "D:/project2/napcatplugin/lengxi_repo/onebot-plugin-groupguard",
+      "remote": "https://github.com/xianyumht-cmd/my-napcat-sys",
+      "default_branch": "main",
+      "audited_revision": "e44dfce91d49babaa9ddcaa1acde12b895b66f0e",
+      "baseline_matches_remote": true
+    }
+  ],
+  "production_topology": [
+    {
+      "host": "192.168.3.89",
+      "role": "SnowLuma and GroupGuard production node",
+      "platform": "Ubuntu 20.04.6 aarch64",
+      "components": [
+        {
+          "name": "groupguard-snowluma",
+          "runtime": "node:22-bookworm-slim container",
+          "network_mode": "host",
+          "listen": "0.0.0.0:6108",
+          "entrypoint": "node dist/snowluma-service.mjs",
+          "deployment_path": "/mnt/sda1/groupguard/app"
+        },
+        {
+          "name": "snowluma",
+          "network_mode": "bridge",
+          "published_ports": [
+            3000,
+            3001,
+            5099,
+            5900,
+            6081
+          ]
+        }
+      ]
+    },
+    {
+      "host": "192.168.3.100",
+      "role": "LOL API and Lanzou monitor node",
+      "platform": "Windows",
+      "components": [
+        {
+          "name": "lolapisevers-main",
+          "listen": "0.0.0.0:5001",
+          "base_url": "http://192.168.3.100:5001"
+        },
+        {
+          "name": "lanzou-update-monitor",
+          "listen": "0.0.0.0:6178",
+          "base_url": "http://192.168.3.100:6178"
+        }
+      ]
+    }
+  ],
+  "production_configuration_summary": {
+    "groupguard": {
+      "lol_api_base_url": "http://192.168.3.100:5001",
+      "lanzou_monitor_base_url": "http://192.168.3.100:6178",
+      "query_timeout_seconds": 20,
+      "default_query_output_format": "image",
+      "master_enabled": true,
+      "query_enabled": true,
+      "dynamic_command_enabled": true,
+      "lanzou_push_target_group_ids": [
+        "805402626"
+      ],
+      "test_group_license": "pro",
+      "test_group_inherits_global_config": true
+    },
+    "feature_routing": {
+      "lol_battle": "http://192.168.3.100:5001/cross_query",
+      "lol_aram_augments": "http://192.168.3.100:5001/aram_augments",
+      "lol_ban": "external production endpoint, not lolapisevers",
+      "lol_hidden": "runtime path differs from the admin overview; feature switch is disabled in the test group",
+      "lol_shard": "remote JSON prerequisites plus local image endpoint"
+    }
+  },
+  "business_contracts": [
+    {
+      "id": "CONTRACT-LOL-CROSS",
+      "direction": "groupguard_to_lolapisevers",
+      "request": "GET /cross_query?name={riot_id}&output=pretty|raw|image|svg&region={optional}",
+      "required_parameter": "name",
+      "success": "HTTP 200 with live/cache/snapshot metadata, or image content",
+      "caller_source": {
+        "repository": "onebot-plugin-groupguard",
+        "path": "src/services/interaction_service.ts",
+        "lines": "397-403, 1755-1795"
+      },
+      "provider_source": {
+        "repository": "lolapisevers",
+        "path": "routers/cross_query.py",
+        "lines": "16-43"
+      }
+    },
+    {
+      "id": "CONTRACT-LOL-SHARD",
+      "direction": "groupguard_to_lolapisevers",
+      "request": "GET /shard_query?hero={hero}&output=image|json",
+      "success": "HTTP 200 image/png or JSON; unknown hero is 404",
+      "note": "The production plugin still requires remote shard and hero JSON before it tries the local image endpoint."
+    },
+    {
+      "id": "CONTRACT-LOL-ARAM",
+      "direction": "groupguard_to_lolapisevers",
+      "request": "GET /aram_augments?hero={hero}&output=image|json",
+      "success": "HTTP 200 image/png or JSON",
+      "caller_timeout_seconds": 20
+    },
+    {
+      "id": "CONTRACT-LOL-BAN",
+      "direction": "groupguard_or_client_to_ban_provider",
+      "local_request": "GET /api/v2/lolban?qq={qq}&output=json&compat=napcat",
+      "production_plugin_route": "external endpoint",
+      "note": "The production plugin ban test succeeded through its external endpoint while the lolapisevers endpoint returned 503."
+    },
+    {
+      "id": "CONTRACT-LANZOU-CALLBACK",
+      "direction": "lanzou_monitor_to_groupguard_to_test_group",
+      "request": "POST /api/lanzou-update/event with a lanzou_update or lanzou_update_test event",
+      "current_sender_success_rule": "any HTTP 2xx",
+      "current_receiver_success_rule": "any target delivery succeeds",
+      "required_future_rule": "stable event id, per-target acknowledgement, duplicate detection and retry only for failed targets"
+    }
+  ],
+  "verification_runs": [
+    {
+      "id": "TEST-LOCAL-LOL-001",
+      "layer": "local",
+      "result": "pass",
+      "command": ".venv/Scripts/python.exe -m unittest discover -s tests -v",
+      "summary": "51 of 51 tests passed."
+    },
+    {
+      "id": "TEST-LOCAL-GG-001",
+      "layer": "local",
+      "result": "pass",
+      "command": "npm test",
+      "summary": "TypeScript check, architecture checks, action queue, core stability, Lanzou callback and content-risk checks passed."
+    },
+    {
+      "id": "TEST-PROD-HEALTH-5001",
+      "layer": "production",
+      "result": "pass_with_limitations",
+      "request": "GET http://192.168.3.100:5001/health",
+      "http_status": 200,
+      "observed": {
+        "ready": true,
+        "mysql": "up",
+        "so1_browser": "up"
+      },
+      "limitation": "This endpoint does not test lolban, shard, ARAM, Lanzou callback or a live MySQL ping."
+    },
+    {
+      "id": "TEST-PROD-BATTLE-DIRECT",
+      "layer": "production",
+      "result": "pass",
+      "request": "GET /cross_query?name=ZCG烧火棍丘丘人%2373557&output=pretty",
+      "http_status": 200,
+      "elapsed_seconds": 6.207,
+      "observed": {
+        "source": "live",
+        "raw_ok": true
+      }
+    },
+    {
+      "id": "TEST-PROD-BATTLE-ADMIN",
+      "layer": "production",
+      "result": "fail_false_positive",
+      "request": "POST GroupGuard /api/query/test for lol_battle and ZCG烧火棍丘丘人#73557",
+      "outer_http_status": 200,
+      "outer_ok": true,
+      "upstream_http_status": 422,
+      "elapsed_seconds": 0.014,
+      "root_cause": "The admin tester sent qq instead of the required name parameter and still rendered a success preview."
+    },
+    {
+      "id": "TEST-PROD-SHARD",
+      "layer": "production",
+      "result": "pass",
+      "json_http_status": 200,
+      "json_elapsed_seconds": 0.376,
+      "image_http_status": 200,
+      "image_content_type": "image/png",
+      "image_elapsed_seconds": 0.451
+    },
+    {
+      "id": "TEST-PROD-ARAM",
+      "layer": "production",
+      "result": "degraded",
+      "json_http_status": 200,
+      "json_first_elapsed_seconds": 1.606,
+      "image_http_status_with_60s_client": 200,
+      "image_elapsed_seconds": 21.245,
+      "image_content_type": "image/png",
+      "caller_timeout_reproduction": {
+        "timeout_seconds": 20,
+        "client_result": "timeout",
+        "elapsed_seconds": 20.023,
+        "bytes_received": 0
+      }
+    },
+    {
+      "id": "TEST-PROD-BAN-LOCAL",
+      "layer": "production",
+      "result": "fail",
+      "request": "GET lolapisevers /api/v2/lolban?qq=2621735529&output=json&compat=napcat",
+      "http_status": 503,
+      "elapsed_seconds": 1.263
+    },
+    {
+      "id": "TEST-PROD-BAN-PLUGIN",
+      "layer": "production",
+      "result": "pass",
+      "request": "POST GroupGuard /api/query/test for lol_ban and 2621735529",
+      "outer_http_status": 200,
+      "upstream_http_status": 200,
+      "upstream_elapsed_seconds": 0.425,
+      "route": "external production endpoint"
+    },
+    {
+      "id": "TEST-PROD-MONITOR-HEALTH",
+      "layer": "production",
+      "result": "partial",
+      "request": "GET http://192.168.3.100:6178/health",
+      "http_status": 200,
+      "outer_ok": true,
+      "configured_watchers": 53,
+      "current_successful_watchers": 49,
+      "current_failed_watchers": 4,
+      "orphan_state_entries": 10
+    },
+    {
+      "id": "TEST-PROD-LANZOU-E2E",
+      "layer": "production",
+      "result": "pass_with_content_defect",
+      "request": "POST http://127.0.0.1:6178/notify/test?watcher_id=nav-001-toolbox",
+      "monitor_http_status": 200,
+      "callback_http_status": 200,
+      "callback_elapsed_seconds": 2.087,
+      "group_delivery": {
+        "group_id": "805402626",
+        "scene": "lanzou_update_push",
+        "status": "sent",
+        "sent_at": "2026-07-26T14:59:10.095+08:00",
+        "message_id": "redacted"
+      },
+      "content_defect": "The production notification template contains literal question marks."
+    },
+    {
+      "id": "TEST-PROD-GROUP-COMMANDS",
+      "layer": "production",
+      "result": "blocked_by_test_identity",
+      "commands": [
+        "查封号2621735529",
+        "查战绩 ZCG烧火棍丘丘人#73557"
+      ],
+      "reason": "Only one bot account is online and reportSelfMessage=false, so self-sent commands are not delivered to GroupGuard. The second account is not currently authenticated/online.",
+      "required_follow_up": "Send both commands from a real test-group member or restore the second test account."
+    }
+  ],
+  "findings": [
+    {
+      "id": "GG-INT-001",
+      "priority": "P1",
+      "severity": "high",
+      "status": "open",
+      "evidence_level": "production_reproduced",
+      "title": "GroupGuard admin query tester violates the cross_query contract and reports failure as success",
+      "components": [
+        "onebot-plugin-groupguard",
+        "lolapisevers"
+      ],
+      "evidence": [
+        {
+          "repository": "onebot-plugin-groupguard",
+          "path": "src/standalone/admin/query_api.ts",
+          "lines": "268-274, 306-343, 409-415"
+        },
+        {
+          "repository": "onebot-plugin-groupguard",
+          "path": "src/standalone/admin/server.ts",
+          "lines": "278-281"
+        },
+        {
+          "repository": "lolapisevers",
+          "path": "routers/cross_query.py",
+          "lines": "16-27"
+        },
+        {
+          "production_test": "TEST-PROD-BATTLE-ADMIN"
+        }
+      ],
+      "impact": "The management page cannot validate battle-query integration and can show a green result for an upstream 422.",
+      "recommendation": "Reuse the production command URL builder and parser. Propagate upstream non-2xx as outer ok=false or a non-2xx response.",
+      "acceptance_tests": [
+        "The generated URL contains name, output=pretty and optional region.",
+        "An upstream 422 produces outer ok=false and no success preview.",
+        "The admin test and group command use the same adapter."
+      ]
+    },
+    {
+      "id": "GG-CB-001",
+      "priority": "P1",
+      "severity": "high",
+      "status": "open",
+      "evidence_level": "static_confirmed",
+      "title": "Lanzou callback acknowledgement and retry semantics can lose or duplicate group notifications",
+      "components": [
+        "onebot-plugin-groupguard",
+        "lanzou_update_push_api_server"
+      ],
+      "evidence": [
+        {
+          "repository": "onebot-plugin-groupguard",
+          "path": "src/standalone/admin/lanzou_update_api.ts",
+          "lines": "112-154"
+        },
+        {
+          "repository": "onebot-plugin-groupguard",
+          "path": "src/standalone/admin/server.ts",
+          "lines": "115-119"
+        },
+        {
+          "repository": "lolapisevers",
+          "path": "lanzou_update_push_api_server/monitor.py",
+          "lines": "195-238, 263-318, 320-350"
+        }
+      ],
+      "impact": "Partial target failures can be committed as success, while a lost response can resend an already delivered event with a new id.",
+      "recommendation": "Use a stable event id, persist per-target delivery state, return complete/partial/duplicate/failed, and retry only failed targets.",
+      "acceptance_tests": [
+        "Two targets with one failure return partial and preserve the failed target for retry.",
+        "Replaying the same event id returns duplicate without a second group message.",
+        "A response timeout after successful delivery does not create a new event id.",
+        "The monitor test endpoint returns top-level failure when delivery fails."
+      ]
+    },
+    {
+      "id": "CROSS-HLT-001",
+      "priority": "P1",
+      "severity": "high",
+      "status": "open",
+      "evidence_level": "production_reproduced_and_static_confirmed",
+      "title": "Health endpoints do not represent business readiness",
+      "components": [
+        "lolapisevers-main",
+        "lanzou-update-monitor",
+        "groupguard-snowluma"
+      ],
+      "evidence": [
+        {
+          "repository": "lolapisevers",
+          "path": "routers/health.py",
+          "lines": "8-30"
+        },
+        {
+          "repository": "lolapisevers",
+          "path": "core/context.py",
+          "lines": "37-46"
+        },
+        {
+          "repository": "lolapisevers",
+          "path": "lanzou_update_push_api_server/monitor.py",
+          "lines": "130-140"
+        },
+        {
+          "repository": "onebot-plugin-groupguard",
+          "path": "src/standalone/admin/risk_ops_api.ts",
+          "lines": "183-205"
+        },
+        {
+          "repository": "onebot-plugin-groupguard",
+          "path": "src/index.ts",
+          "lines": "217-222"
+        }
+      ],
+      "production_observation": "5001 was ready=true while lolban returned 503; 6178 was ok=true with 4 current watcher failures; 6108 was healthy=false with an empty botId while recent delivery was 5/5 successful.",
+      "impact": "Operators and automated maintenance can make the wrong failover or release decision.",
+      "recommendation": "Separate liveness, readiness and dependency details; use a real MySQL ping; distinguish transport, identity and delivery health; expose failed watcher and callback readiness counts.",
+      "acceptance_tests": [
+        "A dropped MySQL connection changes readiness without restarting the process.",
+        "A failed lolban dependency is visible separately.",
+        "Four failed enabled watchers produce partial/degraded readiness.",
+        "Successful sends with unknown identity show transport healthy and identity degraded, not total failure."
+      ]
+    },
+    {
+      "id": "LANZOU-CFG-001",
+      "priority": "P1",
+      "severity": "high",
+      "status": "open",
+      "evidence_level": "production_reproduced",
+      "title": "Production Lanzou notification template contains literal replacement question marks",
+      "components": [
+        "lanzou-update-monitor",
+        "groupguard-snowluma"
+      ],
+      "production_value": "检测到网盘更新?{title}???????",
+      "evidence": [
+        {
+          "repository": "lolapisevers",
+          "path": "lanzou_update_push_api_server/config.py",
+          "lines": "83-90, 188"
+        },
+        {
+          "repository": "lolapisevers",
+          "path": "lanzou_update_push_api_server/monitor.py",
+          "lines": "251-261"
+        },
+        {
+          "production_test": "TEST-PROD-LANZOU-E2E"
+        }
+      ],
+      "impact": "Every update notification can contain visibly corrupted copy even though transport succeeds.",
+      "recommendation": "Correct the production template, add UTF-8 round-trip validation and expose a sanitized template preview/checksum in diagnostics.",
+      "acceptance_tests": [
+        "A Chinese plus emoji template survives config save, process restart, callback JSON and QQ delivery without question marks.",
+        "A malformed replacement-character-heavy template is rejected or warned before save."
+      ]
+    },
+    {
+      "id": "LOL-PERF-001",
+      "priority": "P2",
+      "severity": "medium",
+      "status": "open",
+      "evidence_level": "production_reproduced",
+      "title": "ARAM image generation is slower than the GroupGuard caller timeout",
+      "components": [
+        "onebot-plugin-groupguard",
+        "lolapisevers"
+      ],
+      "evidence": [
+        {
+          "repository": "onebot-plugin-groupguard",
+          "path": "src/config.ts",
+          "lines": "188-192, 567-571"
+        },
+        {
+          "repository": "onebot-plugin-groupguard",
+          "path": "src/services/interaction_service.ts",
+          "lines": "263-266, 405-410, 1868-1896"
+        },
+        {
+          "repository": "lolapisevers",
+          "path": "renderers/aram_augments_image.py",
+          "lines": "78-102"
+        },
+        {
+          "production_test": "TEST-PROD-ARAM"
+        }
+      ],
+      "impact": "The image request times out after about 20 seconds and the user receives delayed JSON/text fallback instead of the intended image.",
+      "recommendation": "Cache rendered images or their assets, avoid full GET preflight duplication, and align the service latency budget with the caller timeout.",
+      "acceptance_tests": [
+        "Cold and warm ARAM image p95 are below the configured caller timeout with margin.",
+        "The group command returns a final reply within the product latency target.",
+        "Timeout fallback emits structured latency/source logs."
+      ]
+    },
+    {
+      "id": "LOL-BAN-001",
+      "priority": "P1",
+      "severity": "high",
+      "status": "open",
+      "evidence_level": "production_reproduced",
+      "title": "The lolapisevers ban endpoint is unavailable while GroupGuard silently uses a different provider",
+      "components": [
+        "onebot-plugin-groupguard",
+        "lolapisevers"
+      ],
+      "evidence": [
+        {
+          "repository": "lolapisevers",
+          "path": "services/lolban_service.py",
+          "lines": "11-17, 134-150"
+        },
+        {
+          "repository": "lolapisevers",
+          "path": "routers/lolban.py",
+          "lines": "25-45"
+        },
+        {
+          "production_test": "TEST-PROD-BAN-LOCAL"
+        },
+        {
+          "production_test": "TEST-PROD-BAN-PLUGIN"
+        }
+      ],
+      "impact": "The two projects can appear integrated while the local endpoint is broken and the plugin depends on an unrelated external service.",
+      "recommendation": "Choose and document one authoritative route. If lolapisevers is authoritative, add last-known-good/stale fallback and dependency health; otherwise remove it from the claimed GroupGuard contract.",
+      "acceptance_tests": [
+        "Known valid QQ samples return the documented napcat-compatible schema from the chosen provider.",
+        "Provider failure is visible in readiness and produces a truthful user-facing error.",
+        "The admin overview names the actual provider used by the group command."
+      ]
+    },
+    {
+      "id": "GG-UI-001",
+      "priority": "P2",
+      "severity": "medium",
+      "status": "open",
+      "evidence_level": "static_confirmed",
+      "title": "Admin query coverage does not match real group-command routing",
+      "components": [
+        "onebot-plugin-groupguard"
+      ],
+      "evidence": [
+        {
+          "repository": "onebot-plugin-groupguard",
+          "path": "src/standalone/admin/query_api.ts",
+          "lines": "8-25, 71-75, 268-274"
+        },
+        {
+          "repository": "onebot-plugin-groupguard",
+          "path": "src/services/interaction_service.ts",
+          "lines": "1856-1896, 2257-2367"
+        }
+      ],
+      "details": [
+        "The admin UI labels hidden query as local-api, while runtime uses a custom form endpoint or direct lolso1 bearer calls.",
+        "ARAM/海符榜 is absent from the query overview and tester.",
+        "Shard testing does not prove the local image path or an intranet-only fallback."
+      ],
+      "impact": "A green dashboard does not prove that the real group command works.",
+      "recommendation": "Expose the selected runtime mode and reuse the real command adapters in diagnostics.",
+      "acceptance_tests": [
+        "Hidden diagnostics show custom-form, lolso1-bearer or disabled and test that exact path.",
+        "ARAM appears in overview and validates image-to-JSON fallback.",
+        "Shard works with internet access disabled when local service is intended as the fallback."
+      ]
+    },
+    {
+      "id": "GG-CFG-001",
+      "priority": "P2",
+      "severity": "medium",
+      "status": "open",
+      "evidence_level": "static_confirmed_and_production_configured_around",
+      "title": "GroupGuard default LOL API address is stale",
+      "components": [
+        "onebot-plugin-groupguard"
+      ],
+      "evidence": [
+        {
+          "repository": "onebot-plugin-groupguard",
+          "path": "src/services/interaction_service.ts",
+          "lines": "19-20, 253-266"
+        },
+        {
+          "repository": "onebot-plugin-groupguard",
+          "path": "src/config.ts",
+          "lines": "614-624"
+        },
+        {
+          "repository": "lolapisevers",
+          "path": "SERVICE_RUNBOOK.md",
+          "lines": "9, 35, 49"
+        }
+      ],
+      "current_default": "http://192.168.3.94:5000",
+      "current_production": "http://192.168.3.100:5001",
+      "impact": "A fresh install, lost config or recovery can connect to the wrong host and port.",
+      "recommendation": "Fail fast when the address is missing or inject it at deployment; align examples, types and command help.",
+      "acceptance_tests": [
+        "A fresh production deployment cannot start query features without an explicit base URL.",
+        "Config recovery keeps or revalidates the production address."
+      ]
+    },
+    {
+      "id": "LANZOU-MON-001",
+      "priority": "P1",
+      "severity": "high",
+      "status": "open",
+      "evidence_level": "static_confirmed_with_production_precursors",
+      "title": "Empty results, provider switching and orphan state can create false mass updates",
+      "components": [
+        "lanzou-update-monitor"
+      ],
+      "evidence": [
+        {
+          "repository": "lolapisevers",
+          "path": "lanzou_update_push_api_server/providers.py",
+          "lines": "210-216, 221-256, 298-345"
+        },
+        {
+          "repository": "lolapisevers",
+          "path": "lanzou_update_push_api_server/monitor.py",
+          "lines": "18-29, 38-49, 121-129"
+        },
+        {
+          "production_test": "TEST-PROD-MONITOR-HEALTH"
+        }
+      ],
+      "impact": "A parser drift, provider fallback or reused watcher id can announce many false added/removed files to QQ groups.",
+      "recommendation": "Protect non-empty-to-empty transitions, normalize file identity across providers, require re-baseline on provider or URL changes, and archive orphan state.",
+      "acceptance_tests": [
+        "A temporary empty scrape does not commit or notify without a confirmed empty directory.",
+        "Switching providers for identical files creates no diff.",
+        "Configured watcher ids equal active state ids after an audited cleanup."
+      ]
+    },
+    {
+      "id": "LOL-REL-001",
+      "priority": "P2",
+      "severity": "medium",
+      "status": "open",
+      "evidence_level": "static_confirmed",
+      "title": "Cross-query persistence failure can hide a valid live response and stale fallback has no maximum age",
+      "components": [
+        "lolapisevers",
+        "onebot-plugin-groupguard"
+      ],
+      "evidence": [
+        {
+          "repository": "lolapisevers",
+          "path": "services/cross_query_service.py",
+          "lines": "40-44, 50-119, 118-149"
+        },
+        {
+          "repository": "onebot-plugin-groupguard",
+          "path": "src/services/interaction_service.ts",
+          "lines": "197-209, 674-699"
+        }
+      ],
+      "impact": "A successful SO1 result can become a 503 because snapshot persistence fails; old snapshots can be shown without a clear age/source warning.",
+      "recommendation": "Isolate snapshot read/write failures from live results, enforce a stale maximum age, and preserve source/is_stale/timestamp/fallback_reason in GroupGuard replies.",
+      "acceptance_tests": [
+        "A database write failure still returns the live payload with a persistence warning.",
+        "A snapshot older than the configured maximum is rejected or clearly labeled.",
+        "Group messages expose cache/snapshot source and timestamp."
+      ]
+    },
+    {
+      "id": "OPS-TRACE-001",
+      "priority": "P2",
+      "severity": "medium",
+      "status": "open",
+      "evidence_level": "production_observed",
+      "title": "Production artifacts cannot be mapped to repository commits",
+      "components": [
+        "groupguard-snowluma",
+        "lolapisevers-main",
+        "lanzou-update-monitor"
+      ],
+      "production_observation": {
+        "groupguard_dist_sha256": "4938c1b07dbfaaecc876d840e202d0c8603f29d776c15c7230c040b0f4dcb1d2",
+        "groupguard_dist_mtime": "2026-07-21T13:49:34+08:00",
+        "groupguard_revision_file": null,
+        "lol_api_openapi_version": "0.1.0",
+        "lanzou_openapi_version": "0.3.1"
+      },
+      "impact": "Future ChatGPT or operators cannot prove which commit is running before maintenance or rollback.",
+      "recommendation": "Generate build-info.json or REVISION with commit SHA, build time, contract version and config schema version; expose it in health/OpenAPI.",
+      "acceptance_tests": [
+        "Each production health response includes a commit SHA that exists in the intended remote repository.",
+        "Deployment scripts fail if build metadata is absent."
+      ]
+    },
+    {
+      "id": "REPO-HYGIENE-001",
+      "priority": "P3",
+      "severity": "low",
+      "status": "open",
+      "evidence_level": "local_observed",
+      "title": "Runtime backup files are untracked and easy to stage accidentally",
+      "components": [
+        "lolapisevers"
+      ],
+      "observed_paths": [
+        "lanzou_update_push_api_server/config.json.bak.20260722T073942019643Z",
+        "lanzou_update_push_api_server/config.json.bak.20260722T074755644574Z",
+        "lanzou_update_push_api_server/providers.py.bak-20260722-212940",
+        "lanzou_update_push_api_server/state.json.bad.20260720-164752"
+      ],
+      "impact": "A broad git add can publish local configuration, watcher history or secrets.",
+      "recommendation": "Add precise ignore rules or move runtime backups outside the repository. Never include these files in the audit commit.",
+      "acceptance_tests": [
+        "git status after normal runtime recovery does not show backup or bad-state artifacts.",
+        "The audit commit contains only the two report files."
+      ]
+    }
+  ],
+  "verified_successes": [
+    "Both local test suites passed.",
+    "Production main API readiness, live battle query, shard JSON/image and ARAM JSON succeeded.",
+    "The Lanzou monitor callback reached GroupGuard and produced a sent message in the authorized test group.",
+    "Production GroupGuard uses the intended .100:5001 and .100:6178 overrides rather than the stale code defaults."
+  ],
+  "open_blockers": [
+    "Fix GG-INT-001 before trusting the admin query tester.",
+    "Define and implement GG-CB-001 before adding multiple production callback targets.",
+    "Restore or remove the local lolban contract.",
+    "Correct the production notification template.",
+    "Add truthful readiness and build revision data."
+  ],
+  "verification_limits": [
+    "The two user-specified group commands were not injected because the only online bot does not report self messages; a real test-group member is required.",
+    "No production configuration, container, service or repository source was changed during the audit.",
+    "Authentication and public exposure were intentionally outside scope."
+  ],
+  "machine_handoff": {
+    "source_of_truth": "docs/audits/2026-07-26-production-integration-audit.json",
+    "human_summary": "docs/audits/2026-07-26-production-integration-audit.md",
+    "recommended_fix_order": [
+      "GG-INT-001",
+      "LANZOU-CFG-001",
+      "LOL-BAN-001",
+      "CROSS-HLT-001",
+      "GG-CB-001",
+      "LOL-PERF-001",
+      "GG-UI-001",
+      "GG-CFG-001",
+      "LANZOU-MON-001",
+      "LOL-REL-001",
+      "OPS-TRACE-001",
+      "REPO-HYGIENE-001"
+    ],
+    "next_human_inbound_tests": [
+      {
+        "group_id": "805402626",
+        "command": "查封号2621735529",
+        "expected": "One final ban-status reply using the configured production provider."
+      },
+      {
+        "group_id": "805402626",
+        "command": "查战绩 ZCG烧火棍丘丘人#73557",
+        "expected": "One waiting notice followed by a final battle-query reply; source and stale state should be observable after remediation."
+      }
+    ],
+    "safe_rerun_checks": [
+      "GET http://192.168.3.100:5001/health",
+      "GET http://192.168.3.100:6178/health",
+      "GET GroupGuard /api/health with the production admin token supplied at runtime but never recorded",
+      "POST GroupGuard /api/query/test and assert both outer and upstream status",
+      "POST localhost:6178/notify/test only while the configured targets are restricted to the authorized test group"
+    ],
+    "git_safety": {
+      "stage_only": [
+        "docs/audits/2026-07-26-production-integration-audit.json",
+        "docs/audits/2026-07-26-production-integration-audit.md"
+      ],
+      "never_stage_observed_runtime_backups": true
+    }
+  }
+}
