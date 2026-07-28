@@ -10,6 +10,7 @@ from core.lifespan import lifespan
 from routers.aram_augments import router as aram_augments_router
 from routers.cross_query import router as cross_query_router
 from routers.cross_session import router as cross_session_router
+from routers.groupguard_delivery import router as groupguard_delivery_router
 from routers.health import router as health_router
 from routers.lolban import router as lolban_router
 from routers.shard_query import router as shard_query_router
@@ -41,6 +42,7 @@ def build_app() -> FastAPI:
     app.include_router(shard_query_router)
     app.include_router(aram_augments_router)
     app.include_router(lolban_router)
+    app.include_router(groupguard_delivery_router)
 
     logger.info("API routers mounted without legacy_app dependency")
     return app
