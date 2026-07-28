@@ -14,16 +14,21 @@ from urllib.parse import urlparse
 import requests
 
 from cache import TTLCache
+from services.persistent_snapshot_store import PersistentSnapshotStore
 
 
 TIMEOUT = float(os.getenv("LOL_BAN_TIMEOUT", "10"))
 NORMAL_CACHE_SECONDS = int(os.getenv("LOL_BAN_NORMAL_CACHE_SECONDS", "60"))
 BANNED_CACHE_SECONDS = int(os.getenv("LOL_BAN_BANNED_CACHE_SECONDS", "300"))
 STALE_CACHE_SECONDS = int(os.getenv("LOL_BAN_STALE_CACHE_SECONDS", "86400"))
+MAX_STALE_ENTRIES = int(os.getenv("LOL_BAN_MAX_STALE_ENTRIES", "1024"))
+LOL_BAN_SNAPSHOT_SOURCE_ID = "lolban-last-known-v1"
+_DEFAULT_SNAPSHOT_STORE = object()
 
 DEFAULT_HEADERS = {
     "accept": "application/json, text/javascript, */*; q=0.01",
-    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 Chrome/120 Safari/537.36",
 }
 
 UNSAFE_MESSAGE_WORDS = (
@@ -41,6 +46,11 @@ UNSAFE_MESSAGE_WORDS = (
     "购买",
     "广告",
 )
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = str(os.getenv(name, "1" if default else "0")).strip().lower()
+    return value not in {"0", "false", "no", "off"}
 
 
 def valid_qq(value: str) -> bool:
@@ -76,7 +86,9 @@ def clean_payload(qq: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         "msg": safe_msg,
         "data": {
             "qq": qq,
-            "ban_time": str(data.get("ban_time") or data.get("banTime") or "").strip(),
+            "ban_time": str(
+                data.get("ban_time") or data.get("banTime") or ""
+            ).strip(),
             "end_time": str(
                 data.get("end_time")
                 or data.get("endTime")
@@ -129,7 +141,11 @@ def format_lolban_text(payload: Dict[str, Any]) -> str:
 
 
 def _safe_provider_name(value: Any, fallback: str) -> str:
-    name = re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(value or "").strip()).strip("-")
+    name = re.sub(
+        r"[^a-zA-Z0-9_.-]+",
+        "-",
+        str(value or "").strip(),
+    ).strip("-")
     return name[:64] or fallback
 
 
@@ -139,6 +155,42 @@ def _valid_http_url(value: str) -> bool:
         return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
     except Exception:
         return False
+
+
+def _safe_attempts(value: Any) -> List[Dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    safe: List[Dict[str, Any]] = []
+    for index, item in enumerate(value, start=1):
+        if not isinstance(item, dict):
+            continue
+        attempt = {
+            "provider": _safe_provider_name(
+                item.get("provider"),
+                f"provider-{index}",
+            ),
+            "ok": bool(item.get("ok")),
+            "elapsed_ms": max(0, int(item.get("elapsed_ms") or 0)),
+        }
+        if not attempt["ok"]:
+            attempt["error_class"] = re.sub(
+                r"[^A-Za-z0-9_.-]+",
+                "_",
+                str(item.get("error_class") or "failed"),
+            )[:96]
+        safe.append(attempt)
+    return safe
+
+
+def _sanitize_stored_payload(qq: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    sanitized = clean_payload(qq, payload)
+    provider = str(payload.get("provider") or "").strip()
+    if provider:
+        sanitized["provider"] = _safe_provider_name(provider, "provider")
+    attempts = _safe_attempts(payload.get("attempts"))
+    if attempts:
+        sanitized["attempts"] = attempts
+    return sanitized
 
 
 @dataclass(frozen=True)
@@ -153,7 +205,10 @@ class LolBanProvider:
 
     def query(self, qq: str) -> Dict[str, Any]:
         method = self.method.upper()
-        headers = {**DEFAULT_HEADERS, **{str(k): str(v) for k, v in self.headers.items()}}
+        headers = {
+            **DEFAULT_HEADERS,
+            **{str(k): str(v) for k, v in self.headers.items()},
+        }
         url = self.url.replace("{qq}", qq)
         kwargs: Dict[str, Any] = {
             "headers": headers,
@@ -168,14 +223,21 @@ class LolBanProvider:
             kwargs["data"] = dict(self.form)
         response = requests.request(method, url, **kwargs)
         response.raise_for_status()
-        text = response.content.decode("utf-8", errors="replace").strip().lstrip("\ufeff")
+        text = (
+            response.content.decode("utf-8", errors="replace")
+            .strip()
+            .lstrip("\ufeff")
+        )
         payload = json.loads(text)
         if not isinstance(payload, dict):
             raise RuntimeError("upstream payload is not object")
         return clean_payload(qq, payload)
 
 
-def _provider_from_raw(raw: Mapping[str, Any], index: int) -> Optional[LolBanProvider]:
+def _provider_from_raw(
+    raw: Mapping[str, Any],
+    index: int,
+) -> Optional[LolBanProvider]:
     url = str(raw.get("url") or "").strip()
     if not _valid_http_url(url):
         return None
@@ -185,7 +247,10 @@ def _provider_from_raw(raw: Mapping[str, Any], index: int) -> Optional[LolBanPro
     headers = raw.get("headers") if isinstance(raw.get("headers"), dict) else {}
     form = raw.get("form") if isinstance(raw.get("form"), dict) else {}
     try:
-        timeout_seconds = max(1.0, min(float(raw.get("timeout_seconds") or TIMEOUT), 60.0))
+        timeout_seconds = max(
+            1.0,
+            min(float(raw.get("timeout_seconds") or TIMEOUT), 60.0),
+        )
     except (TypeError, ValueError):
         timeout_seconds = TIMEOUT
     return LolBanProvider(
@@ -225,7 +290,9 @@ def load_providers() -> List[LolBanProvider]:
                 qq_param="qq",
                 form={"action": "query_lol"},
                 headers={
-                    "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+                    "content-type": (
+                        "application/x-www-form-urlencoded; charset=UTF-8"
+                    ),
                     "x-requested-with": "XMLHttpRequest",
                 },
             )
@@ -249,23 +316,43 @@ class LolBanService:
         normal_cache_seconds: int = NORMAL_CACHE_SECONDS,
         banned_cache_seconds: int = BANNED_CACHE_SECONDS,
         stale_cache_seconds: int = STALE_CACHE_SECONDS,
-        max_stale_entries: int = 1024,
+        max_stale_entries: int = MAX_STALE_ENTRIES,
+        snapshot_store: Any = _DEFAULT_SNAPSHOT_STORE,
     ) -> None:
-        self.providers = list(providers if providers is not None else load_providers())
+        self.providers = list(
+            providers if providers is not None else load_providers()
+        )
         self.normal_cache_seconds = max(1, int(normal_cache_seconds))
         self.banned_cache_seconds = max(1, int(banned_cache_seconds))
         self.stale_cache_seconds = max(0, int(stale_cache_seconds))
         self.max_stale_entries = max(1, int(max_stale_entries))
         self._normal_cache = TTLCache(ttl_seconds=self.normal_cache_seconds)
         self._banned_cache = TTLCache(ttl_seconds=self.banned_cache_seconds)
-        self._last_known: OrderedDict[str, Tuple[Dict[str, Any], float]] = OrderedDict()
+        self._last_known: OrderedDict[
+            str,
+            Tuple[Dict[str, Any], float],
+        ] = OrderedDict()
         self._last_known_lock = threading.Lock()
         self._query_locks = [threading.Lock() for _ in range(64)]
+        self._restored_from_snapshot: set[str] = set()
         self._last_success_at = ""
         self._last_error_at = ""
         self._last_error_class = ""
         self._configuration_error_code = ""
         self._configuration_error_class = ""
+        self._snapshot_status = "disabled"
+        self._snapshot_write_error_class = ""
+
+        if snapshot_store is _DEFAULT_SNAPSHOT_STORE:
+            enabled = _env_bool("LOL_BAN_SNAPSHOT_ENABLED", True)
+            self.snapshot_store = (
+                PersistentSnapshotStore()
+                if enabled and self.stale_cache_seconds > 0
+                else None
+            )
+        else:
+            self.snapshot_store = snapshot_store
+        self._restore_persistent_last_known()
 
     def _lock_for(self, qq: str) -> threading.Lock:
         return self._query_locks[hash(qq) % len(self._query_locks)]
@@ -273,6 +360,7 @@ class LolBanService:
     def _purge_stale_locked(self, now: float) -> None:
         if self.stale_cache_seconds <= 0:
             self._last_known.clear()
+            self._restored_from_snapshot.clear()
             return
         expired = [
             qq
@@ -281,8 +369,94 @@ class LolBanService:
         ]
         for qq in expired:
             self._last_known.pop(qq, None)
+            self._restored_from_snapshot.discard(qq)
 
-    def _fresh_result(self, qq: str) -> Optional[Tuple[Dict[str, Any], str, int]]:
+    def _snapshot_payload_locked(self) -> Dict[str, Any]:
+        return {
+            "entries": [
+                {
+                    "qq": qq,
+                    "captured_at_epoch": captured_at,
+                    "payload": copy.deepcopy(payload),
+                }
+                for qq, (payload, captured_at) in self._last_known.items()
+            ],
+            "max_entries": self.max_stale_entries,
+        }
+
+    def _persist_last_known_locked(self) -> None:
+        if self.snapshot_store is None or self.stale_cache_seconds <= 0:
+            self._snapshot_status = "disabled"
+            return
+        try:
+            result = self.snapshot_store.save(
+                LOL_BAN_SNAPSHOT_SOURCE_ID,
+                self._snapshot_payload_locked(),
+                {
+                    "entry_count": len(self._last_known),
+                    "stale_cache_seconds": self.stale_cache_seconds,
+                },
+            )
+            self._snapshot_status = str(result.get("status") or "saved")
+            self._snapshot_write_error_class = ""
+        except Exception as exc:
+            self._snapshot_status = "write_error"
+            self._snapshot_write_error_class = type(exc).__name__
+
+    def _restore_persistent_last_known(self) -> None:
+        if self.snapshot_store is None or self.stale_cache_seconds <= 0:
+            self._snapshot_status = "disabled"
+            return
+        try:
+            loaded = self.snapshot_store.load(
+                LOL_BAN_SNAPSHOT_SOURCE_ID,
+                max_age_seconds=self.stale_cache_seconds,
+            )
+        except Exception as exc:
+            self._snapshot_status = "load_error"
+            self._snapshot_write_error_class = type(exc).__name__
+            return
+        self._snapshot_status = loaded.status
+        if not loaded.ok or not isinstance(loaded.payload, dict):
+            return
+        entries = loaded.payload.get("entries")
+        if not isinstance(entries, list):
+            self._snapshot_status = "invalid_payload"
+            return
+
+        now = time.time()
+        restored: OrderedDict[str, Tuple[Dict[str, Any], float]] = OrderedDict()
+        for item in entries:
+            if not isinstance(item, dict):
+                continue
+            qq = str(item.get("qq") or "").strip()
+            raw_payload = item.get("payload")
+            try:
+                captured_at = float(item.get("captured_at_epoch"))
+            except (TypeError, ValueError):
+                continue
+            if not valid_qq(qq) or not isinstance(raw_payload, dict):
+                continue
+            if captured_at <= 0 or now - captured_at > self.stale_cache_seconds:
+                continue
+            try:
+                stored = _sanitize_stored_payload(qq, raw_payload)
+            except Exception:
+                continue
+            restored.pop(qq, None)
+            restored[qq] = (stored, captured_at)
+            while len(restored) > self.max_stale_entries:
+                restored.popitem(last=False)
+
+        with self._last_known_lock:
+            self._last_known = restored
+            self._restored_from_snapshot = set(restored.keys())
+        self._snapshot_status = "restored" if restored else "empty"
+
+    def _fresh_result(
+        self,
+        qq: str,
+    ) -> Optional[Tuple[Dict[str, Any], str, int]]:
         key = f"lolban:{qq}"
         for cache in (self._normal_cache, self._banned_cache):
             cached, ttl = cache.get_with_remaining_ttl(key)
@@ -292,6 +466,7 @@ class LolBanService:
                 result["cache_expires_in"] = ttl
                 result["stale_age_seconds"] = 0
                 result["fallback_reason"] = ""
+                result["stale_origin"] = ""
                 return result, "cache", ttl
         return None
 
@@ -303,26 +478,42 @@ class LolBanService:
         attempts: List[Dict[str, Any]],
     ) -> Tuple[Dict[str, Any], str, int]:
         data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
-        ttl = self.banned_cache_seconds if data.get("status") == "封禁" else self.normal_cache_seconds
-        cache = self._banned_cache if data.get("status") == "封禁" else self._normal_cache
-        stored = copy.deepcopy(payload)
-        stored["provider"] = provider
-        stored["attempts"] = list(attempts)
-        cache.set(f"lolban:{qq}", stored)
+        ttl = (
+            self.banned_cache_seconds
+            if data.get("status") == "封禁"
+            else self.normal_cache_seconds
+        )
+        cache = (
+            self._banned_cache
+            if data.get("status") == "封禁"
+            else self._normal_cache
+        )
+        stored = _sanitize_stored_payload(qq, payload)
+        stored["provider"] = _safe_provider_name(provider, "provider")
+        stored["attempts"] = _safe_attempts(attempts)
+        cache.set(f"lolban:{qq}", copy.deepcopy(stored))
         with self._last_known_lock:
             now = time.time()
             self._purge_stale_locked(now)
             self._last_known.pop(qq, None)
             self._last_known[qq] = (copy.deepcopy(stored), now)
+            self._restored_from_snapshot.discard(qq)
             while len(self._last_known) > self.max_stale_entries:
-                self._last_known.popitem(last=False)
+                removed_qq, _ = self._last_known.popitem(last=False)
+                self._restored_from_snapshot.discard(removed_qq)
+            self._persist_last_known_locked()
         self._last_success_at = datetime.now(timezone.utc).isoformat()
 
         result = copy.deepcopy(stored)
         result["source"] = "live"
         result["cache_expires_in"] = ttl
         result["stale_age_seconds"] = 0
-        result["fallback_reason"] = "provider_fallback" if len(attempts) > 1 else ""
+        result["stale_origin"] = ""
+        result["fallback_reason"] = (
+            "provider_fallback" if len(attempts) > 1 else ""
+        )
+        if self._snapshot_write_error_class:
+            result["snapshot_write_error"] = self._snapshot_write_error_class
         return result, "live", ttl
 
     def _stale_result(
@@ -335,6 +526,7 @@ class LolBanService:
         with self._last_known_lock:
             self._purge_stale_locked(time.time())
             item = self._last_known.get(qq)
+            restored = qq in self._restored_from_snapshot
         if item is None:
             return None
         stored, captured_at = item
@@ -345,8 +537,9 @@ class LolBanService:
         result["source"] = "stale"
         result["cache_expires_in"] = 0
         result["stale_age_seconds"] = age
+        result["stale_origin"] = "persistent_snapshot" if restored else "memory"
         result["fallback_reason"] = "all_providers_failed"
-        result["attempts"] = list(attempts)
+        result["attempts"] = _safe_attempts(attempts)
         return result, "stale", 0
 
     def _query_sync(self, qq: str) -> Tuple[Dict[str, Any], str, int]:
@@ -364,32 +557,49 @@ class LolBanService:
                         {
                             "provider": provider.name,
                             "ok": True,
-                            "elapsed_ms": int((time.monotonic() - started) * 1000),
+                            "elapsed_ms": int(
+                                (time.monotonic() - started) * 1000
+                            ),
                         }
                     )
-                    return self._cache_live_result(qq, payload, provider.name, attempts)
+                    return self._cache_live_result(
+                        qq,
+                        payload,
+                        provider.name,
+                        attempts,
+                    )
                 except Exception as exc:
                     attempts.append(
                         {
                             "provider": provider.name,
                             "ok": False,
                             "error_class": type(exc).__name__,
-                            "elapsed_ms": int((time.monotonic() - started) * 1000),
+                            "elapsed_ms": int(
+                                (time.monotonic() - started) * 1000
+                            ),
                         }
                     )
 
             self._last_error_at = datetime.now(timezone.utc).isoformat()
-            self._last_error_class = attempts[-1].get("error_class", "providers_unavailable") if attempts else "providers_not_configured"
+            self._last_error_class = (
+                attempts[-1].get("error_class", "providers_unavailable")
+                if attempts
+                else "providers_not_configured"
+            )
             stale = self._stale_result(qq, attempts)
             if stale is not None:
                 return stale
             summary = ",".join(
-                f"{attempt['provider']}:{attempt.get('error_class', 'failed')}"
+                f"{attempt['provider']}:"
+                f"{attempt.get('error_class', 'failed')}"
                 for attempt in attempts
             ) or "providers_not_configured"
             raise RuntimeError(f"lolban providers unavailable ({summary})")
 
-    async def get_result(self, qq: str) -> Tuple[Dict[str, Any], str, int]:
+    async def get_result(
+        self,
+        qq: str,
+    ) -> Tuple[Dict[str, Any], str, int]:
         cached = self._fresh_result(qq)
         if cached is not None:
             return cached
@@ -399,12 +609,21 @@ class LolBanService:
         with self._last_known_lock:
             self._purge_stale_locked(time.time())
             stale_entries = len(self._last_known)
+            restored_entries = len(self._restored_from_snapshot)
         return {
             "configured": bool(self.providers),
             "provider_count": len(self.providers),
             "providers": [provider.name for provider in self.providers],
-            "fresh_cache_entries": len(self._normal_cache) + len(self._banned_cache),
+            "fresh_cache_entries": (
+                len(self._normal_cache) + len(self._banned_cache)
+            ),
             "stale_cache_entries": stale_entries,
+            "persistent_snapshot_enabled": self.snapshot_store is not None,
+            "persistent_snapshot_status": self._snapshot_status,
+            "persistent_snapshot_restored_entries": restored_entries,
+            "persistent_snapshot_write_error_class": (
+                self._snapshot_write_error_class
+            ),
             "last_success_at": self._last_success_at,
             "last_error_at": self._last_error_at,
             "last_error_class": self._last_error_class,
