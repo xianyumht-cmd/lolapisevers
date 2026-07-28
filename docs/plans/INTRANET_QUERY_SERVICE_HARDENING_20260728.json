@@ -16,25 +16,43 @@
         "docs/plans/INTRANET_QUERY_SERVICE_HARDENING_20260728.md",
         "docs/plans/INTRANET_QUERY_SERVICE_HARDENING_20260728.json"
       ]
-    }
-  ],
-  "steps": [
+    },
     {
       "id": "LAPI-SNAPSHOT-001",
-      "status": "in_review",
-      "depends_on": [],
-      "summary": "Implement atomic, validated, persistent snapshots with bounded stale age and Windows-safe replacement.",
+      "status": "completed",
       "implementation_branch": "feat/persistent-query-snapshots-20260728",
       "pull_request": 9,
+      "verification": {
+        "workflow": "tests",
+        "run_id": 30364375252,
+        "conclusion": "success",
+        "platform": "windows-latest",
+        "checks": [
+          "full unittest discovery",
+          "WebUI JavaScript generation",
+          "Node.js syntax validation",
+          "PowerShell operations script parsing"
+        ]
+      },
       "outputs": [
         "services/persistent_snapshot_store.py",
         "tests/test_persistent_snapshot_store.py",
         ".gitignore"
       ]
+    }
+  ],
+  "steps": [
+    {
+      "id": "LAPI-SNAPSHOT-001",
+      "status": "completed",
+      "depends_on": [],
+      "summary": "Implemented atomic, validated, persistent snapshots with bounded stale age and Windows-safe replacement.",
+      "implementation_branch": "feat/persistent-query-snapshots-20260728",
+      "pull_request": 9
     },
     {
       "id": "LAPI-UPSTREAM-001",
-      "status": "next_after_ci",
+      "status": "next",
       "depends_on": ["LAPI-SNAPSHOT-001"],
       "summary": "Implement one upstream client with separated timeouts, bounded retries, conditional requests, structured errors, and circuit state."
     },
@@ -120,7 +138,7 @@
   ],
   "next_recommended_action": {
     "step_id": "LAPI-UPSTREAM-001",
-    "condition": "Run after PR #9 passes Windows CI and review.",
+    "branch": "feat/upstream-http-client-20260728",
     "summary": "Build the shared upstream HTTP client before integrating snapshots into shard queries."
   },
   "production_rule": "The service release must remain compatible with the currently deployed GroupGuard, must be deployed first, and must pass restart plus upstream-failure acceptance before plugin migration."
