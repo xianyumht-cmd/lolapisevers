@@ -103,6 +103,15 @@ def classify_request_exception(exc: BaseException) -> UpstreamError:
     return UpstreamError("unexpected_error", _safe_message(exc), False)
 
 
+def _redact_error(error: UpstreamError, url: str) -> UpstreamError:
+    message = error.message
+    parsed = urlsplit(url)
+    for secret in (url, parsed.query, parsed.username or "", parsed.password or ""):
+        if secret:
+            message = message.replace(secret, "[redacted]")
+    return UpstreamError(error.error_class, message[:300], error.retryable, error.status_code)
+
+
 class UpstreamHttpClient:
     """Bounded HTTP client for named public upstreams.
 
@@ -282,7 +291,7 @@ class UpstreamHttpClient:
                 flight.set_result(result)
             return result
         except BaseException as exc:
-            error = classify_request_exception(exc)
+            error = _redact_error(classify_request_exception(exc), normalized_url)
             circuit = self._failure(source, error) if error.retryable else gate_state
             result = UpstreamResponse(False, source, "failed", error=error, circuit_state=circuit)
             if flight is not None and not flight.done():
@@ -359,7 +368,7 @@ class UpstreamHttpClient:
                 self._success(source)
                 return UpstreamResponse(True, source, "ok", response.status_code, index + 1, text=text, data=data, etag=response_etag, last_modified=response_last_modified, elapsed_ms=round((self.monotonic_fn() - started) * 1000, 1))
             except Exception as exc:
-                last_error = classify_request_exception(exc)
+                last_error = _redact_error(classify_request_exception(exc), url)
                 if not last_error.retryable or index + 1 >= limit:
                     circuit = self._failure(source, last_error) if last_error.retryable else gate_state
                     return UpstreamResponse(False, source, "failed", attempts=index + 1, error=last_error, elapsed_ms=round((self.monotonic_fn() - started) * 1000, 1), circuit_state=circuit)
