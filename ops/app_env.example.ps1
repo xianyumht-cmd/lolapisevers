@@ -38,10 +38,13 @@ $env:SHARD_DATA_URL = "https://raw.githubusercontent.com/badspacebar/release/mas
 $env:SHARD_HERO_URL = "https://game.gtimg.cn/images/lol/act/img/js/heroList/hero_list.js"
 
 # Persistent upstream snapshots
-# The shard and hero snapshots survive service restarts. Seven days is the maximum
-# age accepted when a public source is unavailable; older snapshots return 503.
+# Shard and hero catalog snapshots survive service restarts. Seven days is the
+# maximum age accepted for those relatively stable source files.
 $env:UPSTREAM_SNAPSHOT_DIR = "data\upstream_snapshots"
 $env:SHARD_SNAPSHOT_MAX_AGE_SECONDS = "604800"
+# Per-hero ARAM result snapshots are more time-sensitive. The default accepts
+# only the latest 24 hours when OP.GG is unavailable; older snapshots return 503.
+$env:ARAM_SNAPSHOT_MAX_AGE_SECONDS = "86400"
 
 # LOL ban providers
 # JSON array order is the fallback order. Put real URLs, tokens, headers, and form
