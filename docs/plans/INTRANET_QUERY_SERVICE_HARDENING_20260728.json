@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "plan_id": "GGK-INTRANET-QUERY-20260728",
+  "repository": "xianyumht-cmd/lolapisevers",
+  "base_branch": "codex/production-integration-audit-20260726",
+  "document_branch": "docs/intranet-query-boundary-20260728",
+  "status": "planned",
+  "role": "sole_public_upstream_gateway_and_query_business_service",
+  "architecture_contract": "groupguard-query-delivery.v1",
+  "completed_steps": [
+    {
+      "id": "LAPI-DOC-001",
+      "status": "completed",
+      "outputs": [
+        "docs/architecture/INTRANET_QUERY_SERVICE_BOUNDARY.md",
+        "docs/plans/INTRANET_QUERY_SERVICE_HARDENING_20260728.md",
+        "docs/plans/INTRANET_QUERY_SERVICE_HARDENING_20260728.json"
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "id": "LAPI-SNAPSHOT-001",
+      "status": "next",
+      "depends_on": [],
+      "summary": "Implement atomic, validated, persistent snapshots with bounded stale age and Windows-safe replacement."
+    },
+    {
+      "id": "LAPI-UPSTREAM-001",
+      "status": "planned",
+      "depends_on": ["LAPI-SNAPSHOT-001"],
+      "summary": "Implement one upstream client with separated timeouts, bounded retries, conditional requests, structured errors, and circuit state."
+    },
+    {
+      "id": "LAPI-SHARD-001",
+      "status": "blocked",
+      "depends_on": ["LAPI-SNAPSHOT-001", "LAPI-UPSTREAM-001"],
+      "summary": "Persist shard and champion sources, restore on startup, and serve controlled snapshot/stale results when public sources fail."
+    },
+    {
+      "id": "LAPI-ARAM-001",
+      "status": "planned",
+      "depends_on": ["LAPI-SNAPSHOT-001", "LAPI-UPSTREAM-001"],
+      "summary": "Persist champion lookup and per-hero ARAM last-known-good payloads while preserving singleflight and image caching."
+    },
+    {
+      "id": "LAPI-BAN-001",
+      "status": "planned",
+      "depends_on": ["LAPI-SNAPSHOT-001"],
+      "summary": "Persist the existing bounded ban-query last-known-good cache across service restarts."
+    },
+    {
+      "id": "LAPI-DELIVERY-001",
+      "status": "planned",
+      "depends_on": ["LAPI-SHARD-001", "LAPI-ARAM-001", "LAPI-BAN-001"],
+      "summary": "Return a final text/image/forward delivery envelope so GroupGuard does not parse business data."
+    },
+    {
+      "id": "LAPI-OBS-001",
+      "status": "planned",
+      "depends_on": ["LAPI-SNAPSHOT-001", "LAPI-UPSTREAM-001"],
+      "summary": "Expose per-source live/cache/snapshot/stale/unavailable state, age, error class, and circuit state."
+    },
+    {
+      "id": "LAPI-CONTRACT-001",
+      "status": "planned",
+      "depends_on": ["LAPI-DELIVERY-001", "LAPI-OBS-001"],
+      "summary": "Add service, fixture, and pinned cross-repository contract tests including restart and no-public-network scenarios."
+    },
+    {
+      "id": "LAPI-DEPLOY-001",
+      "status": "blocked",
+      "depends_on": ["LAPI-SHARD-001", "LAPI-ARAM-001", "LAPI-BAN-001", "LAPI-DELIVERY-001", "LAPI-OBS-001", "LAPI-CONTRACT-001"],
+      "summary": "Deploy the backward-compatible service release before any GroupGuard runtime migration."
+    }
+  ],
+  "current_findings": [
+    {
+      "severity": "P1",
+      "code": "SINGLE_ATTEMPT_HTTP",
+      "path": "utils/http_client.py",
+      "summary": "Generic JSON loading performs one request with one timeout and no retry, error classification, or snapshot fallback."
+    },
+    {
+      "severity": "P1",
+      "code": "SHARD_MEMORY_ONLY",
+      "path": "services/shard_service.py",
+      "summary": "Shard and champion sources are memory-only and both public sources are required again after restart or expiry."
+    },
+    {
+      "severity": "P1",
+      "code": "ARAM_PAYLOAD_MEMORY_ONLY",
+      "path": "services/aram_augments_service.py",
+      "summary": "ARAM payloads and champion lookup have no persistent last-known-good data."
+    },
+    {
+      "severity": "P1",
+      "code": "BAN_LKG_MEMORY_ONLY",
+      "path": "services/lolban_service.py",
+      "summary": "The bounded stale ban cache exists but is lost on restart."
+    },
+    {
+      "severity": "P2",
+      "code": "NO_FINAL_DELIVERY_CONTRACT",
+      "path": "routers/* and services/*",
+      "summary": "Current endpoints return business data or raw images but no uniform final delivery envelope for GroupGuard."
+    }
+  ],
+  "first_implementation_batch": [
+    "LAPI-SNAPSHOT-001",
+    "LAPI-UPSTREAM-001",
+    "LAPI-SHARD-001"
+  ],
+  "next_recommended_action": {
+    "step_id": "LAPI-SNAPSHOT-001",
+    "branch": "feat/persistent-query-snapshots-20260728",
+    "summary": "Build and test the reusable persistent snapshot store without changing GroupGuard."
+  },
+  "production_rule": "The service release must remain compatible with the currently deployed GroupGuard, must be deployed first, and must pass restart plus upstream-failure acceptance before plugin migration."
+}
