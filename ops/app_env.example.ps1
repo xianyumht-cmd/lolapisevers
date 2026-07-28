@@ -37,6 +37,12 @@ $env:IMAGE_ASSET_SYNC_TIMEOUT_SECONDS = "8"
 $env:SHARD_DATA_URL = "https://raw.githubusercontent.com/badspacebar/release/master/files/shards.json"
 $env:SHARD_HERO_URL = "https://game.gtimg.cn/images/lol/act/img/js/heroList/hero_list.js"
 
+# Persistent upstream snapshots
+# The shard and hero snapshots survive service restarts. Seven days is the maximum
+# age accepted when a public source is unavailable; older snapshots return 503.
+$env:UPSTREAM_SNAPSHOT_DIR = "data\upstream_snapshots"
+$env:SHARD_SNAPSHOT_MAX_AGE_SECONDS = "604800"
+
 # LOL ban providers
 # JSON array order is the fallback order. Put real URLs, tokens, headers, and form
 # fields only in ops\app_env.local.ps1; the example intentionally has no live provider.
