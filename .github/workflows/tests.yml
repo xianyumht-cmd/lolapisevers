@@ -6,6 +6,7 @@ on:
       - master
       - codex/production-integration-audit-20260726
       - docs/intranet-query-boundary-20260728
+      - "feat/**"
   push:
     branches: [master]
   workflow_dispatch:
