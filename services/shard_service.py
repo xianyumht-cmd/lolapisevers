@@ -136,14 +136,19 @@ def _save_snapshot(
     source_id: str,
     payload: Any,
     response: UpstreamResponse,
+    *,
+    fallback_etag: str = "",
+    fallback_last_modified: str = "",
 ) -> tuple[str, str]:
     try:
         result = store.save(
             source_id,
             payload,
             {
-                "etag": str(response.etag or ""),
-                "last_modified": str(response.last_modified or ""),
+                "etag": str(response.etag or fallback_etag or ""),
+                "last_modified": str(
+                    response.last_modified or fallback_last_modified or ""
+                ),
                 "http_status": int(response.status_code or 0),
                 "upstream_status": str(response.status or ""),
             },
@@ -213,6 +218,8 @@ def _load_one_source(
                     source_id,
                     snapshot.payload,
                     response,
+                    fallback_etag=etag,
+                    fallback_last_modified=last_modified,
                 )
                 return _LoadedUpstreamSource(
                     payload=snapshot.payload,
