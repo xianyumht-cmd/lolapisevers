@@ -39,6 +39,30 @@
         "tests/test_persistent_snapshot_store.py",
         ".gitignore"
       ]
+    },
+    {
+      "id": "LAPI-UPSTREAM-001",
+      "status": "completed",
+      "implementation_branch": "feat/upstream-http-client-20260728",
+      "pull_request": 10,
+      "verification": {
+        "workflow": "tests",
+        "run_id": 30365912315,
+        "conclusion": "success",
+        "platform": "windows-latest",
+        "checks": [
+          "full unittest discovery including upstream client tests",
+          "WebUI JavaScript generation",
+          "Node.js syntax validation",
+          "PowerShell operations script parsing"
+        ]
+      },
+      "outputs": [
+        "services/upstream_http_client.py",
+        "tests/test_upstream_http_client.py",
+        "tests/test_upstream_http_client_redaction.py",
+        ".github/workflows/tests.yml"
+      ]
     }
   ],
   "steps": [
@@ -52,36 +76,16 @@
     },
     {
       "id": "LAPI-UPSTREAM-001",
-      "status": "in_review",
+      "status": "completed",
       "depends_on": ["LAPI-SNAPSHOT-001"],
-      "summary": "Implemented one bounded upstream client with separated timeouts, retries, conditional requests, structured errors, singleflight, and circuit state.",
+      "summary": "Implemented one bounded upstream client with separated timeouts, retries, conditional requests, structured errors, URL-secret redaction, singleflight, and circuit state.",
       "implementation_branch": "feat/upstream-http-client-20260728",
-      "outputs": [
-        "services/upstream_http_client.py",
-        "tests/test_upstream_http_client.py",
-        ".github/workflows/tests.yml"
-      ],
-      "local_verification": {
-        "conclusion": "success",
-        "tests": 12,
-        "coverage": [
-          "split connect and read timeouts",
-          "bounded retry and exponential backoff",
-          "Retry-After support",
-          "ETag and Last-Modified conditional requests",
-          "HTTP 304 handling",
-          "DNS TLS connection and timeout classification",
-          "JSON and payload validation errors",
-          "circuit open and half-open recovery",
-          "same-source singleflight",
-          "source ID and URL validation",
-          "credential-bearing URL redaction from result payloads"
-        ]
-      }
+      "pull_request": 10,
+      "verification_run_id": 30365912315
     },
     {
       "id": "LAPI-SHARD-001",
-      "status": "blocked_pending_upstream_ci",
+      "status": "next",
       "depends_on": ["LAPI-SNAPSHOT-001", "LAPI-UPSTREAM-001"],
       "summary": "Persist shard and champion sources, restore on startup, and serve controlled snapshot/stale results when public sources fail."
     },
@@ -125,9 +129,9 @@
   "current_findings": [
     {
       "severity": "P1",
-      "code": "SINGLE_ATTEMPT_HTTP",
+      "code": "LEGACY_CLIENT_NOT_MIGRATED",
       "path": "utils/http_client.py",
-      "summary": "The legacy generic loader still performs one request; the new shared client is implemented but intentionally not integrated until LAPI-SHARD-001."
+      "summary": "The shared client is complete and verified, but legacy loaders remain intentionally unchanged until each business service is migrated with snapshot fallback tests."
     },
     {
       "severity": "P1",
@@ -161,8 +165,8 @@
   ],
   "next_recommended_action": {
     "step_id": "LAPI-SHARD-001",
-    "condition": "Start only after the LAPI-UPSTREAM-001 Windows workflow succeeds.",
-    "summary": "Integrate the shared client and persistent snapshots into shard and champion source loading without changing the existing public endpoint contract."
+    "branch": "feat/shard-persistent-fallback-20260728",
+    "summary": "Integrate the shared upstream client and persistent snapshot store into shard and champion source loading without changing /shard_query request or response compatibility."
   },
   "production_rule": "The service release must remain compatible with the currently deployed GroupGuard, must be deployed first, and must pass restart plus upstream-failure acceptance before plugin migration."
 }
