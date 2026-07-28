@@ -244,6 +244,14 @@ class ShardResilienceTests(unittest.TestCase):
             )
             self.assertEqual(client.calls[0][2]["etag"], '"s1"')
             self.assertEqual(client.calls[1][2]["etag"], '"h1"')
+            self.assertEqual(
+                store.load(SHARD_DATA_SOURCE_ID).metadata["etag"],
+                '"s1"',
+            )
+            self.assertEqual(
+                store.load(SHARD_HERO_SOURCE_ID).metadata["etag"],
+                '"h1"',
+            )
 
     def test_circuit_open_uses_snapshot_mode(self):
         with tempfile.TemporaryDirectory() as temp:
