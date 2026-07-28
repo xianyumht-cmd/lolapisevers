@@ -2,7 +2,10 @@ name: tests
 
 on:
   pull_request:
-    branches: [master]
+    branches:
+      - master
+      - codex/production-integration-audit-20260726
+      - docs/intranet-query-boundary-20260728
   push:
     branches: [master]
   workflow_dispatch:
