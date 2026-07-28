@@ -50,7 +50,7 @@ class LolBanServiceTests(unittest.IsolatedAsyncioTestCase):
     async def test_provider_fallback_and_fresh_cache(self):
         failed = FakeProvider("primary", error=TimeoutError("secret-token-in-url"))
         success = FakeProvider("backup")
-        service = LolBanService([failed, success])
+        service = LolBanService([failed, success], snapshot_store=None)
 
         live, source, ttl = await service.get_result("2621735529")
 
@@ -58,7 +58,10 @@ class LolBanServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ttl, service.normal_cache_seconds)
         self.assertEqual(live["provider"], "backup")
         self.assertEqual(live["fallback_reason"], "provider_fallback")
-        self.assertEqual([item["provider"] for item in live["attempts"]], ["primary", "backup"])
+        self.assertEqual(
+            [item["provider"] for item in live["attempts"]],
+            ["primary", "backup"],
+        )
         self.assertNotIn("secret-token-in-url", str(live["attempts"]))
 
         cached, source, _ = await service.get_result("2621735529")
@@ -70,11 +73,15 @@ class LolBanServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cached["data"]["status"], "正常")
 
     async def test_banned_result_uses_longer_cache(self):
-        provider = FakeProvider("primary", result=payload("2621735529", "封禁"))
+        provider = FakeProvider(
+            "primary",
+            result=payload("2621735529", "封禁"),
+        )
         service = LolBanService(
             [provider],
             normal_cache_seconds=10,
             banned_cache_seconds=60,
+            snapshot_store=None,
         )
 
         result, source, ttl = await service.get_result("2621735529")
@@ -85,7 +92,11 @@ class LolBanServiceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_stale_result_is_used_only_after_all_providers_fail(self):
         provider = FakeProvider("primary")
-        service = LolBanService([provider], stale_cache_seconds=3600)
+        service = LolBanService(
+            [provider],
+            stale_cache_seconds=3600,
+            snapshot_store=None,
+        )
         await service.get_result("2621735529")
 
         service._normal_cache = TTLCache(ttl_seconds=60)
@@ -97,11 +108,12 @@ class LolBanServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(source, "stale")
         self.assertEqual(ttl, 0)
         self.assertEqual(stale["fallback_reason"], "all_providers_failed")
+        self.assertEqual(stale["stale_origin"], "memory")
         self.assertEqual(stale["data"]["status"], "正常")
 
     async def test_concurrent_cache_miss_is_singleflight_per_qq(self):
         provider = FakeProvider("primary", delay=0.05)
-        service = LolBanService([provider])
+        service = LolBanService([provider], snapshot_store=None)
 
         results = await asyncio.gather(
             service.get_result("2621735529"),
@@ -113,7 +125,7 @@ class LolBanServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({item[1] for item in results}, {"live", "cache"})
 
     async def test_no_provider_has_sanitized_failure(self):
-        service = LolBanService([])
+        service = LolBanService([], snapshot_store=None)
 
         with self.assertRaisesRegex(RuntimeError, "providers_not_configured"):
             await service.get_result("2621735529")
@@ -121,13 +133,18 @@ class LolBanServiceTests(unittest.IsolatedAsyncioTestCase):
         health = service.health()
         self.assertFalse(health["configured"])
         self.assertEqual(health["provider_count"], 0)
-        self.assertEqual(health["last_error_class"], "providers_not_configured")
+        self.assertEqual(
+            health["last_error_class"],
+            "providers_not_configured",
+        )
+        self.assertFalse(health["persistent_snapshot_enabled"])
 
     async def test_stale_store_is_bounded(self):
         provider = FakeProvider("primary")
         service = LolBanService(
             [provider],
             max_stale_entries=2,
+            snapshot_store=None,
         )
 
         await service.get_result("10001")
