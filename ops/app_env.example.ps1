@@ -53,7 +53,11 @@ $env:LOL_BAN_PROVIDERS_JSON = "[]"
 $env:LOL_BAN_TIMEOUT = "10"
 $env:LOL_BAN_NORMAL_CACHE_SECONDS = "60"
 $env:LOL_BAN_BANNED_CACHE_SECONDS = "300"
+# Last-known-good results remain usable only within this window. The persistent
+# snapshot uses the same bound and is restored after a service restart.
 $env:LOL_BAN_STALE_CACHE_SECONDS = "86400"
+$env:LOL_BAN_MAX_STALE_ENTRIES = "1024"
+$env:LOL_BAN_SNAPSHOT_ENABLED = "1"
 
 # MySQL
 $env:MYSQL_HOST = "127.0.0.1"
