@@ -11,6 +11,8 @@ from cache import TTLCache
 from services import aram_augments_service
 from services.aram_augments_service import build_aram_augment_payload, query_aram_augments
 from services.opgg_client import opgg_request
+from services.persistent_snapshot_store import SnapshotLoadResult
+from services.upstream_http_client import UpstreamError, UpstreamResponse
 
 
 class FakeContext:
@@ -60,6 +62,14 @@ def payload_for(query):
     }
 
 
+def missing_snapshot(source_id="aram-mayhem-ahri"):
+    return SnapshotLoadResult(
+        ok=False,
+        status="missing",
+        source_id=source_id,
+    )
+
+
 class AramAugmentQueryTests(unittest.IsolatedAsyncioTestCase):
     async def test_resolves_canonical_alias_before_cache_and_returns_deep_copy(self):
         ctx = FakeContext()
@@ -69,7 +79,11 @@ class AramAugmentQueryTests(unittest.IsolatedAsyncioTestCase):
             calls.append((query, resolved_hero["alias"]))
             return payload_for(query)
 
-        with patch.object(aram_augments_service, "build_aram_augment_payload", side_effect=fake_build):
+        with patch.object(
+            aram_augments_service,
+            "build_aram_augment_payload",
+            side_effect=fake_build,
+        ):
             first = await query_aram_augments(ctx, hero="阿狸")
             first["rows"][0]["name"] = "被调用方修改"
             second = await query_aram_augments(ctx, hero="Ahri")
@@ -78,6 +92,7 @@ class AramAugmentQueryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(second["rows"][0]["name"], "强化一")
         self.assertEqual(second["query"], "Ahri")
         self.assertEqual(second["source"], "cache")
+        self.assertEqual(second["cache_origin"], "opgg")
         self.assertTrue(second["timing"]["cache_hit"])
         self.assertTrue(ctx.aram_augment_cache.contains("aram_augments:ahri"))
         self.assertFalse(ctx.aram_augment_cache.contains("aram_augments:阿狸"))
@@ -94,7 +109,11 @@ class AramAugmentQueryTests(unittest.IsolatedAsyncioTestCase):
             time.sleep(0.05)
             return payload_for(query)
 
-        with patch.object(aram_augments_service, "build_aram_augment_payload", side_effect=fake_build):
+        with patch.object(
+            aram_augments_service,
+            "build_aram_augment_payload",
+            side_effect=fake_build,
+        ):
             chinese, alias = await asyncio.gather(
                 query_aram_augments(ctx, hero="阿狸"),
                 query_aram_augments(ctx, hero="Ahri"),
@@ -115,46 +134,120 @@ class AramAugmentPayloadTests(unittest.TestCase):
         ctx = FakeContext()
         barrier = threading.Barrier(2, timeout=1)
 
-        def fake_request(url, **_kwargs):
+        def fake_request(_ctx, **kwargs):
             barrier.wait()
-            page = "build" if url.endswith("/build") else "augments"
-            return SimpleNamespace(status_code=200, text=page, url=url)
+            page = "build" if kwargs["page_kind"] == "build" else "augments"
+            return UpstreamResponse(
+                True,
+                f"opgg-{page}",
+                "ok",
+                status_code=200,
+                attempts=1,
+                text=page,
+            )
 
         with (
-            patch.object(aram_augments_service, "opgg_request", side_effect=fake_request),
-            patch.object(aram_augments_service, "extract_opgg_augments", return_value=[{"name": "强化一"}]),
-            patch.object(aram_augments_service, "extract_opgg_core_builds", return_value=[{"items": []}]),
-            patch.object(aram_augments_service, "extract_opgg_item_rows", return_value=[]),
-            patch.object(aram_augments_service, "extract_opgg_summoner_spells", return_value=[]),
-            patch.object(aram_augments_service, "extract_opgg_skill_order", return_value=[]),
+            patch.object(
+                aram_augments_service,
+                "request_opgg_html",
+                side_effect=fake_request,
+            ),
+            patch.object(
+                aram_augments_service,
+                "load_aram_payload_snapshot",
+                return_value=missing_snapshot(),
+            ),
+            patch.object(
+                aram_augments_service,
+                "save_aram_payload_snapshot",
+                return_value=("", ""),
+            ),
+            patch.object(
+                aram_augments_service,
+                "extract_opgg_augments",
+                return_value=[{"name": "强化一"}],
+            ),
+            patch.object(
+                aram_augments_service,
+                "extract_opgg_core_builds",
+                return_value=[{"items": []}],
+            ),
+            patch.object(
+                aram_augments_service,
+                "extract_opgg_item_rows",
+                return_value=[],
+            ),
+            patch.object(
+                aram_augments_service,
+                "extract_opgg_summoner_spells",
+                return_value=[],
+            ),
+            patch.object(
+                aram_augments_service,
+                "extract_opgg_skill_order",
+                return_value=[],
+            ),
         ):
             result = build_aram_augment_payload(ctx, "阿狸")
 
         self.assertEqual(result["rows"], [{"name": "强化一"}])
         self.assertEqual(result["timing"]["build_status"], "ok")
         self.assertIn("upstream_total_ms", result["timing"])
+        self.assertEqual(result["source"], "opgg")
+        self.assertFalse(result["stale"])
 
     def test_optional_build_failure_does_not_hide_augment_data(self):
         ctx = FakeContext()
 
-        def fake_request(url, **_kwargs):
-            if url.endswith("/build"):
-                raise requests.Timeout("build timeout")
-            return SimpleNamespace(
+        def fake_request(_ctx, **kwargs):
+            if kwargs["page_kind"] == "build":
+                return UpstreamResponse(
+                    False,
+                    "opgg-build-ahri",
+                    "failed",
+                    attempts=1,
+                    error=UpstreamError("read_timeout", "timeout", True),
+                )
+            return UpstreamResponse(
+                True,
+                "opgg-augments-ahri",
+                "ok",
                 status_code=200,
+                attempts=1,
                 text="augments",
-                url=url,
             )
 
         with (
-            patch.object(aram_augments_service, "opgg_request", side_effect=fake_request),
-            patch.object(aram_augments_service, "extract_opgg_augments", return_value=[{"name": "强化一"}]),
+            patch.object(
+                aram_augments_service,
+                "request_opgg_html",
+                side_effect=fake_request,
+            ),
+            patch.object(
+                aram_augments_service,
+                "load_aram_payload_snapshot",
+                return_value=missing_snapshot(),
+            ),
+            patch.object(
+                aram_augments_service,
+                "save_aram_payload_snapshot",
+                return_value=("", ""),
+            ),
+            patch.object(
+                aram_augments_service,
+                "extract_opgg_augments",
+                return_value=[{"name": "强化一"}],
+            ),
         ):
             result = build_aram_augment_payload(ctx, "阿狸")
 
         self.assertEqual(result["total"], 1)
         self.assertEqual(result["item_builds"], [])
         self.assertEqual(result["timing"]["build_status"], "unavailable")
+        self.assertEqual(
+            result["timing"]["build_error_class"],
+            "read_timeout",
+        )
 
 
 class OpggClientTests(unittest.TestCase):
