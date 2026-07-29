@@ -1,0 +1,423 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://groupguardking.local/contracts/query-observability.v1.schema.json",
+  "title": "LOL API query observability v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generated_at",
+    "status",
+    "summary",
+    "sources",
+    "caches"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "query-observability.v1"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "status": {
+      "enum": ["ok", "degraded", "down"]
+    },
+    "error_class": {
+      "$ref": "#/$defs/errorClass"
+    },
+    "summary": {
+      "$ref": "#/$defs/modeCounts"
+    },
+    "sources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "shard_data": {
+          "$ref": "#/$defs/staticSource"
+        },
+        "hero_catalog": {
+          "$ref": "#/$defs/staticSource"
+        },
+        "aram": {
+          "$ref": "#/$defs/aramSource"
+        },
+        "lolban": {
+          "$ref": "#/$defs/lolbanSource"
+        }
+      }
+    },
+    "caches": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "shard_entries": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "aram_payload_entries": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "aram_image_entries": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "nonNegativeInteger": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "nullableSeconds": {
+      "type": ["number", "null"],
+      "minimum": 0
+    },
+    "errorClass": {
+      "type": "string",
+      "maxLength": 96,
+      "pattern": "^$|^[A-Za-z][A-Za-z0-9_.-]{0,95}$"
+    },
+    "mode": {
+      "enum": ["live", "cache", "snapshot", "stale", "unavailable"]
+    },
+    "modeCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["live", "cache", "snapshot", "stale", "unavailable"],
+      "properties": {
+        "live": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "cache": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "snapshot": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "stale": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "unavailable": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        }
+      }
+    },
+    "circuit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "consecutive_failures",
+        "open_remaining_seconds",
+        "in_flight",
+        "last_error_class",
+        "seconds_since_last_error",
+        "seconds_since_last_success"
+      ],
+      "properties": {
+        "state": {
+          "enum": ["open", "closed"]
+        },
+        "consecutive_failures": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "open_remaining_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "in_flight": {
+          "type": "boolean"
+        },
+        "last_error_class": {
+          "$ref": "#/$defs/errorClass"
+        },
+        "seconds_since_last_error": {
+          "$ref": "#/$defs/nullableSeconds"
+        },
+        "seconds_since_last_success": {
+          "$ref": "#/$defs/nullableSeconds"
+        }
+      }
+    },
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "available",
+        "status",
+        "captured_at",
+        "age_seconds",
+        "max_age_seconds",
+        "last_success_at",
+        "last_error_at",
+        "last_error_class"
+      ],
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "status": {
+          "enum": [
+            "hit",
+            "missing",
+            "expired",
+            "corrupt",
+            "incompatible",
+            "unavailable",
+            "restored",
+            "saved",
+            "empty",
+            "disabled",
+            "write_error",
+            "load_error",
+            "invalid_payload"
+          ]
+        },
+        "captured_at": {
+          "type": "string"
+        },
+        "age_seconds": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "max_age_seconds": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "last_success_at": {
+          "type": "string"
+        },
+        "last_error_at": {
+          "type": "string"
+        },
+        "last_error_class": {
+          "$ref": "#/$defs/errorClass"
+        }
+      }
+    },
+    "staticSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "mode", "cache_active", "circuit", "snapshot"],
+      "properties": {
+        "name": {
+          "enum": ["shard_data", "hero_catalog"]
+        },
+        "mode": {
+          "$ref": "#/$defs/mode"
+        },
+        "cache_active": {
+          "type": "boolean"
+        },
+        "circuit": {
+          "$ref": "#/$defs/circuit"
+        },
+        "snapshot": {
+          "$ref": "#/$defs/snapshot"
+        }
+      }
+    },
+    "circuitAggregate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observed_sources",
+        "circuit_open_count",
+        "in_flight_count",
+        "max_consecutive_failures",
+        "last_error_classes",
+        "seconds_since_latest_success",
+        "seconds_since_latest_error"
+      ],
+      "properties": {
+        "observed_sources": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "circuit_open_count": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "in_flight_count": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "max_consecutive_failures": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "last_error_classes": {
+          "type": "array",
+          "maxItems": 12,
+          "items": {
+            "$ref": "#/$defs/errorClass"
+          }
+        },
+        "seconds_since_latest_success": {
+          "$ref": "#/$defs/nullableSeconds"
+        },
+        "seconds_since_latest_error": {
+          "$ref": "#/$defs/nullableSeconds"
+        }
+      }
+    },
+    "aramSnapshots": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observed_count",
+        "available_count",
+        "status_counts",
+        "newest_captured_at",
+        "newest_age_seconds",
+        "oldest_age_seconds",
+        "max_age_seconds",
+        "last_error_classes",
+        "scan_truncated"
+      ],
+      "properties": {
+        "observed_count": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "available_count": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "status_counts": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/nonNegativeInteger"
+          }
+        },
+        "newest_captured_at": {
+          "type": "string"
+        },
+        "newest_age_seconds": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "oldest_age_seconds": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "max_age_seconds": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "last_error_classes": {
+          "type": "array",
+          "maxItems": 12,
+          "items": {
+            "$ref": "#/$defs/errorClass"
+          }
+        },
+        "scan_truncated": {
+          "type": "boolean"
+        }
+      }
+    },
+    "aramSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "mode", "cache_entries", "upstreams", "snapshots"],
+      "properties": {
+        "name": {
+          "const": "aram"
+        },
+        "mode": {
+          "$ref": "#/$defs/mode"
+        },
+        "cache_entries": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "upstreams": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["augment_page", "build_page"],
+          "properties": {
+            "augment_page": {
+              "$ref": "#/$defs/circuitAggregate"
+            },
+            "build_page": {
+              "$ref": "#/$defs/circuitAggregate"
+            }
+          }
+        },
+        "snapshots": {
+          "$ref": "#/$defs/aramSnapshots"
+        }
+      }
+    },
+    "lolbanSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "mode",
+        "configured",
+        "provider_count",
+        "fresh_cache_entries",
+        "stale_cache_entries",
+        "last_success_at",
+        "last_error_at",
+        "last_error_class",
+        "configuration_error_code",
+        "configuration_error_class",
+        "persistent_snapshot"
+      ],
+      "properties": {
+        "name": {
+          "const": "lolban"
+        },
+        "mode": {
+          "$ref": "#/$defs/mode"
+        },
+        "configured": {
+          "type": "boolean"
+        },
+        "provider_count": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "fresh_cache_entries": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "stale_cache_entries": {
+          "$ref": "#/$defs/nonNegativeInteger"
+        },
+        "last_success_at": {
+          "type": "string"
+        },
+        "last_error_at": {
+          "type": "string"
+        },
+        "last_error_class": {
+          "$ref": "#/$defs/errorClass"
+        },
+        "configuration_error_code": {
+          "$ref": "#/$defs/errorClass"
+        },
+        "configuration_error_class": {
+          "$ref": "#/$defs/errorClass"
+        },
+        "persistent_snapshot": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "status",
+            "restored_entries",
+            "write_error_class",
+            "max_age_seconds"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "status": {
+              "$ref": "#/$defs/errorClass"
+            },
+            "restored_entries": {
+              "$ref": "#/$defs/nonNegativeInteger"
+            },
+            "write_error_class": {
+              "$ref": "#/$defs/errorClass"
+            },
+            "max_age_seconds": {
+              "$ref": "#/$defs/nonNegativeInteger"
+            }
+          }
+        }
+      }
+    }
+  }
+}
