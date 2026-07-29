@@ -60,16 +60,23 @@ class LapiDeployScriptTests(unittest.TestCase):
                 f"{path}\nSTDOUT:\n{completed.stdout}\nSTDERR:\n{completed.stderr}",
             )
 
-    def test_launcher_exports_raw_scripts_and_parses_before_execution(self):
+    def test_launcher_exports_and_hardens_scripts_before_execution(self):
         text = LAUNCH.read_text(encoding="utf-8")
-        self.assertIn("git archive", text)
-        self.assertIn("--format=zip", text)
-        self.assertIn("Expand-Archive", text)
-        self.assertIn("Language.Parser", text)
-        self.assertIn("Assert-PowerShellSyntax", text)
-        self.assertIn("ExpectedCommit", text)
-        self.assertIn("Pinned release commit", text)
-        self.assertIn("Patch-WindowsPowerShellGitStderr", text)
+        for marker in (
+            "git archive",
+            "--format=zip",
+            "Expand-Archive",
+            "Language.Parser",
+            "Assert-PowerShellSyntax",
+            "ExpectedCommit",
+            "Patch-WindowsPowerShellCompatibility",
+            "System.Diagnostics.ProcessStartInfo",
+            "RedirectStandardOutput",
+            "RedirectStandardError",
+            "ReadToEndAsync",
+            "backup_items = $backupItems.ToArray()",
+        ):
+            self.assertIn(marker, text)
         self.assertNotIn("WriteAllLines", text)
         self.assertNotIn("git show", text.lower())
 
