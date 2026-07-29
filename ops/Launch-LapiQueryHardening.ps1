@@ -35,7 +35,7 @@ function Assert-PowerShellSyntax {
     }
 }
 
-function Patch-WindowsPowerShellGitStderr {
+function Patch-WindowsPowerShellCompatibility {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
         [Parameter(Mandatory = $true)][ValidateSet("deploy", "rollback")][string]$Kind
@@ -55,23 +55,6 @@ function Invoke-Git {
     return [pscustomobject]@{ ExitCode = $code; Output = @($output) }
 }
 '@
-        $newBlock = @'
-function Invoke-Git {
-    param([string[]]$Arguments, [switch]$AllowFailure)
-    $previousPreference = $ErrorActionPreference
-    try {
-        $ErrorActionPreference = "Continue"
-        $output = & git -C $ProjectRoot @Arguments 2>&1
-        $code = $LASTEXITCODE
-    } finally {
-        $ErrorActionPreference = $previousPreference
-    }
-    if (-not $AllowFailure -and $code -ne 0) {
-        throw "git $($Arguments -join ' ') failed: $($output -join [Environment]::NewLine)"
-    }
-    return [pscustomobject]@{ ExitCode = $code; Output = @($output) }
-}
-'@
     } else {
         $oldBlock = @'
 function Invoke-Git {
@@ -83,33 +66,82 @@ function Invoke-Git {
     return $output
 }
 '@
-        $newBlock = @'
+    }
+
+    $newBlock = @'
+function Resolve-GitExecutable {
+    $configured = "$($env:LAPI_GIT_EXE)".Trim()
+    if ($configured) {
+        if (-not (Test-Path -LiteralPath $configured -PathType Leaf)) {
+            throw "Configured Git executable does not exist: $configured"
+        }
+        return (Resolve-Path -LiteralPath $configured).Path
+    }
+    return (Get-Command git.exe -ErrorAction Stop).Source
+}
+
 function Invoke-Git {
-    param([string[]]$Arguments)
-    $previousPreference = $ErrorActionPreference
+    param([string[]]$Arguments, [switch]$AllowFailure)
+
+    foreach ($argument in $Arguments) {
+        if ("$argument" -match '[\s"]') {
+            throw "Unsupported whitespace or quote in Git argument: $argument"
+        }
+    }
+
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = Resolve-GitExecutable
+    $startInfo.WorkingDirectory = $ProjectRoot
+    $startInfo.Arguments = ($Arguments -join " ")
+    $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.CreateNoWindow = $true
+
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
     try {
-        $ErrorActionPreference = "Continue"
-        $output = & git -C $ProjectRoot @Arguments 2>&1
-        $code = $LASTEXITCODE
+        if (-not $process.Start()) {
+            throw "Failed to start Git process."
+        }
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        $process.WaitForExit()
+        $stdout = "$($stdoutTask.Result)"
+        $stderr = "$($stderrTask.Result)"
+        $code = [int]$process.ExitCode
     } finally {
-        $ErrorActionPreference = $previousPreference
+        $process.Dispose()
     }
-    if ($code -ne 0) {
-        throw "git $($Arguments -join ' ') failed: $($output -join [Environment]::NewLine)"
+
+    if (-not $AllowFailure -and $code -ne 0) {
+        throw "git $($Arguments -join ' ') failed with exit code $code`: $stderr"
     }
-    return $output
+    return [pscustomobject]@{
+        ExitCode = $code
+        Output = $stdout
+        Error = $stderr
+    }
 }
 '@
-    }
 
     $oldBlock = $oldBlock.Replace("`r`n", "`n")
     $newBlock = $newBlock.Replace("`r`n", "`n")
     if ($text.IndexOf($oldBlock, [System.StringComparison]::Ordinal) -lt 0) {
         throw "Expected Invoke-Git block was not found in $Path"
     }
+    $text = $text.Replace($oldBlock, $newBlock)
 
-    $patched = $text.Replace($oldBlock, $newBlock)
-    [System.IO.File]::WriteAllText($Path, $patched, [System.Text.Encoding]::ASCII)
+    if ($Kind -eq "deploy") {
+        $oldManifest = '    backup_items = @($backupItems)'
+        $newManifest = '    backup_items = $backupItems.ToArray()'
+        if ($text.IndexOf($oldManifest, [System.StringComparison]::Ordinal) -lt 0) {
+            throw "Expected backup manifest conversion was not found in $Path"
+        }
+        $text = $text.Replace($oldManifest, $newManifest)
+    }
+
+    [System.IO.File]::WriteAllText($Path, $text, [System.Text.Encoding]::ASCII)
 }
 
 if (-not (Test-Administrator)) {
@@ -133,7 +165,7 @@ if (-not (Test-Administrator)) {
 
 $ProjectRoot = (Resolve-Path -LiteralPath $ProjectRoot).Path
 $ExpectedCommit = $ExpectedCommit.ToLowerInvariant()
-$gitExe = (Get-Command git -ErrorAction Stop).Source
+$gitExe = (Get-Command git.exe -ErrorAction Stop).Source
 
 & $gitExe -C $ProjectRoot fetch --no-tags origin $ReleaseBranch
 if ($LASTEXITCODE -ne 0) {
@@ -184,8 +216,8 @@ foreach ($scriptPath in @($deployScript, $rollbackScript, $verifyScript)) {
     }
 }
 
-Patch-WindowsPowerShellGitStderr -Path $deployScript -Kind "deploy"
-Patch-WindowsPowerShellGitStderr -Path $rollbackScript -Kind "rollback"
+Patch-WindowsPowerShellCompatibility -Path $deployScript -Kind "deploy"
+Patch-WindowsPowerShellCompatibility -Path $rollbackScript -Kind "rollback"
 foreach ($scriptPath in @($deployScript, $rollbackScript, $verifyScript)) {
     Assert-PowerShellSyntax -Path $scriptPath
 }
