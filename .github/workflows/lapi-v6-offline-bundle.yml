@@ -28,8 +28,8 @@ jobs:
           mkdir -p artifact
           git bundle create artifact/lapi-v6-offline.bundle lapi-v6-offline-target
           git bundle verify artifact/lapi-v6-offline.bundle
-          git clone artifact/lapi-v6-offline.bundle verify-repository
-          test "$(git -C verify-repository rev-parse lapi-v6-offline-target)" = "$target"
+          git clone --branch lapi-v6-offline-target artifact/lapi-v6-offline.bundle verify-repository
+          test "$(git -C verify-repository rev-parse HEAD)" = "$target"
           sha256sum artifact/lapi-v6-offline.bundle > artifact/lapi-v6-offline.bundle.sha256
           printf '%s\n' "$target" > artifact/TARGET_COMMIT.txt
 
