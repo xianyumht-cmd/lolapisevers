@@ -20,6 +20,7 @@ from services.contact_risk_service import (
     report_contact_risk,
 )
 from services.cross_query_service import query_cross
+from services.dynamic_query_service import dynamic_meta, format_dynamic_text, query_dynamic
 from services.hidden_delivery import format_hidden_text, hidden_meta
 from services.lolban_service import format_lolban_text, get_lolban_result, valid_qq
 from services.query_delivery import (
@@ -68,6 +69,8 @@ _FEATURE_ALIASES = {
     "peer": "peer",
     "peer_query": "peer",
     "查同行": "peer",
+    "dynamic": "dynamic",
+    "dynamic_query": "dynamic",
 }
 _REPORT_FEATURE_ALIASES = {
     "scammer_report": "scammer_report",
@@ -173,6 +176,8 @@ def _meta_for_feature(feature: str, payload: Mapping[str, Any], *, delivery_fall
         return video_meta(payload)
     if feature in {"scammer", "peer"}:
         return contact_risk_meta(payload)
+    if feature == "dynamic":
+        return dynamic_meta(payload)
     return safe_meta(payload, delivery_fallback=delivery_fallback)
 
 
@@ -211,7 +216,7 @@ async def groupguard_query(request: Request, body: Dict[str, Any]):
         )
 
     ctx = getattr(request.app.state, "ctx", None)
-    if feature in {"shard", "aram", "battle", "hidden", "video", "scammer", "peer"} and ctx is None:
+    if feature in {"shard", "aram", "battle", "hidden", "video", "scammer", "peer", "dynamic"} and ctx is None:
         return _json_error(
             feature=feature,
             status_code=503,
@@ -244,7 +249,11 @@ async def groupguard_query(request: Request, body: Dict[str, Any]):
                 )
             )
 
-        if feature in {"scammer", "peer"}:
+        if feature == "dynamic":
+            command_id = str(parameters.get("command_id") or "").strip()
+            payload = await query_dynamic(ctx, command_id, parameters)
+            text = format_dynamic_text(payload)
+        elif feature in {"scammer", "peer"}:
             identifier_type, identifier = _identifier_parameters(parameters)
             payload = await query_contact_risk(ctx, feature, identifier_type, identifier)
             text = format_contact_risk_text(payload)
