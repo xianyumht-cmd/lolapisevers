@@ -12,24 +12,9 @@
     "command": "查合集 滑板鞋"
   },
   "scope": {
-    "business_queries": [
-      "shard",
-      "aram",
-      "lolban",
-      "battle",
-      "hidden",
-      "video",
-      "scammer",
-      "peer"
-    ],
-    "shared_writes": [
-      "scammer_report",
-      "peer_report"
-    ],
-    "future_clients": [
-      "snowluma_groupguard",
-      "official_bot"
-    ],
+    "business_queries": ["shard", "aram", "lolban", "battle", "hidden", "video", "scammer", "peer"],
+    "shared_writes": ["scammer_report", "peer_report"],
+    "future_clients": ["snowluma_groupguard", "official_bot"],
     "excluded_group_local_controls": [
       "signin_points",
       "invite_statistics",
@@ -41,8 +26,8 @@
     {"feature": "shard", "command": "查合集", "service_delivery": "completed", "groupguard_migration": "completed", "production": "accepted"},
     {"feature": "aram", "command": "海符榜", "service_delivery": "completed", "groupguard_migration": "code_and_ci_completed_pending_client_deployment"},
     {"feature": "lolban", "command": "查封号", "service_delivery": "completed", "groupguard_migration": "code_and_ci_completed_pending_client_deployment"},
-    {"feature": "battle", "command": "查战绩", "service_delivery": "implementation_and_ci_in_progress", "legacy_behavior": "plugin_parses_cross_query_and_selects_delivery"},
-    {"feature": "hidden", "command": "查隐藏", "service_delivery": "planned", "legacy_behavior": "plugin_holds_provider_secrets_and_calls_public_upstreams"},
+    {"feature": "battle", "command": "查战绩", "service_delivery": "code_and_windows_ci_completed_pending_service_deployment", "groupguard_migration": "code_and_ci_completed_pending_service_and_client_deployment"},
+    {"feature": "hidden", "command": "查隐藏", "service_delivery": "implementation_and_windows_ci_in_progress", "legacy_behavior": "plugin_holds_provider_secrets_and_calls_public_upstreams"},
     {"feature": "video", "command": "我要看", "service_delivery": "planned", "legacy_behavior": "plugin_holds_provider_templates_and_extracts_direct_url"},
     {"feature": "scammer", "command": "查骗子", "service_delivery": "planned", "legacy_behavior": "plugin_merges_local_database_and_public_providers"},
     {"feature": "peer", "command": "查同行", "service_delivery": "planned", "legacy_behavior": "plugin_local_database_is_single_source"},
@@ -60,8 +45,18 @@
       "groupguard_build_run_id": 30451835809,
       "conclusion": "success"
     },
-    {"id": "AQ-BATTLE-001", "status": "implementation_and_ci_in_progress", "features": ["battle"], "service_pull_request": 19},
-    {"id": "AQ-HIDDEN-001", "status": "planned", "features": ["hidden"]},
+    {
+      "id": "AQ-BATTLE-001",
+      "status": "service_and_client_code_ci_completed_pending_deployment",
+      "features": ["battle"],
+      "service_pull_request": 19,
+      "service_ci_run_id": 30452368016,
+      "groupguard_pull_request": 17,
+      "groupguard_ci_run_id": 30453026905,
+      "groupguard_build_run_id": 30453031326,
+      "conclusion": "success"
+    },
+    {"id": "AQ-HIDDEN-001", "status": "service_implementation_and_windows_ci_in_progress", "features": ["hidden"], "service_pull_request": 19},
     {"id": "AQ-VIDEO-001", "status": "planned", "features": ["video"]},
     {"id": "AQ-RISK-001", "status": "planned", "features": ["scammer", "peer"]},
     {"id": "AQ-RISK-WRITE-001", "status": "planned", "features": ["scammer_report", "peer_report"]},
@@ -79,7 +74,7 @@
   "next_action": {
     "repository": "xianyumht-cmd/lolapisevers",
     "branch": "feat/all-query-delivery-hub-20260729",
-    "step_id": "AQ-BATTLE-001",
-    "summary": "Complete Windows CI for battle final delivery, then deploy the service feature before migrating the GroupGuard 查战绩 command."
+    "step_id": "AQ-HIDDEN-001",
+    "summary": "Complete Windows CI for hidden final delivery, then implement the SnowLuma hidden client without lolurl/lolkey/loltoken or public provider access."
   }
 }
