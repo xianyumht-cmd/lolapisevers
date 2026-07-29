@@ -40,8 +40,9 @@ jobs:
           test "$(git rev-parse HEAD)" = "$TARGET_COMMIT"
           python -m unittest discover -s tests -p 'test_*.py'
           python -m compileall -q .
-          python tools/generate_webui_js.py --check
-          node --check webui/static/app.generated.js
+          python tests/check_ui_assets.py
+          node --check ui_control.generated.js
+          rm -f ui_control.generated.js node-check.txt ui-generation-error.txt ui-generation-output.txt
 
       - name: Create exact offline Git bundle
         shell: bash
