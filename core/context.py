@@ -7,6 +7,7 @@ from db import Database
 from so1_client import So1Client
 
 from core.config import AppConfig, load_config
+from services.contact_risk_service import ContactRiskStore
 from services.image_asset_store import PersistentImageAssetCache
 from services.persistent_snapshot_store import PersistentSnapshotStore
 from services.upstream_http_client import UpstreamHttpClient
@@ -41,6 +42,10 @@ class AppContext:
         # snapshot store. Public URLs stay inside the Windows service boundary.
         self.upstream_http_client = UpstreamHttpClient(logger=self.logger)
         self.upstream_snapshot_store = PersistentSnapshotStore()
+        # Risk records and idempotent report events are owned by the Windows
+        # service. This SQLite database is independent from the optional LOL
+        # MySQL database so a MySQL outage never disables scammer/peer storage.
+        self.contact_risk_store = ContactRiskStore()
         # Existing renderers still use the same get/set contract. Positive image
         # bytes are persisted by stable resource ID on disk, while the bounded
         # memory layer keeps hot reads fast.
