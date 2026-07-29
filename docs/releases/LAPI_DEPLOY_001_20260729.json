@@ -6,7 +6,7 @@
   "repository": "xianyumht-cmd/lolapisevers",
   "release_branch": "release/lapi-query-hardening-20260729",
   "implementation_commit": "cdebd3643c8f359c1f6dbed8bb3dcecfe6916240",
-  "release_commit": "d6f55f7ee981edad3781b3d82e9e8ddbd62afe99",
+  "release_commit": "f504ef66ae55e344214e013199826747b3a7655a",
   "production_audit_branch": "codex/production-integration-audit-20260726",
   "production_audit_head": "bd2d92996f8c7af4e6fd51f021f1546bda250a8a",
   "production_previous_commit": "bbc8ea2d2687820e4c4a3b400c7568a771f10519",
@@ -22,7 +22,7 @@
     "ops/Test-LapiQueryHardening.ps1"
   ],
   "windows_ci": {
-    "run_id": 30433006521,
+    "run_id": 30433180507,
     "conclusion": "success",
     "checks": [
       "Windows PowerShell 5.1 parses all release scripts",
