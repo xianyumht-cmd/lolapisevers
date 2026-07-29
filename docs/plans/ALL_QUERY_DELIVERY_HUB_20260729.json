@@ -39,9 +39,9 @@
   },
   "inventory": [
     {"feature": "shard", "command": "查合集", "service_delivery": "completed", "groupguard_migration": "completed", "production": "accepted"},
-    {"feature": "aram", "command": "海符榜", "service_delivery": "completed", "groupguard_migration": "in_progress"},
-    {"feature": "lolban", "command": "查封号", "service_delivery": "completed", "groupguard_migration": "in_progress"},
-    {"feature": "battle", "command": "查战绩", "service_delivery": "planned", "legacy_behavior": "plugin_parses_cross_query_and_selects_delivery"},
+    {"feature": "aram", "command": "海符榜", "service_delivery": "completed", "groupguard_migration": "code_and_ci_completed_pending_client_deployment"},
+    {"feature": "lolban", "command": "查封号", "service_delivery": "completed", "groupguard_migration": "code_and_ci_completed_pending_client_deployment"},
+    {"feature": "battle", "command": "查战绩", "service_delivery": "implementation_and_ci_in_progress", "legacy_behavior": "plugin_parses_cross_query_and_selects_delivery"},
     {"feature": "hidden", "command": "查隐藏", "service_delivery": "planned", "legacy_behavior": "plugin_holds_provider_secrets_and_calls_public_upstreams"},
     {"feature": "video", "command": "我要看", "service_delivery": "planned", "legacy_behavior": "plugin_holds_provider_templates_and_extracts_direct_url"},
     {"feature": "scammer", "command": "查骗子", "service_delivery": "planned", "legacy_behavior": "plugin_merges_local_database_and_public_providers"},
@@ -51,8 +51,16 @@
   ],
   "steps": [
     {"id": "AQ-DOC-001", "status": "completed"},
-    {"id": "AQ-FAST-001", "status": "in_progress", "features": ["aram", "lolban"], "depends_on": ["LAPI-DEPLOY-001", "GG-SHARD-001"]},
-    {"id": "AQ-BATTLE-001", "status": "planned", "features": ["battle"]},
+    {
+      "id": "AQ-FAST-001",
+      "status": "groupguard_code_and_ci_completed_pending_client_deployment",
+      "features": ["aram", "lolban"],
+      "groupguard_pull_request": 17,
+      "groupguard_ci_run_id": 30451834345,
+      "groupguard_build_run_id": 30451835809,
+      "conclusion": "success"
+    },
+    {"id": "AQ-BATTLE-001", "status": "implementation_and_ci_in_progress", "features": ["battle"], "service_pull_request": 19},
     {"id": "AQ-HIDDEN-001", "status": "planned", "features": ["hidden"]},
     {"id": "AQ-VIDEO-001", "status": "planned", "features": ["video"]},
     {"id": "AQ-RISK-001", "status": "planned", "features": ["scammer", "peer"]},
@@ -69,9 +77,9 @@
     "Service deployment always precedes client deployment."
   ],
   "next_action": {
-    "repository": "xianyumht-cmd/groupguard-system",
-    "branch": "feat/all-query-intranet-client-20260729",
-    "step_id": "AQ-FAST-001",
-    "summary": "Migrate 海符榜 and 查封号 to the existing intranet delivery endpoint, remove their legacy command claims, and add release gates."
+    "repository": "xianyumht-cmd/lolapisevers",
+    "branch": "feat/all-query-delivery-hub-20260729",
+    "step_id": "AQ-BATTLE-001",
+    "summary": "Complete Windows CI for battle final delivery, then deploy the service feature before migrating the GroupGuard 查战绩 command."
   }
 }
