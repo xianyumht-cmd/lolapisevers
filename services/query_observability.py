@@ -9,11 +9,7 @@ from services.aram_upstream_state import (
     aram_snapshot_max_age_seconds,
     hero_snapshot_max_age_seconds,
 )
-from services.lolban_service import (
-    LOL_BAN_SNAPSHOT_SOURCE_ID,
-    STALE_CACHE_SECONDS,
-    get_lolban_health,
-)
+from services.lolban_service import STALE_CACHE_SECONDS, get_lolban_health
 from services.shard_service import SHARD_DATA_SOURCE_ID, SHARD_HERO_SOURCE_ID
 
 
@@ -21,18 +17,50 @@ OBSERVABILITY_SCHEMA_VERSION = "query-observability.v1"
 _DYNAMIC_ARAM_SNAPSHOT_PREFIX = "aram-mayhem-"
 _DYNAMIC_ARAM_AUGMENT_PREFIX = "opgg-aram-augments-"
 _DYNAMIC_ARAM_BUILD_PREFIX = "opgg-aram-build-"
-_SAFE_ERROR_RE = re.compile(r"[^A-Za-z0-9_.-]+")
+_ERROR_CLASS_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,95}$")
 _MAX_DYNAMIC_SNAPSHOT_SCAN = 2048
 _MAX_ERROR_CLASSES = 12
+_ALLOWED_SNAPSHOT_STATES = frozenset(
+    {
+        "hit",
+        "missing",
+        "expired",
+        "corrupt",
+        "incompatible",
+        "unavailable",
+        "restored",
+        "saved",
+        "empty",
+        "disabled",
+        "write_error",
+        "load_error",
+        "invalid_payload",
+    }
+)
 
 
 def _utc_now_text() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _safe_timestamp(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc).isoformat()
+    except (TypeError, ValueError):
+        return ""
+
+
 def _safe_error_class(value: Any) -> str:
-    text = _SAFE_ERROR_RE.sub("_", str(value or "").strip())[:96]
-    return text or ""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return text if _ERROR_CLASS_RE.fullmatch(text) else "unexpected_error"
 
 
 def _safe_non_negative_int(value: Any) -> int:
@@ -101,7 +129,11 @@ def _seconds_since(now: float, value: Any) -> Optional[float]:
 
 def _safe_circuit(raw: Optional[Mapping[str, Any]], now: float) -> Dict[str, Any]:
     source = dict(raw or {})
-    state = "open" if str(source.get("circuit_state") or "").lower() == "open" else "closed"
+    state = (
+        "open"
+        if str(source.get("circuit_state") or "").lower() == "open"
+        else "closed"
+    )
     return {
         "state": state,
         "consecutive_failures": _safe_non_negative_int(
@@ -123,11 +155,7 @@ def _safe_circuit(raw: Optional[Mapping[str, Any]], now: float) -> Dict[str, Any
     }
 
 
-def _safe_snapshot(
-    store: Any,
-    source_id: str,
-    max_age_seconds: int,
-) -> Dict[str, Any]:
+def _safe_snapshot(store: Any, source_id: str, max_age_seconds: int) -> Dict[str, Any]:
     try:
         status_fn = getattr(store, "status", None)
         raw = (
@@ -143,30 +171,16 @@ def _safe_snapshot(
             "last_refresh_error_class": type(exc).__name__,
         }
     status = str(source.get("snapshot_status") or "missing").strip().lower()
-    if status not in {
-        "hit",
-        "missing",
-        "expired",
-        "corrupt",
-        "incompatible",
-        "unavailable",
-        "restored",
-        "saved",
-        "empty",
-        "disabled",
-        "write_error",
-        "load_error",
-        "invalid_payload",
-    }:
+    if status not in _ALLOWED_SNAPSHOT_STATES:
         status = "unavailable"
     return {
         "available": bool(source.get("snapshot_ok")),
         "status": status,
-        "captured_at": str(source.get("captured_at") or ""),
+        "captured_at": _safe_timestamp(source.get("captured_at")),
         "age_seconds": _safe_non_negative_int(source.get("age_seconds")),
         "max_age_seconds": _safe_non_negative_int(max_age_seconds),
-        "last_success_at": str(source.get("last_success_at") or ""),
-        "last_error_at": str(source.get("last_refresh_error_at") or ""),
+        "last_success_at": _safe_timestamp(source.get("last_success_at")),
+        "last_error_at": _safe_timestamp(source.get("last_refresh_error_at")),
         "last_error_class": _safe_error_class(
             source.get("last_refresh_error_class")
         ),
@@ -253,7 +267,10 @@ def _aggregate_circuits(
         ),
         "in_flight_count": sum(1 for item in selected if item.get("in_flight")),
         "max_consecutive_failures": max(
-            (_safe_non_negative_int(item.get("consecutive_failures")) for item in selected),
+            (
+                _safe_non_negative_int(item.get("consecutive_failures"))
+                for item in selected
+            ),
             default=0,
         ),
         "last_error_classes": errors,
@@ -274,7 +291,11 @@ def _dynamic_snapshot_source_ids(store: Any) -> tuple[list[str], bool]:
         truncated = False
         for path in directory.glob(f"{_DYNAMIC_ARAM_SNAPSHOT_PREFIX}*.json"):
             name = path.name
-            if name.startswith(".") or ".bad." in name or name.endswith(".status.json"):
+            if (
+                name.startswith(".")
+                or ".bad." in name
+                or name.endswith(".status.json")
+            ):
                 continue
             source_id = name[:-5]
             if not source_id.startswith(_DYNAMIC_ARAM_SNAPSHOT_PREFIX):
@@ -331,9 +352,9 @@ def _aram_mode(
 ) -> str:
     if cache_entries > 0:
         return "cache"
-    open_count = _safe_non_negative_int(augment.get("circuit_open_count")) + _safe_non_negative_int(
-        build.get("circuit_open_count")
-    )
+    open_count = _safe_non_negative_int(
+        augment.get("circuit_open_count")
+    ) + _safe_non_negative_int(build.get("circuit_open_count"))
     error_count = len(augment.get("last_error_classes") or []) + len(
         build.get("last_error_classes") or []
     )
@@ -373,7 +394,7 @@ def _safe_lolban(health_loader: Callable[[], Dict[str, Any]]) -> Dict[str, Any]:
         mode = "cache"
     elif last_error_class and stale > 0:
         mode = "stale"
-    elif str(health.get("last_success_at") or ""):
+    elif _safe_timestamp(health.get("last_success_at")):
         mode = "live"
     elif restored > 0:
         mode = "snapshot"
@@ -386,8 +407,8 @@ def _safe_lolban(health_loader: Callable[[], Dict[str, Any]]) -> Dict[str, Any]:
         "provider_count": _safe_non_negative_int(health.get("provider_count")),
         "fresh_cache_entries": fresh,
         "stale_cache_entries": stale,
-        "last_success_at": str(health.get("last_success_at") or ""),
-        "last_error_at": str(health.get("last_error_at") or ""),
+        "last_success_at": _safe_timestamp(health.get("last_success_at")),
+        "last_error_at": _safe_timestamp(health.get("last_error_at")),
         "last_error_class": last_error_class,
         "configuration_error_code": _safe_error_class(
             health.get("configuration_error_code")
@@ -466,10 +487,14 @@ def build_query_observability(
         store=store,
         max_age_seconds=hero_snapshot_max_age_seconds(),
     )
+    hero_cache_active = _cache_contains(
+        aram_cache,
+        "champion_catalog",
+    ) or _cache_contains(aram_cache, "champions")
     hero_catalog = _static_source(
         public_name="hero_catalog",
         source_id=SHARD_HERO_SOURCE_ID,
-        cache_active=_cache_contains(aram_cache, "champion_catalog"),
+        cache_active=hero_cache_active,
         states=states,
         monotonic_now=monotonic_now,
         store=store,
@@ -487,11 +512,12 @@ def build_query_observability(
         monotonic_now,
     )
     aram_snapshots = _aggregate_aram_snapshots(store)
-    aram_cache_entries = max(
-        0,
-        _cache_size(aram_cache)
-        - (1 if _cache_contains(aram_cache, "champion_catalog") else 0),
+    aram_metadata_entries = sum(
+        1
+        for key in ("champion_catalog", "champions")
+        if _cache_contains(aram_cache, key)
     )
+    aram_cache_entries = max(0, _cache_size(aram_cache) - aram_metadata_entries)
     aram = {
         "name": "aram",
         "mode": _aram_mode(
