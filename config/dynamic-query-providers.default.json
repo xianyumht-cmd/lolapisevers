@@ -1,0 +1,57 @@
+{
+  "schema": "lolapi-dynamic-query-providers.v1",
+  "commands": [
+    {
+      "id": "quote.daily",
+      "provider": {
+        "method": "GET",
+        "url": "https://v1.hitokoto.cn/",
+        "query": {
+          "encode": "json"
+        },
+        "timeout_ms": 5000
+      },
+      "response": {
+        "text_path": "hitokoto"
+      },
+      "fallback_text": "service unavailable",
+      "snapshot_seconds": 86400
+    },
+    {
+      "id": "music.search",
+      "provider": {
+        "method": "GET",
+        "url": "https://itunes.apple.com/search",
+        "query": {
+          "term": "$keyword",
+          "limit": "1",
+          "media": "music"
+        },
+        "timeout_ms": 5000
+      },
+      "response": {
+        "text_path": "results[0].trackViewUrl"
+      },
+      "fallback_text": "music service unavailable",
+      "snapshot_seconds": 3600
+    },
+    {
+      "id": "video.info",
+      "provider": {
+        "method": "GET",
+        "url": "https://api.dailymotion.com/videos",
+        "query": {
+          "search": "$keyword",
+          "limit": "1",
+          "fields": "title,url"
+        },
+        "timeout_ms": 5000
+      },
+      "response": {
+        "text_path": "list[0].url"
+      },
+      "fallback_text": "video service unavailable",
+      "snapshot_seconds": 3600
+    }
+  ]
+}
