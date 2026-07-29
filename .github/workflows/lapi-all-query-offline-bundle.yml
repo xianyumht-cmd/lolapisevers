@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - release/lapi-all-query-packaging-20260730
+  pull_request:
+    branches:
+      - feat/all-query-delivery-hub-20260729
   workflow_dispatch:
 
 permissions:
