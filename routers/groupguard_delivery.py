@@ -13,6 +13,7 @@ from routers.aram_augments import _build_cached_image_response
 from services.aram_augments_service import query_aram_augments
 from services.battle_delivery import battle_meta, format_battle_text
 from services.cross_query_service import query_cross
+from services.hidden_delivery import format_hidden_text, hidden_meta
 from services.lolban_service import format_lolban_text, get_lolban_result, valid_qq
 from services.query_delivery import (
     choose_text_delivery,
@@ -47,7 +48,12 @@ _FEATURE_ALIASES = {
     "cross": "battle",
     "cross_query": "battle",
     "查战绩": "battle",
+    "hidden": "hidden",
+    "hidden_query": "hidden",
+    "查隐藏": "hidden",
 }
+
+_IMAGE_FEATURES = {"shard", "aram", "battle"}
 
 
 def _canonical_feature(value: Any) -> str:
@@ -133,6 +139,8 @@ def _delivery_for_text(text: str, capabilities: Mapping[str, bool], preferred: s
 def _meta_for_feature(feature: str, payload: Mapping[str, Any], *, delivery_fallback: str = ""):
     if feature == "battle":
         return battle_meta(payload, delivery_fallback=delivery_fallback)
+    if feature == "hidden":
+        return hidden_meta(payload, delivery_fallback=delivery_fallback)
     return safe_meta(payload, delivery_fallback=delivery_fallback)
 
 
@@ -156,7 +164,7 @@ async def groupguard_query(request: Request, body: Dict[str, Any]):
         )
 
     ctx = getattr(request.app.state, "ctx", None)
-    if feature in {"shard", "aram", "battle"} and ctx is None:
+    if feature in {"shard", "aram", "battle", "hidden"} and ctx is None:
         return _json_error(
             feature=feature,
             status_code=503,
@@ -189,19 +197,20 @@ async def groupguard_query(request: Request, body: Dict[str, Any]):
                 )
             )
 
-        if feature == "battle":
+        if feature in {"battle", "hidden"}:
             name = str(parameters.get("name") or parameters.get("player_id") or "").strip()
             region = str(parameters.get("region") or "").strip() or None
             if not name:
+                message = "请输入玩家ID，例如：张三#12345" if feature == "battle" else "请输入召唤师名称"
                 return _json_error(
                     feature=feature,
                     status_code=400,
-                    message="请输入玩家ID，例如：张三#12345",
+                    message=message,
                     client_request_id=client_request_id,
                     server_request_id=server_request_id,
                 )
             payload = await query_cross(ctx, name=name, region=region, output_format="pretty")
-            text = format_battle_text(payload)
+            text = format_battle_text(payload) if feature == "battle" else format_hidden_text(payload)
         else:
             hero = str(parameters.get("hero") or "").strip()
             if not hero:
@@ -219,8 +228,14 @@ async def groupguard_query(request: Request, body: Dict[str, Any]):
                 payload = await query_aram_augments(ctx, hero=hero)
                 text = format_aram_text(payload)
 
-        wants_image = preferred in {"auto", "image"} and capabilities.get("image", False)
+        wants_image = (
+            feature in _IMAGE_FEATURES
+            and preferred in {"auto", "image"}
+            and capabilities.get("image", False)
+        )
         fallback_reason = ""
+        if preferred == "image" and feature not in _IMAGE_FEATURES:
+            fallback_reason = "image_not_supported"
         if wants_image:
             rendered = await _render_feature_image(request, feature, payload)
             if _image_response_ok(rendered):
