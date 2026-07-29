@@ -10,7 +10,7 @@
     {"path": "delivery-success-image.json", "sha256": "fd71f43dda393bc00813a39bf0a9ff5e9412dba7a4036d5b0cd6d1ca913e331f"},
     {"path": "delivery-success-forward.json", "sha256": "9dc136d591ec65695140075f9d7ff200443c6455d6a41177ecf7a183dc55ff49"},
     {"path": "delivery-error-retryable.json", "sha256": "0684085250dc94c0443f0f536491662edb265c9e880383bc2aa6aa0b1ec74e6c"},
-    {"path": "observability-degraded.json", "sha256": "b3b5836843df09242496fc8eb1227dc4a9239a9120cdf2795101a9cf7c828d88"}
+    {"path": "observability-degraded.json", "sha256": "f767d2ead04ae2de8cbaa94899ce616895add448566692427715f8e323ed4934"}
   ],
   "consumer_rules": {
     "delivery_endpoint": "/api/v1/groupguard/query",
