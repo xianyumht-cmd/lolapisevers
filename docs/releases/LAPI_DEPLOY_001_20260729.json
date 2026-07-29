@@ -15,7 +15,6 @@
   "base_url_default": "http://127.0.0.1:5001",
   "stacked_pull_requests": [8, 9, 10, 11, 12, 13, 14, 15, 16],
   "prepared_tools": [
-    "ops/Launch-LapiQueryHardening.ps1",
     "ops/Deploy-LapiQueryHardening.ps1",
     "ops/Rollback-LapiQueryHardening.ps1",
     "ops/Test-LapiQueryHardening.ps1"
