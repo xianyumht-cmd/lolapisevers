@@ -1,0 +1,89 @@
+name: one-shot remove retired video feature
+
+on:
+  push:
+    branches:
+      - feat/all-query-delivery-hub-20260729
+    paths:
+      - scripts/remove_retired_video_feature_20260730.py
+      - .github/workflows/remove-retired-video-feature-20260730.yml
+
+permissions:
+  contents: write
+
+jobs:
+  migrate-test-commit:
+    runs-on: windows-2025
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: feat/all-query-delivery-hub-20260729
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Apply asserted video retirement migration
+        shell: pwsh
+        run: python scripts/remove_retired_video_feature_20260730.py
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Run complete Python test suite
+        shell: pwsh
+        run: python -m unittest discover -s tests -v
+
+      - name: Compile Python sources
+        shell: pwsh
+        run: python -m compileall -q .
+
+      - name: Generate and validate WebUI JavaScript
+        shell: pwsh
+        run: |
+          python tests/check_ui_assets.py
+          node --check ui_control.generated.js
+
+      - name: Validate new PowerShell cleanup script
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'ops/remove-retired-video-provider-config.ps1'),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
+
+      - name: Verify removed runtime surface
+        shell: pwsh
+        run: |
+          if (Test-Path 'services/video_query_service.py') { throw 'video service still exists' }
+          if (Test-Path 'tests/test_video_query_service.py') { throw 'old video tests still exist' }
+          $router = Get-Content 'routers/groupguard_delivery.py' -Raw -Encoding UTF8
+          if ($router -match 'query_video|video_meta|"我要看"\s*:\s*"video"') { throw 'video route residue remains' }
+          $catalog = Get-Content 'config/dynamic-query-providers.default.json' -Raw -Encoding UTF8
+          if ($catalog -match 'video\.info') { throw 'default video.info provider remains' }
+
+      - name: Remove one-shot machinery and commit verified result
+        shell: pwsh
+        run: |
+          Remove-Item 'scripts/remove_retired_video_feature_20260730.py' -Force
+          Remove-Item '.github/workflows/remove-retired-video-feature-20260730.yml' -Force
+          git config user.name 'openai-gpt-5.6-thinking'
+          git config user.email 'actions@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'feat(query): retire video query from API hub'
+          git push origin HEAD:feat/all-query-delivery-hub-20260729
