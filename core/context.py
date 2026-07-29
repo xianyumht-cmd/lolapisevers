@@ -7,7 +7,7 @@ from db import Database
 from so1_client import So1Client
 
 from core.config import AppConfig, load_config
-from services.contact_risk_service import ContactRiskStore
+from services.contact_risk_store import ContactRiskStore
 from services.image_asset_store import PersistentImageAssetCache
 from services.persistent_snapshot_store import PersistentSnapshotStore
 from services.upstream_http_client import UpstreamHttpClient
