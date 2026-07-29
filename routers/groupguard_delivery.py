@@ -7,9 +7,12 @@ from typing import Any, Dict, Mapping
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
+from renderers.cross_image import build_cross_image_response
 from renderers.shard_image import build_shard_image_response
 from routers.aram_augments import _build_cached_image_response
 from services.aram_augments_service import query_aram_augments
+from services.battle_delivery import battle_meta, format_battle_text
+from services.cross_query_service import query_cross
 from services.lolban_service import format_lolban_text, get_lolban_result, valid_qq
 from services.query_delivery import (
     choose_text_delivery,
@@ -40,6 +43,10 @@ _FEATURE_ALIASES = {
     "lolban": "lolban",
     "ban": "lolban",
     "查封号": "lolban",
+    "battle": "battle",
+    "cross": "battle",
+    "cross_query": "battle",
+    "查战绩": "battle",
 }
 
 
@@ -92,8 +99,13 @@ def _image_response_ok(response: Response) -> bool:
 
 def _filename(feature: str, payload: Mapping[str, Any]) -> str:
     hero = payload.get("hero") if isinstance(payload.get("hero"), Mapping) else {}
-    alias = str(hero.get("alias") or hero.get("name") or "result").strip()
-    safe = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in alias).strip("-")
+    identity = str(
+        hero.get("alias")
+        or hero.get("name")
+        or payload.get("name")
+        or "result"
+    ).strip()
+    safe = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in identity).strip("-")
     return f"{feature}-{safe or 'result'}.png"
 
 
@@ -101,6 +113,8 @@ async def _render_feature_image(request: Request, feature: str, payload: Dict[st
     ctx = getattr(request.app.state, "ctx", None)
     if feature == "shard":
         return await asyncio.to_thread(build_shard_image_response, ctx, payload)
+    if feature == "battle":
+        return await asyncio.to_thread(build_cross_image_response, ctx, payload)
     return await asyncio.to_thread(
         _build_cached_image_response,
         ctx,
@@ -114,6 +128,12 @@ def _delivery_for_text(text: str, capabilities: Mapping[str, bool], preferred: s
     if delivery is None:
         raise ValueError("客户端未声明可用的文本或转发能力")
     return delivery
+
+
+def _meta_for_feature(feature: str, payload: Mapping[str, Any], *, delivery_fallback: str = ""):
+    if feature == "battle":
+        return battle_meta(payload, delivery_fallback=delivery_fallback)
+    return safe_meta(payload, delivery_fallback=delivery_fallback)
 
 
 @router.post("/api/v1/groupguard/query")
@@ -136,7 +156,7 @@ async def groupguard_query(request: Request, body: Dict[str, Any]):
         )
 
     ctx = getattr(request.app.state, "ctx", None)
-    if feature in {"shard", "aram"} and ctx is None:
+    if feature in {"shard", "aram", "battle"} and ctx is None:
         return _json_error(
             feature=feature,
             status_code=503,
@@ -169,22 +189,35 @@ async def groupguard_query(request: Request, body: Dict[str, Any]):
                 )
             )
 
-        hero = str(parameters.get("hero") or "").strip()
-        if not hero:
-            return _json_error(
-                feature=feature,
-                status_code=400,
-                message="请输入英雄中文名、称号或英文名",
-                client_request_id=client_request_id,
-                server_request_id=server_request_id,
-            )
-
-        if feature == "shard":
-            payload = await query_shard(ctx, hero=hero)
-            text = format_shard_text(payload)
+        if feature == "battle":
+            name = str(parameters.get("name") or parameters.get("player_id") or "").strip()
+            region = str(parameters.get("region") or "").strip() or None
+            if not name:
+                return _json_error(
+                    feature=feature,
+                    status_code=400,
+                    message="请输入玩家ID，例如：张三#12345",
+                    client_request_id=client_request_id,
+                    server_request_id=server_request_id,
+                )
+            payload = await query_cross(ctx, name=name, region=region, output_format="pretty")
+            text = format_battle_text(payload)
         else:
-            payload = await query_aram_augments(ctx, hero=hero)
-            text = format_aram_text(payload)
+            hero = str(parameters.get("hero") or "").strip()
+            if not hero:
+                return _json_error(
+                    feature=feature,
+                    status_code=400,
+                    message="请输入英雄中文名、称号或英文名",
+                    client_request_id=client_request_id,
+                    server_request_id=server_request_id,
+                )
+            if feature == "shard":
+                payload = await query_shard(ctx, hero=hero)
+                text = format_shard_text(payload)
+            else:
+                payload = await query_aram_augments(ctx, hero=hero)
+                text = format_aram_text(payload)
 
         wants_image = preferred in {"auto", "image"} and capabilities.get("image", False)
         fallback_reason = ""
@@ -200,7 +233,7 @@ async def groupguard_query(request: Request, body: Dict[str, Any]):
                     content=success_envelope(
                         feature=feature,
                         delivery=delivery,
-                        meta=safe_meta(payload),
+                        meta=_meta_for_feature(feature, payload),
                         client_request_id=client_request_id,
                         server_request_id=server_request_id,
                     )
@@ -212,7 +245,7 @@ async def groupguard_query(request: Request, body: Dict[str, Any]):
             content=success_envelope(
                 feature=feature,
                 delivery=delivery,
-                meta=safe_meta(payload, delivery_fallback=fallback_reason),
+                meta=_meta_for_feature(feature, payload, delivery_fallback=fallback_reason),
                 client_request_id=client_request_id,
                 server_request_id=server_request_id,
             )
