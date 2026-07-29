@@ -127,6 +127,19 @@ function Add-BackupItem {
     $Manifest.Add([ordered]@{ relative_path = $RelativePath; kind = $kind }) | Out-Null
 }
 
+function Export-PinnedRollbackTool {
+    param([string]$Commit, [string]$Destination)
+    $blob = Invoke-Git -Arguments @("show", "${Commit}:ops/Rollback-LapiQueryHardening.ps1")
+    [System.IO.File]::WriteAllLines(
+        $Destination,
+        [string[]]$blob.Output,
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    if (-not (Test-Path -LiteralPath $Destination -PathType Leaf)) {
+        throw "无法在停服务前导出固定版本回滚工具。"
+    }
+}
+
 function Write-DeploymentRecord {
     param([object]$Record)
     [System.IO.File]::WriteAllText(
@@ -202,6 +215,8 @@ $script:BackupDirectory = Join-Path $BackupRoot "$timestamp-lapi-query-hardening
 New-Item -ItemType Directory -Path $script:BackupDirectory -Force | Out-Null
 Protect-BackupDirectory -Path $script:BackupDirectory
 $script:RecordPath = Join-Path $script:BackupDirectory "deployment-record.json"
+$rollbackToolBackup = Join-Path $script:BackupDirectory "Rollback-LapiQueryHardening.ps1"
+Export-PinnedRollbackTool -Commit $ExpectedCommit -Destination $rollbackToolBackup
 
 $backupItems = New-Object 'System.Collections.Generic.List[object]'
 Add-BackupItem -RelativePath "ops\app_env.local.ps1" -Manifest $backupItems
@@ -218,6 +233,7 @@ $record = [ordered]@{
     schema_version = "lapi-query-hardening-deployment.v1"
     deployment_id = "$timestamp-lapi-query-hardening"
     started_at = [DateTime]::UtcNow.ToString("o")
+    completed_at = $null
     status = "prepared"
     project_root = $ProjectRoot
     remote_url = $remoteUrl
@@ -232,6 +248,7 @@ $record = [ordered]@{
     hero = $Hero
     ban_check = $(if ($BanQQ) { "enabled" } else { "skipped" })
     backup_items = @($backupItems)
+    rollback_tool = "Rollback-LapiQueryHardening.ps1"
     verification_report = "verification-report.json"
     failure = $null
     rollback = $null
@@ -305,7 +322,7 @@ try {
     Write-Output "============================================================"
 } catch {
     $message = $_.Exception.Message
-    Write-Error "发布失败：$message"
+    Write-Warning "发布失败：$message"
     $record.status = "failed"
     $record.failure = [ordered]@{
         at = [DateTime]::UtcNow.ToString("o")
@@ -318,7 +335,7 @@ try {
         Write-Warning "开始自动回滚到 $previousCommit"
         $rollbackScript = Join-Path $ProjectRoot "ops\Rollback-LapiQueryHardening.ps1"
         if (-not (Test-Path -LiteralPath $rollbackScript -PathType Leaf)) {
-            $rollbackScript = Join-Path $script:BackupDirectory "Rollback-LapiQueryHardening.ps1"
+            $rollbackScript = $rollbackToolBackup
         }
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $rollbackScript `
             -ProjectRoot $ProjectRoot `
