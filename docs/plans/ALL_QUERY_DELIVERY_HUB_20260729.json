@@ -5,7 +5,11 @@
   "consumer_repository": "xianyumht-cmd/groupguard-system",
   "status": "executing",
   "role": "channel_neutral_query_business_hub_and_sole_public_upstream_gateway",
-  "contract": "groupguard-query-delivery.v1",
+  "contracts": {
+    "query_and_delivery": "groupguard-query-delivery.v1",
+    "query_endpoint": "/api/v1/groupguard/query",
+    "shared_write_endpoint": "/api/v1/groupguard/report"
+  },
   "production_baseline": {
     "service_commit": "8de85a855b8338c3a9a69cbb2a937cd0a6ef8b82",
     "shard_command_accepted": true,
@@ -22,23 +26,28 @@
       "live_group_member_queries"
     ]
   },
+  "risk_data_decision": {
+    "source_database_has_records": false,
+    "migration_status": "skipped_empty_source",
+    "decision": "Start the Windows interface-owned risk database empty; do not export or import the ARM database."
+  },
   "inventory": [
     {"feature": "shard", "command": "查合集", "service_delivery": "completed", "groupguard_migration": "completed", "production": "accepted"},
-    {"feature": "aram", "command": "海符榜", "service_delivery": "completed", "groupguard_migration": "code_and_ci_completed_pending_client_deployment"},
-    {"feature": "lolban", "command": "查封号", "service_delivery": "completed", "groupguard_migration": "code_and_ci_completed_pending_client_deployment"},
-    {"feature": "battle", "command": "查战绩", "service_delivery": "code_and_windows_ci_completed_pending_service_deployment", "groupguard_migration": "code_and_ci_completed_pending_service_and_client_deployment"},
-    {"feature": "hidden", "command": "查隐藏", "service_delivery": "implementation_and_windows_ci_in_progress", "legacy_behavior": "plugin_holds_provider_secrets_and_calls_public_upstreams"},
-    {"feature": "video", "command": "我要看", "service_delivery": "planned", "legacy_behavior": "plugin_holds_provider_templates_and_extracts_direct_url"},
-    {"feature": "scammer", "command": "查骗子", "service_delivery": "planned", "legacy_behavior": "plugin_merges_local_database_and_public_providers"},
-    {"feature": "peer", "command": "查同行", "service_delivery": "planned", "legacy_behavior": "plugin_local_database_is_single_source"},
-    {"feature": "scammer_report", "command": "举报骗子", "service_delivery": "planned"},
-    {"feature": "peer_report", "command": "举报同行", "service_delivery": "planned"}
+    {"feature": "aram", "command": "海符榜", "service_delivery": "completed", "groupguard_migration": "code_and_ci_completed_pending_final_client_deployment"},
+    {"feature": "lolban", "command": "查封号", "service_delivery": "completed", "groupguard_migration": "code_and_ci_completed_pending_final_client_deployment"},
+    {"feature": "battle", "command": "查战绩", "service_delivery": "code_and_windows_ci_completed_pending_final_service_deployment", "groupguard_migration": "code_and_ci_completed_pending_final_deployment"},
+    {"feature": "hidden", "command": "查隐藏", "service_delivery": "code_and_windows_ci_completed_pending_final_service_deployment", "groupguard_migration": "code_and_ci_completed_pending_final_deployment"},
+    {"feature": "video", "command": "我要看", "service_delivery": "code_and_windows_ci_completed_pending_provider_configuration_and_final_deployment", "groupguard_migration": "code_and_ci_completed_pending_final_deployment"},
+    {"feature": "scammer", "command": "查骗子", "service_delivery": "code_completed_latest_windows_ci_pending", "groupguard_migration": "code_completed_latest_ci_pending"},
+    {"feature": "peer", "command": "查同行", "service_delivery": "code_completed_latest_windows_ci_pending", "groupguard_migration": "code_completed_latest_ci_pending"},
+    {"feature": "scammer_report", "command": "举报骗子", "service_delivery": "idempotent_shared_write_code_completed_latest_windows_ci_pending", "groupguard_migration": "code_completed_latest_ci_pending"},
+    {"feature": "peer_report", "command": "举报同行", "service_delivery": "idempotent_shared_write_code_completed_latest_windows_ci_pending", "groupguard_migration": "code_completed_latest_ci_pending"}
   ],
   "steps": [
     {"id": "AQ-DOC-001", "status": "completed"},
     {
       "id": "AQ-FAST-001",
-      "status": "groupguard_code_and_ci_completed_pending_client_deployment",
+      "status": "service_and_client_code_ci_completed_pending_final_deployment",
       "features": ["aram", "lolban"],
       "groupguard_pull_request": 17,
       "groupguard_ci_run_id": 30451834345,
@@ -47,7 +56,7 @@
     },
     {
       "id": "AQ-BATTLE-001",
-      "status": "service_and_client_code_ci_completed_pending_deployment",
+      "status": "service_and_client_code_ci_completed_pending_final_deployment",
       "features": ["battle"],
       "service_pull_request": 19,
       "service_ci_run_id": 30452368016,
@@ -56,10 +65,43 @@
       "groupguard_build_run_id": 30453031326,
       "conclusion": "success"
     },
-    {"id": "AQ-HIDDEN-001", "status": "service_implementation_and_windows_ci_in_progress", "features": ["hidden"], "service_pull_request": 19},
-    {"id": "AQ-VIDEO-001", "status": "planned", "features": ["video"]},
-    {"id": "AQ-RISK-001", "status": "planned", "features": ["scammer", "peer"]},
-    {"id": "AQ-RISK-WRITE-001", "status": "planned", "features": ["scammer_report", "peer_report"]},
+    {
+      "id": "AQ-HIDDEN-001",
+      "status": "service_and_client_code_ci_completed_pending_final_deployment",
+      "features": ["hidden"],
+      "service_ci_run_id": 30453663406,
+      "groupguard_ci_run_id": 30453920260,
+      "groupguard_build_run_id": 30453920303,
+      "conclusion": "success"
+    },
+    {
+      "id": "AQ-VIDEO-001",
+      "status": "service_and_client_code_ci_completed_pending_provider_configuration_and_final_deployment",
+      "features": ["video"],
+      "service_ci_run_id": 30454324490,
+      "groupguard_ci_run_id": 30454575054,
+      "groupguard_build_run_id": 30454574921,
+      "conclusion": "success"
+    },
+    {
+      "id": "AQ-RISK-DATA-001",
+      "status": "skipped_empty_source",
+      "features": ["scammer", "peer"],
+      "reason": "Operator confirmed that the ARM local risk database contains no business records."
+    },
+    {
+      "id": "AQ-RISK-001",
+      "status": "service_and_client_code_completed_latest_ci_pending",
+      "features": ["scammer", "peer"],
+      "previous_service_ci_run_id": 30457367395,
+      "previous_service_ci_conclusion": "success"
+    },
+    {
+      "id": "AQ-RISK-WRITE-001",
+      "status": "service_and_client_code_completed_latest_ci_pending",
+      "features": ["scammer_report", "peer_report"],
+      "idempotency": "request_id"
+    },
     {"id": "AQ-DYNAMIC-001", "status": "planned"},
     {"id": "AQ-OFFICIAL-BOT-001", "status": "planned"},
     {"id": "AQ-GATE-001", "status": "planned"}
@@ -69,12 +111,12 @@
     "Clients only identify commands, enforce platform permissions and rate limits, call the intranet contract, validate it, and execute platform delivery.",
     "No client may use a public fallback when the intranet service fails.",
     "The official bot and SnowLuma must consume the same feature and delivery contract.",
-    "Service deployment always precedes client deployment."
+    "Service deployment always precedes client deployment.",
+    "Intermediate features are not deployed separately; prepare one final service deployment and one final GroupGuard dist replacement."
   ],
   "next_action": {
-    "repository": "xianyumht-cmd/lolapisevers",
-    "branch": "feat/all-query-delivery-hub-20260729",
-    "step_id": "AQ-HIDDEN-001",
-    "summary": "Complete Windows CI for hidden final delivery, then implement the SnowLuma hidden client without lolurl/lolkey/loltoken or public provider access."
+    "repository": "both",
+    "step_id": "AQ-RISK-001",
+    "summary": "Complete latest Windows and GroupGuard CI for risk query/write features, then audit dynamic external query commands before preparing the single final deployment pair."
   }
 }
