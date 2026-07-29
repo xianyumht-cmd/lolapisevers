@@ -68,7 +68,8 @@ class LapiDeployScriptTests(unittest.TestCase):
         self.assertIn("Language.Parser", text)
         self.assertIn("Assert-PowerShellSyntax", text)
         self.assertIn("ExpectedCommit", text)
-        self.assertIn("Release commit mismatch", text)
+        self.assertIn("Pinned release commit", text)
+        self.assertIn("Patch-WindowsPowerShellGitStderr", text)
         self.assertNotIn("WriteAllLines", text)
         self.assertNotIn("git show", text.lower())
 
