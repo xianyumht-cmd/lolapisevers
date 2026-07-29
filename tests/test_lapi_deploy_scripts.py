@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+LAUNCH = ROOT / "ops" / "Launch-LapiQueryHardening.ps1"
 DEPLOY = ROOT / "ops" / "Deploy-LapiQueryHardening.ps1"
 ROLLBACK = ROOT / "ops" / "Rollback-LapiQueryHardening.ps1"
 VERIFY = ROOT / "ops" / "Test-LapiQueryHardening.ps1"
@@ -14,11 +15,24 @@ VERIFY = ROOT / "ops" / "Test-LapiQueryHardening.ps1"
 
 class LapiDeployScriptTests(unittest.TestCase):
     def test_release_scripts_exist_and_are_utf8(self):
-        for path in (DEPLOY, ROLLBACK, VERIFY):
+        for path in (LAUNCH, DEPLOY, ROLLBACK, VERIFY):
             self.assertTrue(path.is_file(), path)
             text = path.read_text(encoding="utf-8")
             self.assertTrue(text.startswith("param("), path)
             self.assertNotIn("\ufeff", text)
+
+    def test_launcher_exports_raw_scripts_and_parses_before_execution(self):
+        text = LAUNCH.read_text(encoding="utf-8")
+        self.assertIn("git archive", text)
+        self.assertIn("--format=zip", text)
+        self.assertIn("Expand-Archive", text)
+        self.assertIn("Language.Parser", text)
+        self.assertIn("Assert-PowerShellSyntax", text)
+        self.assertIn("ExpectedCommit", text)
+        self.assertIn("Release commit mismatch", text)
+        self.assertNotIn("WriteAllLines", text)
+        self.assertNotIn("git show", text.lower())
+        self.assertTrue(text.isascii())
 
     def test_deploy_is_commit_pinned_and_rejects_unsafe_workspace(self):
         text = DEPLOY.read_text(encoding="utf-8")
@@ -75,7 +89,8 @@ class LapiDeployScriptTests(unittest.TestCase):
 
     def test_scripts_do_not_embed_runtime_credentials(self):
         joined = "\n".join(
-            path.read_text(encoding="utf-8") for path in (DEPLOY, ROLLBACK, VERIFY)
+            path.read_text(encoding="utf-8")
+            for path in (LAUNCH, DEPLOY, ROLLBACK, VERIFY)
         )
         forbidden = (
             "authorization: bearer",
@@ -87,7 +102,9 @@ class LapiDeployScriptTests(unittest.TestCase):
         lowered = joined.lower()
         for value in forbidden:
             self.assertNotIn(value, lowered)
-        self.assertIsNone(re.search(r"(?i)(token|password)\s*=\s*['\"][^'\"]+['\"]", joined))
+        self.assertIsNone(
+            re.search(r"(?i)(token|password)\s*=\s*['\"][^'\"]+['\"]", joined)
+        )
 
     def test_release_manifest_is_machine_readable_when_present(self):
         path = ROOT / "docs" / "releases" / "LAPI_DEPLOY_001_20260729.json"
@@ -95,8 +112,14 @@ class LapiDeployScriptTests(unittest.TestCase):
             self.skipTest("release manifest is added in a later commit")
         data = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual(data["step_id"], "LAPI-DEPLOY-001")
-        self.assertEqual(data["implementation_commit"], "cdebd3643c8f359c1f6dbed8bb3dcecfe6916240")
-        self.assertEqual(data["production_previous_commit"], "bbc8ea2d2687820e4c4a3b400c7568a771f10519")
+        self.assertEqual(
+            data["implementation_commit"],
+            "cdebd3643c8f359c1f6dbed8bb3dcecfe6916240",
+        )
+        self.assertEqual(
+            data["production_previous_commit"],
+            "bbc8ea2d2687820e4c4a3b400c7568a771f10519",
+        )
         self.assertEqual(data["status"], "operator_execution_required")
 
 
