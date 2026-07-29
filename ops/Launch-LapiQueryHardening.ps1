@@ -35,6 +35,83 @@ function Assert-PowerShellSyntax {
     }
 }
 
+function Patch-WindowsPowerShellGitStderr {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][ValidateSet("deploy", "rollback")][string]$Kind
+    )
+
+    $text = [System.IO.File]::ReadAllText($Path, [System.Text.Encoding]::ASCII).Replace("`r`n", "`n")
+
+    if ($Kind -eq "deploy") {
+        $oldBlock = @'
+function Invoke-Git {
+    param([string[]]$Arguments, [switch]$AllowFailure)
+    $output = & git -C $ProjectRoot @Arguments 2>&1
+    $code = $LASTEXITCODE
+    if (-not $AllowFailure -and $code -ne 0) {
+        throw "git $($Arguments -join ' ') failed: $($output -join [Environment]::NewLine)"
+    }
+    return [pscustomobject]@{ ExitCode = $code; Output = @($output) }
+}
+'@
+        $newBlock = @'
+function Invoke-Git {
+    param([string[]]$Arguments, [switch]$AllowFailure)
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $output = & git -C $ProjectRoot @Arguments 2>&1
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if (-not $AllowFailure -and $code -ne 0) {
+        throw "git $($Arguments -join ' ') failed: $($output -join [Environment]::NewLine)"
+    }
+    return [pscustomobject]@{ ExitCode = $code; Output = @($output) }
+}
+'@
+    } else {
+        $oldBlock = @'
+function Invoke-Git {
+    param([string[]]$Arguments)
+    $output = & git -C $ProjectRoot @Arguments 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "git $($Arguments -join ' ') failed: $($output -join [Environment]::NewLine)"
+    }
+    return $output
+}
+'@
+        $newBlock = @'
+function Invoke-Git {
+    param([string[]]$Arguments)
+    $previousPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $output = & git -C $ProjectRoot @Arguments 2>&1
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if ($code -ne 0) {
+        throw "git $($Arguments -join ' ') failed: $($output -join [Environment]::NewLine)"
+    }
+    return $output
+}
+'@
+    }
+
+    $oldBlock = $oldBlock.Replace("`r`n", "`n")
+    $newBlock = $newBlock.Replace("`r`n", "`n")
+    if ($text.IndexOf($oldBlock, [System.StringComparison]::Ordinal) -lt 0) {
+        throw "Expected Invoke-Git block was not found in $Path"
+    }
+
+    $patched = $text.Replace($oldBlock, $newBlock)
+    [System.IO.File]::WriteAllText($Path, $patched, [System.Text.Encoding]::ASCII)
+}
+
 if (-not (Test-Administrator)) {
     $arguments = @(
         "-NoProfile",
@@ -63,9 +140,14 @@ if ($LASTEXITCODE -ne 0) {
     throw "Failed to fetch release branch."
 }
 
-$resolved = (& $gitExe -C $ProjectRoot rev-parse "origin/$ReleaseBranch`^{commit}").Trim().ToLowerInvariant()
-if ($LASTEXITCODE -ne 0 -or $resolved -ne $ExpectedCommit) {
-    throw "Release commit mismatch. expected=$ExpectedCommit resolved=$resolved"
+& $gitExe -C $ProjectRoot cat-file -e "$ExpectedCommit`^{commit}"
+if ($LASTEXITCODE -ne 0) {
+    throw "Pinned release commit is not available locally: $ExpectedCommit"
+}
+
+& $gitExe -C $ProjectRoot merge-base --is-ancestor $ExpectedCommit "origin/$ReleaseBranch"
+if ($LASTEXITCODE -ne 0) {
+    throw "Pinned release commit is not contained in the remote release branch."
 }
 
 $tempRoot = Join-Path $env:TEMP "lapi-query-hardening-$($ExpectedCommit.Substring(0, 12))"
@@ -96,13 +178,22 @@ foreach ($scriptPath in @($deployScript, $rollbackScript, $verifyScript)) {
     if (-not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
         throw "Pinned release script is missing: $scriptPath"
     }
+    $bytes = [System.IO.File]::ReadAllBytes($scriptPath)
+    if (@($bytes | Where-Object { $_ -gt 127 }).Count -gt 0) {
+        throw "Release script is not ASCII-safe: $scriptPath"
+    }
+}
+
+Patch-WindowsPowerShellGitStderr -Path $deployScript -Kind "deploy"
+Patch-WindowsPowerShellGitStderr -Path $rollbackScript -Kind "rollback"
+foreach ($scriptPath in @($deployScript, $rollbackScript, $verifyScript)) {
     Assert-PowerShellSyntax -Path $scriptPath
 }
 
 $deployArgs = @(
     "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $deployScript,
     "-ProjectRoot", $ProjectRoot,
-    "-TargetRef", "origin/$ReleaseBranch",
+    "-TargetRef", $ExpectedCommit,
     "-ExpectedCommit", $ExpectedCommit,
     "-ServiceName", $ServiceName,
     "-BaseUrl", $BaseUrl,
