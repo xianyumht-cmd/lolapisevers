@@ -32,3 +32,8 @@ lanzou_update_push_api_server/*.bad.*
 26.0.1
 cryptography)
 pip
+
+# One-shot release workspaces and generated checks
+/artifact/
+/target/
+/ui_control.generated.js
