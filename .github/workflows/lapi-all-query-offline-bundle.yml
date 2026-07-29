@@ -1,0 +1,72 @@
+name: LAPI All Query Offline Bundle
+
+on:
+  push:
+    branches:
+      - release/lapi-all-query-packaging-20260730
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    env:
+      TARGET_COMMIT: ba54d83d7dd8cdbbb213b7bf38264655d671f134
+    steps:
+      - name: Checkout exact release target
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_COMMIT }}
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Verify exact release target
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$TARGET_COMMIT"
+          python -m unittest discover -s tests -p 'test_*.py'
+          python -m compileall -q .
+          python tools/generate_webui_js.py --check
+          node --check webui/static/app.generated.js
+
+      - name: Create exact offline Git bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifact
+          git branch -f lapi-all-query-offline-target "$TARGET_COMMIT"
+          git bundle create artifact/lapi-all-query-offline.bundle refs/heads/lapi-all-query-offline-target
+          git bundle verify artifact/lapi-all-query-offline.bundle
+          actual="$(git bundle list-heads artifact/lapi-all-query-offline.bundle)"
+          expected="$TARGET_COMMIT refs/heads/lapi-all-query-offline-target"
+          test "$actual" = "$expected"
+          printf '%s\n' "$TARGET_COMMIT" > artifact/TARGET_COMMIT.txt
+          sha256sum artifact/lapi-all-query-offline.bundle > artifact/lapi-all-query-offline.bundle.sha256
+          cat > artifact/BUILD-METADATA.json <<JSON
+          {
+            "schema": "lapi-all-query-offline-bundle.v1",
+            "target_commit": "$TARGET_COMMIT",
+            "source_pr": 19,
+            "tests": "pass",
+            "bundle_ref": "refs/heads/lapi-all-query-offline-target"
+          }
+          JSON
+
+      - name: Upload exact offline bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: lapi-all-query-offline-bundle-${{ env.TARGET_COMMIT }}
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 90
