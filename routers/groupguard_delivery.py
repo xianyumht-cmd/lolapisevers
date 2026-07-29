@@ -12,6 +12,13 @@ from renderers.shard_image import build_shard_image_response
 from routers.aram_augments import _build_cached_image_response
 from services.aram_augments_service import query_aram_augments
 from services.battle_delivery import battle_meta, format_battle_text
+from services.contact_risk_service import (
+    contact_risk_meta,
+    format_contact_risk_report_text,
+    format_contact_risk_text,
+    query_contact_risk,
+    report_contact_risk,
+)
 from services.cross_query_service import query_cross
 from services.hidden_delivery import format_hidden_text, hidden_meta
 from services.lolban_service import format_lolban_text, get_lolban_result, valid_qq
@@ -55,8 +62,19 @@ _FEATURE_ALIASES = {
     "video": "video",
     "video_query": "video",
     "我要看": "video",
+    "scammer": "scammer",
+    "scammer_query": "scammer",
+    "查骗子": "scammer",
+    "peer": "peer",
+    "peer_query": "peer",
+    "查同行": "peer",
 }
-
+_REPORT_FEATURE_ALIASES = {
+    "scammer_report": "scammer_report",
+    "举报骗子": "scammer_report",
+    "peer_report": "peer_report",
+    "举报同行": "peer_report",
+}
 _IMAGE_FEATURES = {"shard", "aram", "battle"}
 
 
@@ -64,11 +82,17 @@ def _canonical_feature(value: Any) -> str:
     return _FEATURE_ALIASES.get(str(value or "").strip().lower(), "")
 
 
+def _canonical_report_feature(value: Any) -> str:
+    return _REPORT_FEATURE_ALIASES.get(str(value or "").strip().lower(), "")
+
+
 def _error_code(status_code: int) -> tuple[str, bool, int]:
     if status_code == 400:
         return "invalid_query", False, 0
     if status_code == 404:
         return "not_found", False, 0
+    if status_code == 409:
+        return "conflict", False, 0
     if status_code in {408, 429}:
         return "temporarily_unavailable", True, 15
     if status_code >= 500:
@@ -147,7 +171,24 @@ def _meta_for_feature(feature: str, payload: Mapping[str, Any], *, delivery_fall
         return hidden_meta(payload, delivery_fallback=delivery_fallback)
     if feature == "video":
         return video_meta(payload)
+    if feature in {"scammer", "peer"}:
+        return contact_risk_meta(payload)
     return safe_meta(payload, delivery_fallback=delivery_fallback)
+
+
+def _identifier_parameters(parameters: Mapping[str, Any]) -> tuple[str, str]:
+    identifier_type = str(parameters.get("identifier_type") or parameters.get("type") or "").strip()
+    if not identifier_type:
+        identifier_type = "wechat" if parameters.get("wechat") or parameters.get("wx") else "qq"
+    identifier = str(
+        parameters.get("identifier")
+        or parameters.get("account")
+        or parameters.get("qq")
+        or parameters.get("wechat")
+        or parameters.get("wx")
+        or ""
+    ).strip()
+    return identifier_type, identifier
 
 
 @router.post("/api/v1/groupguard/query")
@@ -170,7 +211,7 @@ async def groupguard_query(request: Request, body: Dict[str, Any]):
         )
 
     ctx = getattr(request.app.state, "ctx", None)
-    if feature in {"shard", "aram", "battle", "hidden", "video"} and ctx is None:
+    if feature in {"shard", "aram", "battle", "hidden", "video", "scammer", "peer"} and ctx is None:
         return _json_error(
             feature=feature,
             status_code=503,
@@ -203,7 +244,11 @@ async def groupguard_query(request: Request, body: Dict[str, Any]):
                 )
             )
 
-        if feature == "video":
+        if feature in {"scammer", "peer"}:
+            identifier_type, identifier = _identifier_parameters(parameters)
+            payload = await query_contact_risk(ctx, feature, identifier_type, identifier)
+            text = format_contact_risk_text(payload)
+        elif feature == "video":
             category = str(parameters.get("category") or "热门").strip() or "热门"
             payload = await query_video(ctx, category)
             text = format_video_text(payload)
@@ -295,6 +340,104 @@ async def groupguard_query(request: Request, body: Dict[str, Any]):
             detail = "查询服务暂不可用，请稍后再试"
         elif not detail:
             detail = "查询失败，请检查参数"
+        return _json_error(
+            feature=feature,
+            status_code=status_code,
+            message=detail,
+            client_request_id=client_request_id,
+            server_request_id=server_request_id,
+        )
+
+
+@router.post("/api/v1/groupguard/report")
+async def groupguard_report(request: Request, body: Dict[str, Any]):
+    server_request_id = request_id()
+    body = body if isinstance(body, dict) else {}
+    client_request_id = safe_client_request_id(body.get("request_id"))
+    feature = _canonical_report_feature(body.get("feature"))
+    parameters = body.get("parameters") if isinstance(body.get("parameters"), dict) else {}
+    capabilities = normalize_capabilities(body.get("capabilities"))
+    preferred = normalize_preferred(body.get("preferred"))
+
+    if not feature:
+        return _json_error(
+            feature="unknown",
+            status_code=400,
+            message="不支持的举报功能",
+            client_request_id=client_request_id,
+            server_request_id=server_request_id,
+        )
+    if not client_request_id:
+        return _json_error(
+            feature=feature,
+            status_code=400,
+            message="举报请求必须提供 request_id",
+            client_request_id="",
+            server_request_id=server_request_id,
+        )
+    ctx = getattr(request.app.state, "ctx", None)
+    if ctx is None:
+        return _json_error(
+            feature=feature,
+            status_code=503,
+            message="举报服务暂不可用，请稍后再试",
+            client_request_id=client_request_id,
+            server_request_id=server_request_id,
+        )
+
+    try:
+        identifier_type, identifier = _identifier_parameters(parameters)
+        category = "peer" if feature == "peer_report" else "scammer"
+        payload = await report_contact_risk(
+            ctx,
+            request_id=client_request_id,
+            category=category,
+            identifier_type=identifier_type,
+            identifier_value=identifier,
+            content=str(parameters.get("content") or parameters.get("evidence") or ""),
+            source=str(body.get("client") or parameters.get("source") or "channel-client"),
+            actor_id=str(parameters.get("actor_id") or ""),
+            group_id=str(parameters.get("group_id") or ""),
+        )
+        text = format_contact_risk_report_text(payload)
+        delivery = _delivery_for_text(text, capabilities, preferred if preferred != "image" else "auto")
+        record = payload.get("record") if isinstance(payload.get("record"), Mapping) else {}
+        meta = {
+            "category": category,
+            "identifier_type": str(payload.get("identifier_type") or ""),
+            "identifier_value": str(payload.get("identifier_value") or ""),
+            "duplicate": bool(payload.get("duplicate")),
+            "report_count": int(record.get("report_count") or 0),
+        }
+        return JSONResponse(
+            content=success_envelope(
+                feature=feature,
+                delivery=delivery,
+                meta=meta,
+                client_request_id=client_request_id,
+                server_request_id=server_request_id,
+            )
+        )
+    except ValueError as exc:
+        return _json_error(
+            feature=feature,
+            status_code=406,
+            message=str(exc),
+            client_request_id=client_request_id,
+            server_request_id=server_request_id,
+        )
+    except Exception as exc:
+        status_code = int(getattr(exc, "status_code", 503) or 503)
+        detail = str(getattr(exc, "detail", "") or "")
+        if status_code >= 500:
+            logger.exception(
+                "groupguard report failed feature=%s request_id=%s",
+                feature,
+                server_request_id,
+            )
+            detail = "举报服务暂不可用，请稍后再试"
+        elif not detail:
+            detail = "举报失败，请检查参数"
         return _json_error(
             feature=feature,
             status_code=status_code,
