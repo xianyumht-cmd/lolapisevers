@@ -173,7 +173,9 @@ class GroupGuardDynamicDeliveryTests(unittest.IsolatedAsyncioTestCase):
             catalog = DynamicProviderCatalog()
             self.assertEqual(catalog.get("quote.daily").method, "GET")
             self.assertEqual(catalog.get("music.search").text_path, "results[0].trackViewUrl")
-            self.assertEqual(catalog.get("video.info").text_path, "list[0].url")
+            with self.assertRaises(HTTPException) as removed:
+                catalog.get("video.info")
+            self.assertEqual(removed.exception.status_code, 404)
 
 
 if __name__ == "__main__":

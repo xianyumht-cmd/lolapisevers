@@ -303,3 +303,16 @@ API 视频移除小版本部署包
 - 不手工合并两个 Draft PR；
 - 不删除 Windows/ARM 回滚备份；
 - 不覆盖当前生产“查合集可用”回滚基线，直到新最终版本群内验收通过。
+
+## 2026-07-30 API 视频移除代码阶段完成
+
+已完成并由一次性工作流全量验证后提交：
+
+- 删除正式 `video/我要看` 路由别名；
+- 删除 `services/video_query_service.py`；
+- 删除默认动态 Provider `video.info`；
+- 将原视频正向测试替换为“视频功能必须不受支持”的退役门禁；
+- 新增 Windows 配置清理脚本，仅移除 `QUERY_VIDEO_PROVIDERS_JSON`，保留风险与自定义动态 Provider；
+- 旧含视频 dist 继续保持作废和禁止部署。
+
+下一步：生成固定提交的 API 无视频离线安全部署包，部署 Windows，运行 shard/scammer/custom dynamic/health 验收，再进入 GroupGuard 无视频最终 dist 构建。

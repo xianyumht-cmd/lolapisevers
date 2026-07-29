@@ -68,7 +68,6 @@ groupguard-query-delivery.v1
 | 查封号 123456789 | `lolban` | `{"qq":"123456789"}` |
 | 查战绩 玩家#标签 | `battle` | `{"name":"玩家#标签"}` |
 | 查隐藏 玩家 1 | `hidden` | `{"name":"玩家","region":"1"}` |
-| 我要看 热门 | `video` | `{"category":"热门"}` |
 | 查骗子 123456789 | `scammer` | `{"identifier_type":"qq","identifier":"123456789"}` |
 | 查同行 wx_example | `peer` | `{"identifier_type":"wechat","identifier":"wx_example"}` |
 | 点歌 晴天 | `dynamic` | `{"command_id":"music.search","keyword":"晴天"}` |

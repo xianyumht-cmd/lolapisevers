@@ -3,7 +3,7 @@
   "plan_id": "GGK-ALL-QUERY-HUB-20260729",
   "repository": "xianyumht-cmd/lolapisevers",
   "consumer_repository": "xianyumht-cmd/groupguard-system",
-  "status": "service_deployed_pending_direct_protocol_acceptance",
+  "status": "video_retirement_code_verified_pending_windows_patch_deploy",
   "role": "channel_neutral_query_business_hub_and_sole_public_upstream_gateway",
   "contracts": {
     "query_and_delivery": "groupguard-query-delivery.v1",
@@ -27,14 +27,38 @@
     "automatic_rollback_triggered": false
   },
   "release_candidate": {
-    "service_head": "ba54d83d7dd8cdbbb213b7bf38264655d671f134",
-    "groupguard_head": "029118346adaa9232aeceeb283f5d243a407dc95",
-    "deployment_order": ["windows_service", "direct_protocol_acceptance", "provider_configuration", "snowluma_dist", "group_command_acceptance"]
+    "service_head": "pending_video_retirement_release_commit",
+    "groupguard_head": "pending_video_free_client_commit",
+    "deployment_order": [
+      "windows_service",
+      "direct_protocol_acceptance",
+      "provider_configuration",
+      "snowluma_dist",
+      "group_command_acceptance"
+    ],
+    "previous_service_head_with_video": "ba54d83d7dd8cdbbb213b7bf38264655d671f134",
+    "previous_groupguard_head_with_video": "029118346adaa9232aeceeb283f5d243a407dc95",
+    "previous_groupguard_artifact_status": "revoked_do_not_deploy"
   },
   "scope": {
-    "business_queries": ["shard", "aram", "lolban", "battle", "hidden", "video", "scammer", "peer", "dynamic"],
-    "shared_writes": ["scammer_report", "peer_report"],
-    "future_clients": ["snowluma_groupguard", "official_bot"],
+    "business_queries": [
+      "shard",
+      "aram",
+      "lolban",
+      "battle",
+      "hidden",
+      "scammer",
+      "peer",
+      "dynamic"
+    ],
+    "shared_writes": [
+      "scammer_report",
+      "peer_report"
+    ],
+    "future_clients": [
+      "snowluma_groupguard",
+      "official_bot"
+    ],
     "excluded_group_local_controls": [
       "signin_points",
       "invite_statistics",
@@ -55,24 +79,78 @@
     "legacy_http_config_migration": "offline_split_into_client_shell_and_service_catalog"
   },
   "inventory": [
-    {"feature": "shard", "command": "查合集", "service_delivery": "deployed_pending_direct_reacceptance", "groupguard_migration": "verified_current_baseline"},
-    {"feature": "aram", "command": "海符榜", "service_delivery": "deployed_pending_direct_acceptance", "groupguard_migration": "verified_pending_dist"},
-    {"feature": "lolban", "command": "查封号", "service_delivery": "deployed_pending_direct_acceptance", "groupguard_migration": "verified_pending_dist"},
-    {"feature": "battle", "command": "查战绩", "service_delivery": "deployed_pending_direct_acceptance", "groupguard_migration": "verified_pending_dist"},
-    {"feature": "hidden", "command": "查隐藏", "service_delivery": "deployed_pending_direct_acceptance", "groupguard_migration": "verified_pending_dist"},
-    {"feature": "video", "command": "我要看", "service_delivery": "deployed_pending_provider_configuration_and_acceptance", "groupguard_migration": "verified_pending_dist"},
-    {"feature": "scammer", "command": "查骗子", "service_delivery": "deployed_pending_direct_acceptance", "groupguard_migration": "verified_pending_dist"},
-    {"feature": "peer", "command": "查同行", "service_delivery": "deployed_pending_direct_acceptance", "groupguard_migration": "verified_pending_dist"},
-    {"feature": "scammer_report", "command": "举报骗子", "service_delivery": "deployed_pending_idempotent_write_acceptance", "groupguard_migration": "verified_pending_dist"},
-    {"feature": "peer_report", "command": "举报同行", "service_delivery": "deployed_pending_idempotent_write_acceptance", "groupguard_migration": "verified_pending_dist"},
-    {"feature": "dynamic", "command": "动态HTTP查询命令", "service_delivery": "deployed_pending_provider_catalog_and_acceptance", "groupguard_migration": "verified_intranet_shell_pending_dist"}
+    {
+      "feature": "shard",
+      "command": "查合集",
+      "service_delivery": "deployed_pending_direct_reacceptance",
+      "groupguard_migration": "verified_current_baseline"
+    },
+    {
+      "feature": "aram",
+      "command": "海符榜",
+      "service_delivery": "deployed_pending_direct_acceptance",
+      "groupguard_migration": "verified_pending_dist"
+    },
+    {
+      "feature": "lolban",
+      "command": "查封号",
+      "service_delivery": "deployed_pending_direct_acceptance",
+      "groupguard_migration": "verified_pending_dist"
+    },
+    {
+      "feature": "battle",
+      "command": "查战绩",
+      "service_delivery": "deployed_pending_direct_acceptance",
+      "groupguard_migration": "verified_pending_dist"
+    },
+    {
+      "feature": "hidden",
+      "command": "查隐藏",
+      "service_delivery": "deployed_pending_direct_acceptance",
+      "groupguard_migration": "verified_pending_dist"
+    },
+    {
+      "feature": "scammer",
+      "command": "查骗子",
+      "service_delivery": "deployed_pending_direct_acceptance",
+      "groupguard_migration": "verified_pending_dist"
+    },
+    {
+      "feature": "peer",
+      "command": "查同行",
+      "service_delivery": "deployed_pending_direct_acceptance",
+      "groupguard_migration": "verified_pending_dist"
+    },
+    {
+      "feature": "scammer_report",
+      "command": "举报骗子",
+      "service_delivery": "deployed_pending_idempotent_write_acceptance",
+      "groupguard_migration": "verified_pending_dist"
+    },
+    {
+      "feature": "peer_report",
+      "command": "举报同行",
+      "service_delivery": "deployed_pending_idempotent_write_acceptance",
+      "groupguard_migration": "verified_pending_dist"
+    },
+    {
+      "feature": "dynamic",
+      "command": "动态HTTP查询命令",
+      "service_delivery": "deployed_pending_provider_catalog_and_acceptance",
+      "groupguard_migration": "verified_intranet_shell_pending_dist"
+    }
   ],
   "verification": {
     "runner_blocker_resolved": true,
     "service_actions": {
       "run_id": 30470711573,
       "conclusion": "success",
-      "checks": ["python_unit_tests", "webui_generation", "node_syntax", "powershell_operations_syntax"]
+      "checks": [
+        "python_unit_tests",
+        "webui_generation",
+        "node_syntax",
+        "powershell_operations_syntax"
+      ]
     },
     "isolated_service_validation": {
       "passed": 227,
@@ -86,7 +164,14 @@
       "ci_run_id": 30470811073,
       "build_run_id": 30470810893,
       "conclusion": "success",
-      "checks": ["npm_ci", "npm_test", "deployment_powershell_syntax", "build_snowluma", "cross_repository_contracts", "standalone_build"]
+      "checks": [
+        "npm_ci",
+        "npm_test",
+        "deployment_powershell_syntax",
+        "build_snowluma",
+        "cross_repository_contracts",
+        "standalone_build"
+      ]
     },
     "exact_bundle": {
       "workflow_run_id": 30471336286,
@@ -100,18 +185,92 @@
     ]
   },
   "steps": [
-    {"id": "AQ-DOC-001", "status": "completed"},
-    {"id": "AQ-FAST-001", "status": "service_deployed_pending_acceptance", "features": ["aram", "lolban"]},
-    {"id": "AQ-BATTLE-001", "status": "service_deployed_pending_acceptance", "features": ["battle"]},
-    {"id": "AQ-HIDDEN-001", "status": "service_deployed_pending_acceptance", "features": ["hidden"]},
-    {"id": "AQ-VIDEO-001", "status": "service_deployed_pending_provider_configuration_and_acceptance", "features": ["video"]},
-    {"id": "AQ-RISK-DATA-001", "status": "skipped_empty_source", "features": ["scammer", "peer"]},
-    {"id": "AQ-RISK-001", "status": "service_deployed_pending_acceptance", "features": ["scammer", "peer"]},
-    {"id": "AQ-RISK-WRITE-001", "status": "service_deployed_pending_acceptance", "features": ["scammer_report", "peer_report"], "idempotency": "request_id"},
-    {"id": "AQ-DYNAMIC-001", "status": "service_deployed_pending_provider_catalog_and_acceptance", "features": ["dynamic"]},
-    {"id": "AQ-OFFICIAL-BOT-001", "status": "reference_client_and_boundary_verified_pending_future_adapter"},
-    {"id": "AQ-GATE-001", "status": "completed"},
-    {"id": "AQ-RELEASE-001", "status": "service_deployed_pending_direct_protocol_acceptance"}
+    {
+      "id": "AQ-DOC-001",
+      "status": "completed"
+    },
+    {
+      "id": "AQ-FAST-001",
+      "status": "service_deployed_pending_acceptance",
+      "features": [
+        "aram",
+        "lolban"
+      ]
+    },
+    {
+      "id": "AQ-BATTLE-001",
+      "status": "service_deployed_pending_acceptance",
+      "features": [
+        "battle"
+      ]
+    },
+    {
+      "id": "AQ-HIDDEN-001",
+      "status": "service_deployed_pending_acceptance",
+      "features": [
+        "hidden"
+      ]
+    },
+    {
+      "id": "AQ-VIDEO-001",
+      "status": "cancelled_by_product_decision",
+      "features": [
+        "video"
+      ],
+      "replacement": "AQ-VIDEO-RETIRE-001"
+    },
+    {
+      "id": "AQ-RISK-DATA-001",
+      "status": "skipped_empty_source",
+      "features": [
+        "scammer",
+        "peer"
+      ]
+    },
+    {
+      "id": "AQ-RISK-001",
+      "status": "service_deployed_pending_acceptance",
+      "features": [
+        "scammer",
+        "peer"
+      ]
+    },
+    {
+      "id": "AQ-RISK-WRITE-001",
+      "status": "service_deployed_pending_acceptance",
+      "features": [
+        "scammer_report",
+        "peer_report"
+      ],
+      "idempotency": "request_id"
+    },
+    {
+      "id": "AQ-DYNAMIC-001",
+      "status": "service_deployed_pending_provider_catalog_and_acceptance",
+      "features": [
+        "dynamic"
+      ]
+    },
+    {
+      "id": "AQ-OFFICIAL-BOT-001",
+      "status": "reference_client_and_boundary_verified_pending_future_adapter"
+    },
+    {
+      "id": "AQ-GATE-001",
+      "status": "completed"
+    },
+    {
+      "id": "AQ-RELEASE-001",
+      "status": "service_deployed_pending_direct_protocol_acceptance"
+    },
+    {
+      "id": "AQ-VIDEO-RETIRE-001",
+      "status": "code_verified_pending_windows_patch_deploy",
+      "features_removed": [
+        "video",
+        "video.info"
+      ]
+    }
   ],
   "rules": [
     "The intranet service owns provider credentials, public upstream access, parsing, business formatting, rendering, caching, retries and degradation.",
@@ -124,7 +283,16 @@
   ],
   "next_action": {
     "repository": "xianyumht-cmd/lolapisevers",
-    "step_id": "AQ-ACCEPT-001",
-    "summary": "Run direct query/report protocol acceptance against port 5001, migrate required video and dynamic provider configuration, then release the sealed GroupGuard dist."
+    "step_id": "AQ-VIDEO-RETIRE-DEPLOY-001",
+    "summary": "Package and deploy the video-free API patch, remove only QUERY_VIDEO_PROVIDERS_JSON with rollback protection, then run direct protocol acceptance before rebuilding GroupGuard."
+  },
+  "product_decisions": {
+    "video_query": {
+      "decision": "retired",
+      "decided_at_local": "2026-07-30T03:38:00+08:00",
+      "reason": "User cancelled the entire 我要看 category video feature after all migrated providers failed diagnosis.",
+      "legacy_dist_commit": "029118346adaa9232aeceeb283f5d243a407dc95",
+      "legacy_dist_status": "revoked_do_not_deploy"
+    }
   }
 }

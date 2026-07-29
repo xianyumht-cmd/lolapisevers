@@ -90,3 +90,14 @@ GitHub Actions：
 - 不得删除当前生产回滚备份；
 - 不得在接口失败时恢复插件公网 fallback；
 - 不得在生产验收前合并 PR #19 或 GroupGuard PR #17。
+
+## 视频功能取消后的重新验证
+
+- 用户已取消整个“我要看”分类视频功能；
+- `feature=video`、`video_query` 和“我要看”均不再是支持的查询别名；
+- 接口视频 Provider 服务文件与原正向测试已删除；
+- 默认动态 Provider `video.info` 已删除；
+- 新门禁明确验证上述别名返回“不支持的查询功能”；
+- 原封存 GroupGuard dist `029118346adaa9232aeceeb283f5d243a407dc95` 已作废，禁止部署。
+
+本检查点现在进入：API 无视频小版本打包与 Windows 安全部署，部署成功后再重新构建 GroupGuard。
