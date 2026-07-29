@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "plan_id": "GGK-ALL-QUERY-HUB-20260729",
+  "repository": "xianyumht-cmd/lolapisevers",
+  "consumer_repository": "xianyumht-cmd/groupguard-system",
+  "status": "executing",
+  "role": "channel_neutral_query_business_hub_and_sole_public_upstream_gateway",
+  "contract": "groupguard-query-delivery.v1",
+  "production_baseline": {
+    "service_commit": "8de85a855b8338c3a9a69cbb2a937cd0a6ef8b82",
+    "shard_command_accepted": true,
+    "command": "查合集 滑板鞋"
+  },
+  "scope": {
+    "business_queries": [
+      "shard",
+      "aram",
+      "lolban",
+      "battle",
+      "hidden",
+      "video",
+      "scammer",
+      "peer"
+    ],
+    "shared_writes": [
+      "scammer_report",
+      "peer_report"
+    ],
+    "future_clients": [
+      "snowluma_groupguard",
+      "official_bot"
+    ],
+    "excluded_group_local_controls": [
+      "signin_points",
+      "invite_statistics",
+      "group_permission_management",
+      "live_group_member_queries"
+    ]
+  },
+  "inventory": [
+    {"feature": "shard", "command": "查合集", "service_delivery": "completed", "groupguard_migration": "completed", "production": "accepted"},
+    {"feature": "aram", "command": "海符榜", "service_delivery": "completed", "groupguard_migration": "in_progress"},
+    {"feature": "lolban", "command": "查封号", "service_delivery": "completed", "groupguard_migration": "in_progress"},
+    {"feature": "battle", "command": "查战绩", "service_delivery": "planned", "legacy_behavior": "plugin_parses_cross_query_and_selects_delivery"},
+    {"feature": "hidden", "command": "查隐藏", "service_delivery": "planned", "legacy_behavior": "plugin_holds_provider_secrets_and_calls_public_upstreams"},
+    {"feature": "video", "command": "我要看", "service_delivery": "planned", "legacy_behavior": "plugin_holds_provider_templates_and_extracts_direct_url"},
+    {"feature": "scammer", "command": "查骗子", "service_delivery": "planned", "legacy_behavior": "plugin_merges_local_database_and_public_providers"},
+    {"feature": "peer", "command": "查同行", "service_delivery": "planned", "legacy_behavior": "plugin_local_database_is_single_source"},
+    {"feature": "scammer_report", "command": "举报骗子", "service_delivery": "planned"},
+    {"feature": "peer_report", "command": "举报同行", "service_delivery": "planned"}
+  ],
+  "steps": [
+    {"id": "AQ-DOC-001", "status": "completed"},
+    {"id": "AQ-FAST-001", "status": "in_progress", "features": ["aram", "lolban"], "depends_on": ["LAPI-DEPLOY-001", "GG-SHARD-001"]},
+    {"id": "AQ-BATTLE-001", "status": "planned", "features": ["battle"]},
+    {"id": "AQ-HIDDEN-001", "status": "planned", "features": ["hidden"]},
+    {"id": "AQ-VIDEO-001", "status": "planned", "features": ["video"]},
+    {"id": "AQ-RISK-001", "status": "planned", "features": ["scammer", "peer"]},
+    {"id": "AQ-RISK-WRITE-001", "status": "planned", "features": ["scammer_report", "peer_report"]},
+    {"id": "AQ-DYNAMIC-001", "status": "planned"},
+    {"id": "AQ-OFFICIAL-BOT-001", "status": "planned"},
+    {"id": "AQ-GATE-001", "status": "planned"}
+  ],
+  "rules": [
+    "The intranet service owns provider credentials, public upstream access, parsing, business formatting, rendering, caching, retries and degradation.",
+    "Clients only identify commands, enforce platform permissions and rate limits, call the intranet contract, validate it, and execute platform delivery.",
+    "No client may use a public fallback when the intranet service fails.",
+    "The official bot and SnowLuma must consume the same feature and delivery contract.",
+    "Service deployment always precedes client deployment."
+  ],
+  "next_action": {
+    "repository": "xianyumht-cmd/groupguard-system",
+    "branch": "feat/all-query-intranet-client-20260729",
+    "step_id": "AQ-FAST-001",
+    "summary": "Migrate 海符榜 and 查封号 to the existing intranet delivery endpoint, remove their legacy command claims, and add release gates."
+  }
+}
