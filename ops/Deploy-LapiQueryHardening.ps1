@@ -22,7 +22,7 @@ function Assert-Administrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = New-Object Security.Principal.WindowsPrincipal($identity)
     if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        throw "请右键 PowerShell，选择‘以管理员身份运行’后重新执行。"
+        throw "Administrator privileges are required."
     }
 }
 
@@ -45,7 +45,8 @@ function Resolve-ServiceName {
         Get-CimInstance Win32_Service -ErrorAction Stop |
             Where-Object {
                 $path = "$($_.PathName)"
-                $path -and $path.IndexOf($ProjectRoot, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -and
+                $path -and
+                    $path.IndexOf($ProjectRoot, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -and
                     $path.IndexOf("run_service.ps1", [System.StringComparison]::OrdinalIgnoreCase) -ge 0
             }
     )
@@ -53,9 +54,9 @@ function Resolve-ServiceName {
         return "$($matches[0].Name)"
     }
     if ($matches.Count -gt 1) {
-        throw "检测到多个指向本项目的 Windows 服务，请用 -ServiceName 明确指定。"
+        throw "Multiple Windows services point to this project. Pass -ServiceName explicitly."
     }
-    throw "未找到 Windows 服务 '$RequestedName'，也无法从服务 PathName 自动识别本项目。"
+    throw "Windows service '$RequestedName' was not found and could not be resolved from PathName."
 }
 
 function Wait-ServiceState {
@@ -68,7 +69,7 @@ function Wait-ServiceState {
         }
         Start-Sleep -Seconds 1
     }
-    throw "服务 $Name 未在 $TimeoutSeconds 秒内进入 $Desired 状态。"
+    throw "Service $Name did not reach state $Desired within $TimeoutSeconds seconds."
 }
 
 function Stop-ReleaseService {
@@ -99,7 +100,7 @@ function Protect-BackupDirectory {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     & icacls.exe $Path /inheritance:r /grant:r "$identity`:(OI)(CI)F" "*S-1-5-18:(OI)(CI)F" | Out-Null
     if ($LASTEXITCODE -ne 0) {
-        throw "无法限制备份目录 ACL，已停止发布：$Path"
+        throw "Failed to restrict ACLs on backup directory: $Path"
     }
 }
 
@@ -127,19 +128,6 @@ function Add-BackupItem {
     $Manifest.Add([ordered]@{ relative_path = $RelativePath; kind = $kind }) | Out-Null
 }
 
-function Export-PinnedRollbackTool {
-    param([string]$Commit, [string]$Destination)
-    $blob = Invoke-Git -Arguments @("show", "${Commit}:ops/Rollback-LapiQueryHardening.ps1")
-    [System.IO.File]::WriteAllLines(
-        $Destination,
-        [string[]]$blob.Output,
-        [System.Text.UTF8Encoding]::new($false)
-    )
-    if (-not (Test-Path -LiteralPath $Destination -PathType Leaf)) {
-        throw "无法在停服务前导出固定版本回滚工具。"
-    }
-}
-
 function Write-DeploymentRecord {
     param([object]$Record)
     [System.IO.File]::WriteAllText(
@@ -152,12 +140,12 @@ function Write-DeploymentRecord {
 function Invoke-ReleaseTests {
     param([string]$PythonExe)
     if ($SkipFullTests) {
-        Write-Warning "已按参数跳过完整单元测试。"
+        Write-Warning "Full unit tests were skipped by operator request."
         return
     }
     & $PythonExe -m unittest discover -s (Join-Path $ProjectRoot "tests") -p "test_*.py"
     if ($LASTEXITCODE -ne 0) {
-        throw "完整 Python 单元测试失败。"
+        throw "Full Python unit tests failed."
     }
 }
 
@@ -167,33 +155,41 @@ $BaseUrl = $BaseUrl.TrimEnd("/")
 $ExpectedCommit = $ExpectedCommit.ToLowerInvariant()
 $RequiredAncestor = $RequiredAncestor.ToLowerInvariant()
 
+$rollbackSource = Join-Path $PSScriptRoot "Rollback-LapiQueryHardening.ps1"
+$verificationSource = Join-Path $PSScriptRoot "Test-LapiQueryHardening.ps1"
+foreach ($requiredScript in @($rollbackSource, $verificationSource)) {
+    if (-not (Test-Path -LiteralPath $requiredScript -PathType Leaf)) {
+        throw "Required sibling release script is missing: $requiredScript"
+    }
+}
+
 $remoteUrlResult = Invoke-Git -Arguments @("remote", "get-url", "origin")
 $remoteUrl = ($remoteUrlResult.Output -join "").Trim()
 if ($remoteUrl -notmatch "github\.com[/:]xianyumht-cmd/lolapisevers(?:\.git)?$") {
-    throw "origin 不是预期仓库：$remoteUrl"
+    throw "origin is not the expected repository: $remoteUrl"
 }
 
 $dirty = Invoke-Git -Arguments @("status", "--porcelain", "--untracked-files=no")
 if (($dirty.Output -join "").Trim()) {
-    throw "检测到已跟踪文件未提交改动。为防止覆盖本地代码，发布已停止。"
+    throw "Tracked files have local changes. Deployment stopped to avoid overwriting local code."
 }
 
 Write-Output "Fetching release branch..."
 Invoke-Git -Arguments @("fetch", "--no-tags", "origin", "release/lapi-query-hardening-20260729") | Out-Null
 $resolvedTarget = ((Invoke-Git -Arguments @("rev-parse", "$TargetRef^{commit}")).Output -join "").Trim().ToLowerInvariant()
 if ($resolvedTarget -ne $ExpectedCommit) {
-    throw "目标提交不匹配：expected=$ExpectedCommit resolved=$resolvedTarget"
+    throw "Release commit mismatch: expected=$ExpectedCommit resolved=$resolvedTarget"
 }
 
 $ancestorCheck = Invoke-Git -Arguments @("merge-base", "--is-ancestor", $RequiredAncestor, $ExpectedCommit) -AllowFailure
 if ($ancestorCheck.ExitCode -ne 0) {
-    throw "目标提交不包含必需生产祖先 $RequiredAncestor。"
+    throw "Release commit does not contain required production ancestor $RequiredAncestor."
 }
 
 $previousCommit = ((Invoke-Git -Arguments @("rev-parse", "HEAD")).Output -join "").Trim().ToLowerInvariant()
 $currentAncestorCheck = Invoke-Git -Arguments @("merge-base", "--is-ancestor", $previousCommit, $ExpectedCommit) -AllowFailure
 if ($currentAncestorCheck.ExitCode -ne 0) {
-    throw "当前本地提交 $previousCommit 不是目标发布的祖先。请先确认本地仓库来源。"
+    throw "Current local commit $previousCommit is not an ancestor of the release commit."
 }
 
 $previousBranchResult = Invoke-Git -Arguments @("symbolic-ref", "--short", "-q", "HEAD") -AllowFailure
@@ -216,7 +212,7 @@ New-Item -ItemType Directory -Path $script:BackupDirectory -Force | Out-Null
 Protect-BackupDirectory -Path $script:BackupDirectory
 $script:RecordPath = Join-Path $script:BackupDirectory "deployment-record.json"
 $rollbackToolBackup = Join-Path $script:BackupDirectory "Rollback-LapiQueryHardening.ps1"
-Export-PinnedRollbackTool -Commit $ExpectedCommit -Destination $rollbackToolBackup
+Copy-Item -LiteralPath $rollbackSource -Destination $rollbackToolBackup -Force
 
 $backupItems = New-Object 'System.Collections.Generic.List[object]'
 Add-BackupItem -RelativePath "ops\app_env.local.ps1" -Manifest $backupItems
@@ -224,8 +220,7 @@ Add-BackupItem -RelativePath "build-info.json" -Manifest $backupItems
 Add-BackupItem -RelativePath "lanzou_update_push_api_server\config.json" -Manifest $backupItems
 Get-ChildItem -LiteralPath (Join-Path $ProjectRoot "lanzou_update_push_api_server") -Filter "state*.json" -File -ErrorAction SilentlyContinue |
     ForEach-Object {
-        $relative = "lanzou_update_push_api_server\$($_.Name)"
-        Add-BackupItem -RelativePath $relative -Manifest $backupItems
+        Add-BackupItem -RelativePath "lanzou_update_push_api_server\$($_.Name)" -Manifest $backupItems
     }
 Add-BackupItem -RelativePath "data\upstream_snapshots" -Manifest $backupItems
 
@@ -272,7 +267,7 @@ try {
     if (-not $SkipDependencyInstall) {
         & $pythonExe -m pip install --disable-pip-version-check -r (Join-Path $ProjectRoot "requirements.txt")
         if ($LASTEXITCODE -ne 0) {
-            throw "依赖安装失败。"
+            throw "Dependency installation failed."
         }
     }
 
@@ -281,7 +276,7 @@ try {
     $generator = Join-Path $ProjectRoot "scripts\Generate-BuildInfo.ps1"
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $generator -Release "lapi-query-hardening-20260729"
     if ($LASTEXITCODE -ne 0) {
-        throw "build-info 生成失败。"
+        throw "build-info generation failed."
     }
 
     $record.status = "validated_before_start"
@@ -292,10 +287,9 @@ try {
     $record.status = "service_started"
     Write-DeploymentRecord -Record $record
 
-    $verificationScript = Join-Path $ProjectRoot "ops\Test-LapiQueryHardening.ps1"
     $verificationPath = Join-Path $script:BackupDirectory "verification-report.json"
     $verifyArgs = @(
-        "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $verificationScript,
+        "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $verificationSource,
         "-ProjectRoot", $ProjectRoot,
         "-BaseUrl", $BaseUrl,
         "-ExpectedCommit", $ExpectedCommit,
@@ -307,7 +301,7 @@ try {
     }
     & powershell.exe @verifyArgs
     if ($LASTEXITCODE -ne 0) {
-        throw "生产验收脚本失败。"
+        throw "Production verification failed."
     }
 
     $record.status = "completed"
@@ -322,7 +316,7 @@ try {
     Write-Output "============================================================"
 } catch {
     $message = $_.Exception.Message
-    Write-Warning "发布失败：$message"
+    Write-Warning "Deployment failed: $message"
     $record.status = "failed"
     $record.failure = [ordered]@{
         at = [DateTime]::UtcNow.ToString("o")
@@ -332,18 +326,14 @@ try {
     Write-DeploymentRecord -Record $record
 
     if ($deploymentStarted) {
-        Write-Warning "开始自动回滚到 $previousCommit"
-        $rollbackScript = Join-Path $ProjectRoot "ops\Rollback-LapiQueryHardening.ps1"
-        if (-not (Test-Path -LiteralPath $rollbackScript -PathType Leaf)) {
-            $rollbackScript = $rollbackToolBackup
-        }
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $rollbackScript `
+        Write-Warning "Starting automatic rollback to $previousCommit"
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $rollbackToolBackup `
             -ProjectRoot $ProjectRoot `
             -BackupDirectory $script:BackupDirectory `
             -ServiceName $ServiceName `
             -BaseUrl $BaseUrl
         if ($LASTEXITCODE -ne 0) {
-            throw "发布失败且自动回滚也失败。请保留备份目录：$script:BackupDirectory"
+            throw "Deployment failed and automatic rollback also failed. Keep backup directory: $script:BackupDirectory"
         }
     }
     throw
