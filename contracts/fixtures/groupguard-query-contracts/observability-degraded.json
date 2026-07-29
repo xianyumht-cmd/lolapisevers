@@ -17,11 +17,11 @@
       "circuit": {
         "state": "closed",
         "consecutive_failures": 1,
-        "open_remaining_seconds": 0.0,
+        "open_remaining_seconds": 0,
         "in_flight": false,
         "last_error_class": "read_timeout",
         "seconds_since_last_error": 12.5,
-        "seconds_since_last_success": 360.0
+        "seconds_since_last_success": 360
       },
       "snapshot": {
         "available": true,
@@ -41,11 +41,11 @@
       "circuit": {
         "state": "closed",
         "consecutive_failures": 0,
-        "open_remaining_seconds": 0.0,
+        "open_remaining_seconds": 0,
         "in_flight": false,
         "last_error_class": "",
         "seconds_since_last_error": null,
-        "seconds_since_last_success": 120.0
+        "seconds_since_last_success": 120
       },
       "snapshot": {
         "available": true,
@@ -69,8 +69,8 @@
           "in_flight_count": 0,
           "max_consecutive_failures": 3,
           "last_error_classes": ["read_timeout"],
-          "seconds_since_latest_success": 500.0,
-          "seconds_since_latest_error": 20.0
+          "seconds_since_latest_success": 500,
+          "seconds_since_latest_error": 20
         },
         "build_page": {
           "observed_sources": 2,
@@ -78,8 +78,8 @@
           "in_flight_count": 0,
           "max_consecutive_failures": 1,
           "last_error_classes": ["http_retryable"],
-          "seconds_since_latest_success": 450.0,
-          "seconds_since_latest_error": 30.0
+          "seconds_since_latest_success": 450,
+          "seconds_since_latest_error": 30
         }
       },
       "snapshots": {
