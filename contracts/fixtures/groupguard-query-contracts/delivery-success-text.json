@@ -1,0 +1,26 @@
+{
+  "protocol": "groupguard-query-delivery.v1",
+  "ok": true,
+  "feature": "lolban",
+  "request_id": "srv-text-001",
+  "client_request_id": "cli-text-001",
+  "delivery": {
+    "kind": "segments",
+    "segments": [
+      {
+        "type": "text",
+        "text": "账号封禁查询结果\nQQ号码：123456789\n账号状态：正常"
+      }
+    ]
+  },
+  "error": null,
+  "retry": {
+    "allowed": false,
+    "after_seconds": 0
+  },
+  "meta": {
+    "source": "live",
+    "account_status": "正常",
+    "stale": false
+  }
+}
