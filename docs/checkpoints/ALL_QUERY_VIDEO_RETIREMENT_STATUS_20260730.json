@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "schema": "lapi-all-query-video-retirement-status.v1",
+  "repository": "xianyumht-cmd/lolapisevers",
+  "status": "video_free_package_verified_waiting_for_windows_operator_deployment",
+  "runtime_commit": "f221b64649763eb8d325d87348fd2f42f48a6485",
+  "groupguard_runtime_commit": "8f37a02a7ac4fbe27dea7197b723d8d60a5b793e",
+  "groupguard_verified_head": "fb3a4eb7865f25ac13727961329a605f81cb51ca",
+  "removed": {
+    "query_aliases": ["video", "video_query", "我要看"],
+    "dynamic_provider": "video.info",
+    "service_file": "services/video_query_service.py"
+  },
+  "verification": {
+    "asserted_migration": "pass",
+    "full_python_tests": "pass",
+    "compileall": "pass",
+    "webui_generation": "pass",
+    "node_syntax": "pass",
+    "windows_powershell_parser": "pass",
+    "public_fallback_restored": false
+  },
+  "offline_deployment_package": {
+    "workflow_run_id": 30487749547,
+    "artifact_id": 8738379173,
+    "artifact_name": "loldata-video-free-offline-safe-deploy-f221b64649763eb8d325d87348fd2f42f48a6485",
+    "artifact_digest": "sha256:27fb4212e440b30265ddbc9772fd8decd29de77069610b2a34b60a272713c2d5",
+    "deployment_zip": "loldata-video-free-offline-safe-deploy-f221b6464976.zip",
+    "deployment_zip_sha256": "864cb567fb760e80b6e0ec6dfe745197b8b5c56ea860297e07b7c9c8766762c2",
+    "git_bundle_sha256": "27ac1baa493e7bc00b451b1fe1711ca82bf0f7c052d640e102ff48037b1576a1",
+    "expires_at": "2026-10-27T20:15:26Z"
+  },
+  "deployment_safety": {
+    "candidate_tests_before_service_stop": true,
+    "runtime_backup_required": true,
+    "remove_only_query_video_providers_json": true,
+    "preserve_risk_provider_config": true,
+    "preserve_custom_dynamic_provider_config": true,
+    "post_deploy_video_http_400_gate": true,
+    "automatic_full_rollback_on_post_deploy_failure": true
+  },
+  "revoked_release": {
+    "groupguard_commit": "029118346adaa9232aeceeb283f5d243a407dc95",
+    "artifact_id": 8732028955,
+    "status": "do_not_deploy"
+  },
+  "next_action": "Extract the verified deployment ZIP on the Windows API host, run run-deploy.cmd, and return the complete console output before any new GroupGuard dist is packaged.",
+  "pull_request": {
+    "number": 19,
+    "draft": true,
+    "merged": false
+  }
+}
