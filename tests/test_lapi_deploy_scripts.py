@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import tempfile
@@ -14,15 +15,50 @@ LAUNCH = ROOT / "ops" / "Launch-LapiQueryHardening.ps1"
 DEPLOY = ROOT / "ops" / "Deploy-LapiQueryHardening.ps1"
 ROLLBACK = ROOT / "ops" / "Rollback-LapiQueryHardening.ps1"
 VERIFY = ROOT / "ops" / "Test-LapiQueryHardening.ps1"
+RELEASE_SCRIPTS = (LAUNCH, DEPLOY, ROLLBACK, VERIFY)
 
 
 class LapiDeployScriptTests(unittest.TestCase):
-    def test_release_scripts_exist_and_are_utf8(self):
-        for path in (LAUNCH, DEPLOY, ROLLBACK, VERIFY):
+    def test_release_scripts_exist_are_utf8_and_ascii_safe(self):
+        for path in RELEASE_SCRIPTS:
             self.assertTrue(path.is_file(), path)
             text = path.read_text(encoding="utf-8")
             self.assertTrue(text.startswith("param("), path)
             self.assertNotIn("\ufeff", text)
+            self.assertTrue(text.isascii(), path)
+
+    def test_windows_powershell_51_parser_accepts_release_scripts(self):
+        if os.name != "nt":
+            self.skipTest("Windows PowerShell 5.1 is available only on Windows CI")
+        command = (
+            "$tokens=$null; $errors=$null; "
+            "[System.Management.Automation.Language.Parser]::ParseFile("
+            "$env:LAPI_SCRIPT_PATH,[ref]$tokens,[ref]$errors) | Out-Null; "
+            "if ($errors -and $errors.Count -gt 0) { "
+            "$errors | ForEach-Object { Write-Error $_.Message }; exit 1 }"
+        )
+        for path in RELEASE_SCRIPTS:
+            env = os.environ.copy()
+            env["LAPI_SCRIPT_PATH"] = str(path)
+            completed = subprocess.run(
+                [
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                    command,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+                env=env,
+            )
+            self.assertEqual(
+                completed.returncode,
+                0,
+                f"{path}\nSTDOUT:\n{completed.stdout}\nSTDERR:\n{completed.stderr}",
+            )
 
     def test_launcher_exports_raw_scripts_and_parses_before_execution(self):
         text = LAUNCH.read_text(encoding="utf-8")
@@ -35,7 +71,6 @@ class LapiDeployScriptTests(unittest.TestCase):
         self.assertIn("Release commit mismatch", text)
         self.assertNotIn("WriteAllLines", text)
         self.assertNotIn("git show", text.lower())
-        self.assertTrue(text.isascii())
 
     def test_git_archive_preserves_release_script_bytes(self):
         relative_paths = [
@@ -66,7 +101,7 @@ class LapiDeployScriptTests(unittest.TestCase):
                     archived = bundle.read(relative_path)
                     working_tree = (ROOT / relative_path).read_bytes()
                     self.assertEqual(archived, working_tree, relative_path)
-                    archived.decode("utf-8")
+                    self.assertTrue(archived.decode("utf-8").isascii())
 
     def test_deploy_is_commit_pinned_and_rejects_unsafe_workspace(self):
         text = DEPLOY.read_text(encoding="utf-8")
@@ -74,10 +109,13 @@ class LapiDeployScriptTests(unittest.TestCase):
         self.assertIn("merge-base", text)
         self.assertIn("--is-ancestor", text)
         self.assertIn("--untracked-files=no", text)
-        self.assertIn("checkout\", \"--detach", text)
+        self.assertIn('checkout", "--detach', text)
         self.assertNotIn("git reset --hard", text.lower())
         self.assertNotIn("git clean", text.lower())
         self.assertNotIn("pull --force", text.lower())
+        self.assertNotIn("WriteAllLines", text)
+        self.assertNotIn('("show",', text)
+        self.assertIn("$PSScriptRoot", text)
 
     def test_deploy_requires_backup_acl_tests_build_info_and_rollback(self):
         text = DEPLOY.read_text(encoding="utf-8")
@@ -115,17 +153,14 @@ class LapiDeployScriptTests(unittest.TestCase):
     def test_rollback_restores_exact_previous_commit_and_runtime_files(self):
         text = ROLLBACK.read_text(encoding="utf-8")
         self.assertIn("previous_commit", text)
-        self.assertIn("checkout\", \"--detach", text)
+        self.assertIn('checkout", "--detach', text)
         self.assertIn("Restore-BackupItems", text)
         self.assertIn("build-info mismatch", text)
         self.assertIn("Start-ReleaseService", text)
         self.assertNotIn("git clean", text.lower())
 
     def test_scripts_do_not_embed_runtime_credentials(self):
-        joined = "\n".join(
-            path.read_text(encoding="utf-8")
-            for path in (LAUNCH, DEPLOY, ROLLBACK, VERIFY)
-        )
+        joined = "\n".join(path.read_text(encoding="utf-8") for path in RELEASE_SCRIPTS)
         forbidden = (
             "authorization: bearer",
             "cookie:",
