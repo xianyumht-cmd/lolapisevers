@@ -29,6 +29,7 @@ from services.query_delivery import (
     success_envelope,
 )
 from services.shard_service import query_shard
+from services.video_query_service import format_video_text, query_video, video_meta
 
 
 router = APIRouter()
@@ -51,6 +52,9 @@ _FEATURE_ALIASES = {
     "hidden": "hidden",
     "hidden_query": "hidden",
     "查隐藏": "hidden",
+    "video": "video",
+    "video_query": "video",
+    "我要看": "video",
 }
 
 _IMAGE_FEATURES = {"shard", "aram", "battle"}
@@ -141,6 +145,8 @@ def _meta_for_feature(feature: str, payload: Mapping[str, Any], *, delivery_fall
         return battle_meta(payload, delivery_fallback=delivery_fallback)
     if feature == "hidden":
         return hidden_meta(payload, delivery_fallback=delivery_fallback)
+    if feature == "video":
+        return video_meta(payload)
     return safe_meta(payload, delivery_fallback=delivery_fallback)
 
 
@@ -164,7 +170,7 @@ async def groupguard_query(request: Request, body: Dict[str, Any]):
         )
 
     ctx = getattr(request.app.state, "ctx", None)
-    if feature in {"shard", "aram", "battle", "hidden"} and ctx is None:
+    if feature in {"shard", "aram", "battle", "hidden", "video"} and ctx is None:
         return _json_error(
             feature=feature,
             status_code=503,
@@ -197,7 +203,11 @@ async def groupguard_query(request: Request, body: Dict[str, Any]):
                 )
             )
 
-        if feature in {"battle", "hidden"}:
+        if feature == "video":
+            category = str(parameters.get("category") or "热门").strip() or "热门"
+            payload = await query_video(ctx, category)
+            text = format_video_text(payload)
+        elif feature in {"battle", "hidden"}:
             name = str(parameters.get("name") or parameters.get("player_id") or "").strip()
             region = str(parameters.get("region") or "").strip() or None
             if not name:
