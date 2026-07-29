@@ -1,0 +1,123 @@
+{
+  "schema_version": "query-observability.v1",
+  "generated_at": "2026-07-29T06:30:00+00:00",
+  "status": "degraded",
+  "summary": {
+    "live": 0,
+    "cache": 1,
+    "snapshot": 1,
+    "stale": 1,
+    "unavailable": 1
+  },
+  "sources": {
+    "shard_data": {
+      "name": "shard_data",
+      "mode": "stale",
+      "cache_active": false,
+      "circuit": {
+        "state": "closed",
+        "consecutive_failures": 1,
+        "open_remaining_seconds": 0.0,
+        "in_flight": false,
+        "last_error_class": "read_timeout",
+        "seconds_since_last_error": 12.5,
+        "seconds_since_last_success": 360.0
+      },
+      "snapshot": {
+        "available": true,
+        "status": "hit",
+        "captured_at": "2026-07-29T06:20:00+00:00",
+        "age_seconds": 600,
+        "max_age_seconds": 604800,
+        "last_success_at": "2026-07-29T06:20:00+00:00",
+        "last_error_at": "2026-07-29T06:29:47+00:00",
+        "last_error_class": "read_timeout"
+      }
+    },
+    "hero_catalog": {
+      "name": "hero_catalog",
+      "mode": "cache",
+      "cache_active": true,
+      "circuit": {
+        "state": "closed",
+        "consecutive_failures": 0,
+        "open_remaining_seconds": 0.0,
+        "in_flight": false,
+        "last_error_class": "",
+        "seconds_since_last_error": null,
+        "seconds_since_last_success": 120.0
+      },
+      "snapshot": {
+        "available": true,
+        "status": "hit",
+        "captured_at": "2026-07-29T06:28:00+00:00",
+        "age_seconds": 120,
+        "max_age_seconds": 604800,
+        "last_success_at": "2026-07-29T06:28:00+00:00",
+        "last_error_at": "",
+        "last_error_class": ""
+      }
+    },
+    "aram": {
+      "name": "aram",
+      "mode": "snapshot",
+      "cache_entries": 0,
+      "upstreams": {
+        "augment_page": {
+          "observed_sources": 2,
+          "circuit_open_count": 1,
+          "in_flight_count": 0,
+          "max_consecutive_failures": 3,
+          "last_error_classes": ["read_timeout"],
+          "seconds_since_latest_success": 500.0,
+          "seconds_since_latest_error": 20.0
+        },
+        "build_page": {
+          "observed_sources": 2,
+          "circuit_open_count": 0,
+          "in_flight_count": 0,
+          "max_consecutive_failures": 1,
+          "last_error_classes": ["http_retryable"],
+          "seconds_since_latest_success": 450.0,
+          "seconds_since_latest_error": 30.0
+        }
+      },
+      "snapshots": {
+        "observed_count": 2,
+        "available_count": 2,
+        "status_counts": {"hit": 2},
+        "newest_captured_at": "2026-07-29T06:25:00+00:00",
+        "newest_age_seconds": 300,
+        "oldest_age_seconds": 900,
+        "max_age_seconds": 86400,
+        "last_error_classes": ["read_timeout"],
+        "scan_truncated": false
+      }
+    },
+    "lolban": {
+      "name": "lolban",
+      "mode": "unavailable",
+      "configured": false,
+      "provider_count": 0,
+      "fresh_cache_entries": 0,
+      "stale_cache_entries": 0,
+      "last_success_at": "",
+      "last_error_at": "",
+      "last_error_class": "",
+      "configuration_error_code": "",
+      "configuration_error_class": "",
+      "persistent_snapshot": {
+        "enabled": true,
+        "status": "missing",
+        "restored_entries": 0,
+        "write_error_class": "",
+        "max_age_seconds": 86400
+      }
+    }
+  },
+  "caches": {
+    "shard_entries": 1,
+    "aram_payload_entries": 0,
+    "aram_image_entries": 0
+  }
+}
