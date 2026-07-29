@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
+import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 
@@ -33,6 +36,37 @@ class LapiDeployScriptTests(unittest.TestCase):
         self.assertNotIn("WriteAllLines", text)
         self.assertNotIn("git show", text.lower())
         self.assertTrue(text.isascii())
+
+    def test_git_archive_preserves_release_script_bytes(self):
+        relative_paths = [
+            "ops/Deploy-LapiQueryHardening.ps1",
+            "ops/Rollback-LapiQueryHardening.ps1",
+            "ops/Test-LapiQueryHardening.ps1",
+        ]
+        with tempfile.TemporaryDirectory() as temp:
+            archive = Path(temp) / "release-scripts.zip"
+            completed = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(ROOT),
+                    "archive",
+                    "--format=zip",
+                    f"--output={archive}",
+                    "HEAD",
+                    *relative_paths,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            with zipfile.ZipFile(archive, "r") as bundle:
+                for relative_path in relative_paths:
+                    archived = bundle.read(relative_path)
+                    working_tree = (ROOT / relative_path).read_bytes()
+                    self.assertEqual(archived, working_tree, relative_path)
+                    archived.decode("utf-8")
 
     def test_deploy_is_commit_pinned_and_rejects_unsafe_workspace(self):
         text = DEPLOY.read_text(encoding="utf-8")
