@@ -1,0 +1,36 @@
+{
+  "protocol": "groupguard-query-delivery.v1",
+  "ok": true,
+  "feature": "shard",
+  "request_id": "srv-image-001",
+  "client_request_id": "cli-image-001",
+  "delivery": {
+    "kind": "segments",
+    "segments": [
+      {
+        "type": "image",
+        "mime_type": "image/png",
+        "encoding": "base64",
+        "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2ZQAAAABJRU5ErkJggg==",
+        "filename": "shard-Kalista.png",
+        "bytes": 67,
+        "sha256": "fde87d42ca1ac3b1dc91de8791586218be7c5f978fab0ccc173ac7db02e02e72"
+      }
+    ]
+  },
+  "error": null,
+  "retry": {
+    "allowed": false,
+    "after_seconds": 0
+  },
+  "meta": {
+    "source": "snapshot",
+    "stale": true,
+    "snapshot_age_seconds": 321,
+    "hero": {
+      "alias": "Kalista",
+      "name": "卡莉丝塔",
+      "title": "复仇之矛"
+    }
+  }
+}
