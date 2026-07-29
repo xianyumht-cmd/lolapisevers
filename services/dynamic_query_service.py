@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
-from urllib.parse import urlencode, urlsplit, urlunsplit, parse_qsl
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import requests
 from fastapi import HTTPException
@@ -26,6 +26,8 @@ _COMMAND_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,95}$")
 _PARAMETER_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]{0,63}$")
 _TOKEN_RE = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)")
 _PATH_TOKEN_RE = re.compile(r"([^.[\]]+)|\[(\d+)\]")
+_TEMPLATE_RE = re.compile(r"\{([^{}]+)\}")
+_DOT_PATH_RE = re.compile(r"^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\[\d+\])*$")
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
 
@@ -39,6 +41,7 @@ class DynamicProviderDefinition:
     body: Dict[str, str]
     timeout_ms: int
     text_path: str
+    response_template: str
     fallback_text: str
     snapshot_seconds: int
     allow_private: bool
@@ -77,6 +80,29 @@ class DynamicProviderCatalog:
             result[key] = item
         return result
 
+    @staticmethod
+    def _validate_template(command_id: str, template: str) -> str:
+        value = str(template or "").strip()
+        if not value:
+            return ""
+        if len(value) > 2000:
+            raise ValueError(f"动态命令 {command_id} 响应模板过长")
+        matches = list(_TEMPLATE_RE.finditer(value))
+        if not matches:
+            raise ValueError(f"动态命令 {command_id} 响应模板缺少占位符")
+        for match in matches:
+            expression = str(match.group(1) or "").strip()
+            if not expression or len(expression) > 300 or "(" in expression or ")" in expression:
+                raise ValueError(f"动态命令 {command_id} 响应模板无效")
+            for choice in (item.strip() for item in expression.split("|")):
+                if not choice or "{" in choice or "}" in choice:
+                    raise ValueError(f"动态命令 {command_id} 响应模板无效")
+                if _DOT_PATH_RE.fullmatch(choice) and any(
+                    token in choice.split(".") for token in ("__proto__", "constructor", "prototype")
+                ):
+                    raise ValueError(f"动态命令 {command_id} 响应模板路径无效")
+        return value
+
     @classmethod
     def _definition(cls, value: Any) -> DynamicProviderDefinition:
         if not isinstance(value, Mapping):
@@ -93,11 +119,17 @@ class DynamicProviderCatalog:
         parts = urlsplit(url.replace("$sample", "sample"))
         if parts.scheme not in {"http", "https"} or not parts.netloc:
             raise ValueError(f"动态命令 {command_id} Provider URL 无效")
-        timeout_ms = max(1000, min(int(provider.get("timeout_ms") or provider.get("timeoutMs") or 5000), 15000))
+        timeout_ms = max(
+            1000,
+            min(int(provider.get("timeout_ms") or provider.get("timeoutMs") or 5000), 15000),
+        )
         snapshot_seconds = max(0, min(int(value.get("snapshot_seconds") or 3600), 604800))
         text_path = str(response.get("text_path") or response.get("textPath") or "").strip()
-        if len(text_path) > 256:
-            raise ValueError(f"动态命令 {command_id} 响应路径过长")
+        if len(text_path) > 256 or (text_path and not _DOT_PATH_RE.fullmatch(text_path)):
+            raise ValueError(f"动态命令 {command_id} 响应路径无效")
+        response_template = cls._validate_template(command_id, str(response.get("template") or ""))
+        if text_path and response_template:
+            raise ValueError(f"动态命令 {command_id} 不能同时配置响应路径和模板")
         return DynamicProviderDefinition(
             command_id=command_id,
             method=method,
@@ -107,7 +139,10 @@ class DynamicProviderCatalog:
             body=cls._string_map(provider.get("body"), "body"),
             timeout_ms=timeout_ms,
             text_path=text_path,
-            fallback_text=str(value.get("fallback_text") or "动态查询暂时不可用，请稍后再试")[:500],
+            response_template=response_template,
+            fallback_text=str(
+                value.get("fallback_text") or "动态查询暂时不可用，请稍后再试"
+            )[:500],
             snapshot_seconds=snapshot_seconds,
             allow_private=bool(provider.get("allow_private")),
         )
@@ -174,8 +209,7 @@ def normalize_dynamic_parameters(value: Mapping[str, Any]) -> Dict[str, str]:
 
 def _replace_tokens(value: str, parameters: Mapping[str, str]) -> str:
     def replace(match: re.Match[str]) -> str:
-        key = match.group(1)
-        return str(parameters.get(key) or "")
+        return str(parameters.get(match.group(1)) or "")
 
     return _TOKEN_RE.sub(replace, str(value or ""))
 
@@ -216,7 +250,14 @@ def _validate_destination(url: str, allow_private: bool) -> None:
     if host in {"localhost", "localhost.localdomain"} or host.endswith(".local"):
         raise HTTPException(status_code=503, detail="动态 Provider 禁止访问本机或私网")
     try:
-        addresses = {item[4][0] for item in socket.getaddrinfo(host, parts.port or (443 if parts.scheme == "https" else 80), type=socket.SOCK_STREAM)}
+        addresses = {
+            item[4][0]
+            for item in socket.getaddrinfo(
+                host,
+                parts.port or (443 if parts.scheme == "https" else 80),
+                type=socket.SOCK_STREAM,
+            )
+        }
     except OSError as exc:
         raise HTTPException(status_code=503, detail="动态 Provider 域名解析失败") from exc
     if not addresses or any(_blocked_address(address) for address in addresses):
@@ -254,6 +295,21 @@ def _normalize_result(value: Any) -> str:
         return str(value).strip()
 
 
+def _render_template(template: str, payload: Any) -> str:
+    def replace(match: re.Match[str]) -> str:
+        choices = [item.strip() for item in str(match.group(1) or "").split("|") if item.strip()]
+        for choice in choices:
+            if _DOT_PATH_RE.fullmatch(choice):
+                normalized = _normalize_result(_extract_path(payload, choice))
+                if normalized:
+                    return normalized
+            else:
+                return choice
+        return ""
+
+    return _TEMPLATE_RE.sub(replace, template).strip()
+
+
 def _snapshot_source(command_id: str, parameters: Mapping[str, str]) -> str:
     canonical = json.dumps(parameters, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256(f"{command_id}\n{canonical}".encode("utf-8")).hexdigest()[:24]
@@ -261,7 +317,10 @@ def _snapshot_source(command_id: str, parameters: Mapping[str, str]) -> str:
     return f"dynamic.{safe_id}.{digest}"
 
 
-def _execute_provider(definition: DynamicProviderDefinition, parameters: Mapping[str, str]) -> str:
+def _execute_provider(
+    definition: DynamicProviderDefinition,
+    parameters: Mapping[str, str],
+) -> str:
     url = _build_url(definition, parameters)
     _validate_destination(url, definition.allow_private)
     headers = _replace_map(definition.headers, parameters)
@@ -290,10 +349,16 @@ def _execute_provider(definition: DynamicProviderDefinition, parameters: Mapping
             except ValueError:
                 decoded = raw_text
                 is_json = False
-            if is_json and not definition.text_path:
-                raise RuntimeError("provider_text_path_required")
-            extracted = _extract_path(decoded, definition.text_path) if is_json else decoded
-            result = _normalize_result(extracted)
+            if is_json:
+                if definition.response_template:
+                    result = _render_template(definition.response_template, decoded)
+                elif definition.text_path:
+                    result = _normalize_result(_extract_path(decoded, definition.text_path))
+                else:
+                    raise RuntimeError("provider_response_selector_required")
+            else:
+                result = raw_text
+            result = str(result or "").strip()
             if not result:
                 raise RuntimeError("provider_empty_response")
             return result[:20000]
@@ -308,7 +373,11 @@ def _execute_provider(definition: DynamicProviderDefinition, parameters: Mapping
     raise RuntimeError(last_error or "provider_unavailable")
 
 
-async def query_dynamic(ctx: Any, command_id: str, raw_parameters: Mapping[str, Any]) -> Dict[str, Any]:
+async def query_dynamic(
+    ctx: Any,
+    command_id: str,
+    raw_parameters: Mapping[str, Any],
+) -> Dict[str, Any]:
     normalized_id = str(command_id or "").strip()
     if not _COMMAND_ID_RE.fullmatch(normalized_id):
         raise HTTPException(status_code=400, detail="动态命令 id 无效")
@@ -335,7 +404,10 @@ async def query_dynamic(ctx: Any, command_id: str, raw_parameters: Mapping[str, 
         raise
     except Exception:
         if definition.snapshot_seconds > 0:
-            snapshot = ctx.upstream_snapshot_store.load(source_id, max_age_seconds=definition.snapshot_seconds)
+            snapshot = ctx.upstream_snapshot_store.load(
+                source_id,
+                max_age_seconds=definition.snapshot_seconds,
+            )
             if snapshot.ok and isinstance(snapshot.payload, Mapping):
                 text = str(snapshot.payload.get("text") or "").strip()
                 if text:
