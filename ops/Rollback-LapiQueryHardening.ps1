@@ -159,11 +159,12 @@ if ($reported -ne $previousCommit) {
     throw "Rollback build-info mismatch: expected=$previousCommit actual=$reported"
 }
 
-$record.rollback = [ordered]@{
+$rollbackResult = [ordered]@{
     status = "completed"
     completed_at = [DateTime]::UtcNow.ToString("o")
     restored_commit = $previousCommit
 }
+$record | Add-Member -NotePropertyName rollback -NotePropertyValue $rollbackResult -Force
 [System.IO.File]::WriteAllText(
     $recordPath,
     (($record | ConvertTo-Json -Depth 12) + [Environment]::NewLine),
