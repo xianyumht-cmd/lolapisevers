@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from routers.groupguard_delivery import groupguard_query, groupguard_report
-from services.contact_risk_service import ContactRiskStore
+from services.contact_risk_store import ContactRiskStore
 from services.query_delivery import DELIVERY_PROTOCOL
 
 
