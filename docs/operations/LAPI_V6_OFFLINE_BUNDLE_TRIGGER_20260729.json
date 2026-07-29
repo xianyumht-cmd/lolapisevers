@@ -1,0 +1,5 @@
+{
+  "purpose": "trigger_offline_bundle_workflow",
+  "target_commit": "8de85a855b8338c3a9a69cbb2a937cd0a6ef8b82",
+  "merge_allowed": false
+}
