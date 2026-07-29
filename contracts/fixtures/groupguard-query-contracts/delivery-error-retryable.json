@@ -1,0 +1,26 @@
+{
+  "protocol": "groupguard-query-delivery.v1",
+  "ok": false,
+  "feature": "shard",
+  "request_id": "srv-error-001",
+  "client_request_id": "cli-error-001",
+  "delivery": {
+    "kind": "segments",
+    "segments": [
+      {
+        "type": "text",
+        "text": "查询服务暂不可用，请稍后再试"
+      }
+    ]
+  },
+  "error": {
+    "code": "temporarily_unavailable",
+    "user_message": "查询服务暂不可用，请稍后再试",
+    "retryable": true
+  },
+  "retry": {
+    "allowed": true,
+    "after_seconds": 30
+  },
+  "meta": {}
+}
