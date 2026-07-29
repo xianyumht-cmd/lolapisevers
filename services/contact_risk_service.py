@@ -5,23 +5,24 @@ import hashlib
 import json
 import os
 import re
-import sqlite3
-import threading
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 from urllib.parse import quote, urlsplit
 
 from fastapi import HTTPException
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "contact_risk.db"
 _VALID_QQ = re.compile(r"^\d{5,13}$")
 _VALID_WECHAT = re.compile(r"^[A-Za-z][A-Za-z0-9._-]{2,63}$")
 _NO_RECORD_PATTERNS = re.compile(r"未发现|未查询到|无记录|暂无记录|not\s*found|no\s*record", re.I)
 _RISK_PATTERNS = re.compile(r"骗子|诈骗|风险|黑名单|举报|scam|fraud|blacklist", re.I)
+
+
+@dataclass(frozen=True)
+class ProviderTemplate:
+    key: str
+    url: str
 
 
 def normalize_category(value: Any) -> str:
@@ -48,234 +49,6 @@ def normalize_evidence(value: Any, limit: int = 500) -> str:
     if not text:
         raise HTTPException(status_code=400, detail="请提供举报说明")
     return text[: max(50, min(int(limit), 5000))]
-
-
-def _json_array(value: Any) -> List[str]:
-    if isinstance(value, list):
-        return [str(item or "").strip() for item in value if str(item or "").strip()]
-    try:
-        parsed = json.loads(str(value or "[]"))
-    except Exception:
-        return []
-    return _json_array(parsed)
-
-
-@dataclass(frozen=True)
-class ProviderTemplate:
-    key: str
-    url: str
-
-
-class ContactRiskStore:
-    def __init__(self, path: Optional[Path] = None) -> None:
-        configured = str(os.getenv("CONTACT_RISK_DB_PATH") or "").strip()
-        self.path = Path(path or configured or DEFAULT_DB_PATH).expanduser().resolve()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.RLock()
-        self._init_schema()
-
-    def _connection(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(str(self.path), timeout=10.0)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA journal_mode=WAL")
-        connection.execute("PRAGMA synchronous=NORMAL")
-        connection.execute("PRAGMA foreign_keys=ON")
-        return connection
-
-    def _init_schema(self) -> None:
-        with self._lock, self._connection() as connection:
-            connection.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS contact_risk_records (
-                    category TEXT NOT NULL,
-                    identifier_type TEXT NOT NULL,
-                    identifier_value TEXT NOT NULL,
-                    report_count INTEGER NOT NULL DEFAULT 0,
-                    last_report_content TEXT NOT NULL DEFAULT '',
-                    recent_reports_json TEXT NOT NULL DEFAULT '[]',
-                    sources_json TEXT NOT NULL DEFAULT '[]',
-                    first_reported_at INTEGER NOT NULL DEFAULT 0,
-                    last_reported_at INTEGER NOT NULL DEFAULT 0,
-                    last_checked_at INTEGER NOT NULL DEFAULT 0,
-                    updated_at INTEGER NOT NULL DEFAULT 0,
-                    PRIMARY KEY (category, identifier_type, identifier_value)
-                );
-                CREATE TABLE IF NOT EXISTS contact_risk_report_events (
-                    request_id TEXT PRIMARY KEY,
-                    category TEXT NOT NULL,
-                    identifier_type TEXT NOT NULL,
-                    identifier_value TEXT NOT NULL,
-                    content_sha256 TEXT NOT NULL,
-                    source TEXT NOT NULL DEFAULT '',
-                    actor_id TEXT NOT NULL DEFAULT '',
-                    group_id TEXT NOT NULL DEFAULT '',
-                    created_at INTEGER NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_contact_risk_updated
-                    ON contact_risk_records(category, updated_at DESC);
-                CREATE INDEX IF NOT EXISTS idx_contact_risk_identifier
-                    ON contact_risk_records(identifier_type, identifier_value);
-                CREATE INDEX IF NOT EXISTS idx_contact_risk_event_created
-                    ON contact_risk_report_events(created_at DESC);
-                """
-            )
-
-    @staticmethod
-    def _record(row: Optional[sqlite3.Row]) -> Optional[Dict[str, Any]]:
-        if row is None:
-            return None
-        return {
-            "category": str(row["category"]),
-            "identifier_type": str(row["identifier_type"]),
-            "identifier_value": str(row["identifier_value"]),
-            "report_count": int(row["report_count"] or 0),
-            "last_report_content": str(row["last_report_content"] or ""),
-            "recent_reports": _json_array(row["recent_reports_json"])[:10],
-            "sources": _json_array(row["sources_json"])[:20],
-            "first_reported_at": int(row["first_reported_at"] or 0),
-            "last_reported_at": int(row["last_reported_at"] or 0),
-            "last_checked_at": int(row["last_checked_at"] or 0),
-            "updated_at": int(row["updated_at"] or 0),
-        }
-
-    def get(self, category: str, identifier_type: str, identifier_value: str, *, touch: bool = True) -> Optional[Dict[str, Any]]:
-        now = int(time.time() * 1000)
-        with self._lock, self._connection() as connection:
-            row = connection.execute(
-                """SELECT category, identifier_type, identifier_value, report_count,
-                    last_report_content, recent_reports_json, sources_json,
-                    first_reported_at, last_reported_at, last_checked_at, updated_at
-                    FROM contact_risk_records
-                    WHERE category=? AND identifier_type=? AND identifier_value=?""",
-                (category, identifier_type, identifier_value),
-            ).fetchone()
-            if row is not None and touch:
-                connection.execute(
-                    """UPDATE contact_risk_records SET last_checked_at=?, updated_at=?
-                    WHERE category=? AND identifier_type=? AND identifier_value=?""",
-                    (now, now, category, identifier_type, identifier_value),
-                )
-            record = self._record(row)
-            if record is not None and touch:
-                record["last_checked_at"] = now
-                record["updated_at"] = now
-            return record
-
-    def report(
-        self,
-        *,
-        request_id: str,
-        category: str,
-        identifier_type: str,
-        identifier_value: str,
-        content: str,
-        source: str,
-        actor_id: str = "",
-        group_id: str = "",
-    ) -> Tuple[Dict[str, Any], bool]:
-        normalized_request_id = str(request_id or "").strip()[:128]
-        if not normalized_request_id:
-            raise HTTPException(status_code=400, detail="举报请求缺少 request_id")
-        now = int(time.time() * 1000)
-        content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
-        safe_source = str(source or "client").strip()[:64] or "client"
-        with self._lock, self._connection() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            try:
-                existing_event = connection.execute(
-                    "SELECT request_id FROM contact_risk_report_events WHERE request_id=?",
-                    (normalized_request_id,),
-                ).fetchone()
-                if existing_event is not None:
-                    row = connection.execute(
-                        """SELECT category, identifier_type, identifier_value, report_count,
-                            last_report_content, recent_reports_json, sources_json,
-                            first_reported_at, last_reported_at, last_checked_at, updated_at
-                            FROM contact_risk_records
-                            WHERE category=? AND identifier_type=? AND identifier_value=?""",
-                        (category, identifier_type, identifier_value),
-                    ).fetchone()
-                    connection.commit()
-                    record = self._record(row)
-                    if record is None:
-                        raise HTTPException(status_code=409, detail="举报幂等记录与风险记录不一致")
-                    return record, True
-
-                current_row = connection.execute(
-                    """SELECT category, identifier_type, identifier_value, report_count,
-                        last_report_content, recent_reports_json, sources_json,
-                        first_reported_at, last_reported_at, last_checked_at, updated_at
-                        FROM contact_risk_records
-                        WHERE category=? AND identifier_type=? AND identifier_value=?""",
-                    (category, identifier_type, identifier_value),
-                ).fetchone()
-                current = self._record(current_row) or {}
-                reports = [content] + [item for item in current.get("recent_reports", []) if item != content]
-                sources = [safe_source] + [item for item in current.get("sources", []) if item != safe_source]
-                next_record = {
-                    "category": category,
-                    "identifier_type": identifier_type,
-                    "identifier_value": identifier_value,
-                    "report_count": int(current.get("report_count") or 0) + 1,
-                    "last_report_content": content,
-                    "recent_reports": reports[:10],
-                    "sources": sources[:20],
-                    "first_reported_at": int(current.get("first_reported_at") or now),
-                    "last_reported_at": now,
-                    "last_checked_at": int(current.get("last_checked_at") or 0),
-                    "updated_at": now,
-                }
-                connection.execute(
-                    """INSERT INTO contact_risk_records(
-                        category, identifier_type, identifier_value, report_count,
-                        last_report_content, recent_reports_json, sources_json,
-                        first_reported_at, last_reported_at, last_checked_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(category, identifier_type, identifier_value) DO UPDATE SET
-                        report_count=excluded.report_count,
-                        last_report_content=excluded.last_report_content,
-                        recent_reports_json=excluded.recent_reports_json,
-                        sources_json=excluded.sources_json,
-                        first_reported_at=excluded.first_reported_at,
-                        last_reported_at=excluded.last_reported_at,
-                        last_checked_at=excluded.last_checked_at,
-                        updated_at=excluded.updated_at""",
-                    (
-                        category,
-                        identifier_type,
-                        identifier_value,
-                        next_record["report_count"],
-                        content,
-                        json.dumps(next_record["recent_reports"], ensure_ascii=False),
-                        json.dumps(next_record["sources"], ensure_ascii=False),
-                        next_record["first_reported_at"],
-                        now,
-                        next_record["last_checked_at"],
-                        now,
-                    ),
-                )
-                connection.execute(
-                    """INSERT INTO contact_risk_report_events(
-                        request_id, category, identifier_type, identifier_value,
-                        content_sha256, source, actor_id, group_id, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        normalized_request_id,
-                        category,
-                        identifier_type,
-                        identifier_value,
-                        content_hash,
-                        safe_source,
-                        str(actor_id or "")[:64],
-                        str(group_id or "")[:64],
-                        now,
-                    ),
-                )
-                connection.commit()
-                return next_record, False
-            except Exception:
-                connection.rollback()
-                raise
 
 
 def _provider_env(category: str) -> str:
@@ -339,7 +112,8 @@ def build_provider_url(template: str, identifier_type: str, identifier_value: st
         changed = True
     if not changed:
         separator = "&" if "?" in result else "?"
-        result = f"{result}{separator}{'qq' if identifier_type == 'qq' else 'wechat'}={encoded}&type={identifier_type}"
+        parameter = "qq" if identifier_type == "qq" else "wechat"
+        result = f"{result}{separator}{parameter}={encoded}&type={identifier_type}"
     return result
 
 
@@ -348,7 +122,7 @@ def _first_text(data: Any) -> str:
         return data.strip()[:500]
     if not isinstance(data, Mapping):
         return ""
-    for key in ("message", "msg", "detail", "content", "reason", "result"):
+    for key in ("message", "msg", "detail", "content", "reason", "result", "error"):
         value = data.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()[:500]
@@ -356,7 +130,52 @@ def _first_text(data: Any) -> str:
     return _first_text(nested) if nested is not data else ""
 
 
-def _provider_hit(data: Any, text: str) -> Optional[bool]:
+def _report_texts(data: Any) -> List[str]:
+    if not isinstance(data, Mapping):
+        return []
+    nested = data.get("data") if isinstance(data.get("data"), Mapping) else {}
+    buckets: List[Any] = []
+    for container in (data, nested):
+        for key in ("reports", "anonymous_reports"):
+            value = container.get(key)
+            if isinstance(value, list):
+                buckets.extend(value)
+    texts: List[str] = []
+    for item in buckets:
+        if isinstance(item, str):
+            text = item
+        elif isinstance(item, Mapping):
+            text = str(
+                item.get("report_content")
+                or item.get("content")
+                or item.get("message")
+                or item.get("desc")
+                or item.get("description")
+                or ""
+            )
+        else:
+            text = ""
+        normalized = re.sub(r"\s+", " ", text).strip()[:500]
+        if normalized and normalized not in texts:
+            texts.append(normalized)
+    return texts[:10]
+
+
+def _provider_count(data: Any, reports: List[str]) -> int:
+    if not isinstance(data, Mapping):
+        return len(reports)
+    nested = data.get("data") if isinstance(data.get("data"), Mapping) else {}
+    for value in (data.get("count"), nested.get("count")):
+        try:
+            count = int(value)
+        except (TypeError, ValueError):
+            continue
+        if count >= 0:
+            return count
+    return len(reports)
+
+
+def _provider_hit(data: Any, text: str, reports: List[str], count: int) -> Optional[bool]:
     if isinstance(data, Mapping):
         for key in ("hit", "found", "exists", "is_scammer", "scammer", "risk", "blacklisted"):
             value = data.get(key)
@@ -364,11 +183,16 @@ def _provider_hit(data: Any, text: str) -> Optional[bool]:
                 return value
             if isinstance(value, (int, float)) and value in {0, 1}:
                 return bool(value)
+        success = data.get("success")
+        if success is True and (count > 0 or reports):
+            return True
         nested = data.get("data")
         if isinstance(nested, Mapping):
-            nested_hit = _provider_hit(nested, text)
+            nested_hit = _provider_hit(nested, text, reports, count)
             if nested_hit is not None:
                 return nested_hit
+    if reports or count > 0:
+        return True
     if _NO_RECORD_PATTERNS.search(text):
         return False
     if _RISK_PATTERNS.search(text):
@@ -376,7 +200,12 @@ def _provider_hit(data: Any, text: str) -> Optional[bool]:
     return None
 
 
-async def _query_provider(ctx: Any, template: ProviderTemplate, identifier_type: str, identifier_value: str) -> Dict[str, Any]:
+async def _query_provider(
+    ctx: Any,
+    template: ProviderTemplate,
+    identifier_type: str,
+    identifier_value: str,
+) -> Dict[str, Any]:
     url = build_provider_url(template.url, identifier_type, identifier_value)
     source_id = "risk_provider_" + hashlib.sha256(template.key.encode("utf-8")).hexdigest()[:16]
     response = await asyncio.to_thread(
@@ -389,22 +218,38 @@ async def _query_provider(ctx: Any, template: ProviderTemplate, identifier_type:
         singleflight=True,
     )
     if not response.ok:
-        return {"provider": template.key, "status": "unavailable", "hit": None, "message": ""}
+        return {
+            "provider": template.key,
+            "status": "unavailable",
+            "hit": None,
+            "count": 0,
+            "message": "",
+            "reports": [],
+        }
     raw = str(response.text or "").strip()
     try:
         data: Any = json.loads(raw) if raw else {}
     except json.JSONDecodeError:
         data = raw
+    reports = _report_texts(data)
+    count = _provider_count(data, reports)
     message = _first_text(data) or raw[:500]
     return {
         "provider": template.key,
         "status": "ok",
-        "hit": _provider_hit(data, message),
+        "hit": _provider_hit(data, message, reports, count),
+        "count": count,
         "message": message,
+        "reports": reports,
     }
 
 
-async def query_contact_risk(ctx: Any, category: str, identifier_type: str, identifier_value: str) -> Dict[str, Any]:
+async def query_contact_risk(
+    ctx: Any,
+    category: str,
+    identifier_type: str,
+    identifier_value: str,
+) -> Dict[str, Any]:
     normalized_category = normalize_category(category)
     normalized_type = normalize_identifier_type(identifier_type)
     normalized_value = normalize_identifier(normalized_type, identifier_value)
@@ -415,20 +260,28 @@ async def query_contact_risk(ctx: Any, category: str, identifier_type: str, iden
         normalized_value,
     )
     templates = load_provider_templates(normalized_category)
-    providers = await asyncio.gather(
-        *[_query_provider(ctx, template, normalized_type, normalized_value) for template in templates]
-    ) if templates else []
+    providers = (
+        await asyncio.gather(
+            *[
+                _query_provider(ctx, template, normalized_type, normalized_value)
+                for template in templates
+            ]
+        )
+        if templates
+        else []
+    )
+    successful = [item for item in providers if item.get("status") == "ok"]
     local_hit = bool(local and int(local.get("report_count") or 0) > 0)
-    provider_hit = any(item.get("hit") is True for item in providers)
-    provider_clear = bool(providers) and all(item.get("hit") is False for item in providers if item.get("status") == "ok")
+    provider_hit = any(item.get("hit") is True for item in successful)
+    provider_clear = bool(successful) and all(item.get("hit") is False for item in successful)
     if local_hit or provider_hit:
         status = "reported"
-    elif provider_clear:
-        status = "no_record"
-    elif providers and all(item.get("status") != "ok" for item in providers):
+    elif providers and not successful:
         status = "provider_unavailable"
-    else:
+    elif provider_clear or not providers:
         status = "no_record"
+    else:
+        status = "unknown"
     return {
         "category": normalized_category,
         "identifier_type": normalized_type,
@@ -489,6 +342,8 @@ def format_contact_risk_text(payload: Mapping[str, Any]) -> str:
         lines.append("结果：发现已收录或外部风险记录")
     elif status == "provider_unavailable":
         lines.append("结果：本地未收录；外部查询暂不可用")
+    elif status == "unknown":
+        lines.append("结果：本地未收录；外部结果状态不明确")
     else:
         lines.append("结果：暂未发现已收录风险记录")
     local = payload.get("local") if isinstance(payload.get("local"), Mapping) else None
@@ -504,8 +359,15 @@ def format_contact_risk_text(payload: Mapping[str, Any]) -> str:
         lines.append("外部来源：")
         for item in visible[:5]:
             state = "命中" if item.get("hit") is True else "未命中" if item.get("hit") is False else "状态不明"
+            count = int(item.get("count") or 0)
             message = str(item.get("message") or "").strip()
-            lines.append(f"- {item.get('provider') or 'provider'}：{state}{('；' + message[:200]) if message else ''}")
+            suffix = f"，记录 {count} 条" if count > 0 else ""
+            if message:
+                suffix += f"；{message[:200]}"
+            lines.append(f"- {item.get('provider') or 'provider'}：{state}{suffix}")
+            reports = item.get("reports") if isinstance(item.get("reports"), list) else []
+            for report in reports[:3]:
+                lines.append(f"  · {str(report)[:200]}")
     lines.append("")
     lines.append("说明：未发现记录不等于绝对安全，请结合实际交易证据判断。")
     return "\n".join(lines).strip()
