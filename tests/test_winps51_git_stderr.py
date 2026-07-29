@@ -21,7 +21,7 @@ def _ps_quote(path: Path) -> str:
 
 @unittest.skipUnless(os.name == "nt", "Windows PowerShell 5.1 regression test")
 class WindowsPowerShellGitStderrTests(unittest.TestCase):
-    def test_successful_native_stderr_does_not_abort_release(self):
+    def test_process_wrapper_and_generic_manifest_are_winps51_safe(self):
         with tempfile.TemporaryDirectory() as temp_value:
             temp = Path(temp_value)
             deploy_copy = temp / "Deploy.ps1"
@@ -29,25 +29,11 @@ class WindowsPowerShellGitStderrTests(unittest.TestCase):
             shutil.copyfile(DEPLOY, deploy_copy)
             shutil.copyfile(ROLLBACK, rollback_copy)
 
-            fake_bin = temp / "bin"
-            fake_bin.mkdir()
-            (fake_bin / "git.cmd").write_text(
-                textwrap.dedent(
-                    r"""
-                    @echo off
-                    echo simulated git progress 1>&2
-                    for %%A in (%*) do if "%%~A"=="fail" exit /b 7
-                    exit /b 0
-                    """
-                ).lstrip(),
-                encoding="ascii",
-                newline="\r\n",
-            )
-
+            fake_git = temp / "fake-git.exe"
             test_script = temp / "test.ps1"
             test_script.write_text(
                 textwrap.dedent(
-                    f"""
+                    f'''
                     $ErrorActionPreference = "Stop"
                     Set-StrictMode -Version 2.0
 
@@ -74,20 +60,46 @@ class WindowsPowerShellGitStderrTests(unittest.TestCase):
                         return $functionAst.Extent.Text
                     }}
 
-                    Invoke-Expression (Get-NamedFunctionText -Path '{_ps_quote(LAUNCHER)}' -Name 'Patch-WindowsPowerShellGitStderr')
-                    Patch-WindowsPowerShellGitStderr -Path '{_ps_quote(deploy_copy)}' -Kind 'deploy'
-                    Patch-WindowsPowerShellGitStderr -Path '{_ps_quote(rollback_copy)}' -Kind 'rollback'
+                    Invoke-Expression (Get-NamedFunctionText -Path '{_ps_quote(LAUNCHER)}' -Name 'Patch-WindowsPowerShellCompatibility')
+                    Patch-WindowsPowerShellCompatibility -Path '{_ps_quote(deploy_copy)}' -Kind 'deploy'
+                    Patch-WindowsPowerShellCompatibility -Path '{_ps_quote(rollback_copy)}' -Kind 'rollback'
 
-                    $env:PATH = '{_ps_quote(fake_bin)};' + $env:PATH
+                    $patchedDeploy = [System.IO.File]::ReadAllText('{_ps_quote(deploy_copy)}', [System.Text.Encoding]::ASCII)
+                    if ($patchedDeploy.Contains('backup_items = @($backupItems)')) {{
+                        throw 'generic list array subexpression was not removed'
+                    }}
+                    if (-not $patchedDeploy.Contains('backup_items = $backupItems.ToArray()')) {{
+                        throw 'safe generic list conversion is missing'
+                    }}
+
+                    $source = @"
+                    using System;
+                    public static class FakeGit {{
+                        public static int Main(string[] args) {{
+                            Console.Out.WriteLine("simulated stdout");
+                            Console.Error.WriteLine("simulated git progress");
+                            foreach (string arg in args) {{
+                                if (arg == "fail") return 7;
+                            }}
+                            return 0;
+                        }}
+                    }}
+                    "@
+                    Add-Type -TypeDefinition $source -Language CSharp -OutputAssembly '{_ps_quote(fake_git)}' -OutputType ConsoleApplication
+                    $env:LAPI_GIT_EXE = '{_ps_quote(fake_git)}'
                     $ProjectRoot = '{_ps_quote(temp)}'
 
+                    Invoke-Expression (Get-NamedFunctionText -Path '{_ps_quote(deploy_copy)}' -Name 'Resolve-GitExecutable')
                     Invoke-Expression (Get-NamedFunctionText -Path '{_ps_quote(deploy_copy)}' -Name 'Invoke-Git')
                     $success = Invoke-Git -Arguments @('fetch')
                     if ($success.ExitCode -ne 0) {{
-                        throw 'successful stderr command returned nonzero'
+                        throw 'successful command returned nonzero'
                     }}
-                    if (($success.Output -join "`n") -notmatch 'simulated git progress') {{
-                        throw 'stderr progress was not captured'
+                    if ($success.Output -notmatch 'simulated stdout') {{
+                        throw 'stdout was not captured as text'
+                    }}
+                    if ($success.Error -notmatch 'simulated git progress') {{
+                        throw 'stderr was not captured as text'
                     }}
 
                     $allowedFailure = Invoke-Git -Arguments @('fail') -AllowFailure
@@ -102,17 +114,23 @@ class WindowsPowerShellGitStderrTests(unittest.TestCase):
                         $didThrow = $true
                     }}
                     if (-not $didThrow) {{
-                        throw 'nonzero git command did not throw'
+                        throw 'nonzero Git command did not throw'
                     }}
 
                     Remove-Item Function:\Invoke-Git -Force
+                    Remove-Item Function:\Resolve-GitExecutable -Force
+                    Invoke-Expression (Get-NamedFunctionText -Path '{_ps_quote(rollback_copy)}' -Name 'Resolve-GitExecutable')
                     Invoke-Expression (Get-NamedFunctionText -Path '{_ps_quote(rollback_copy)}' -Name 'Invoke-Git')
-                    $rollbackOutput = Invoke-Git -Arguments @('checkout')
-                    if (($rollbackOutput -join "`n") -notmatch 'simulated git progress') {{
-                        throw 'rollback wrapper did not tolerate stderr progress'
+                    $rollbackResult = Invoke-Git -Arguments @('checkout')
+                    if ($rollbackResult.ExitCode -ne 0) {{
+                        throw 'rollback wrapper returned nonzero'
                     }}
-                    "winps51-native-stderr-pass"
-                    """
+                    if ($rollbackResult.Error -notmatch 'simulated git progress') {{
+                        throw 'rollback stderr was not captured'
+                    }}
+
+                    "winps51-process-wrapper-pass"
+                    '''
                 ),
                 encoding="ascii",
                 newline="\r\n",
@@ -136,7 +154,7 @@ class WindowsPowerShellGitStderrTests(unittest.TestCase):
                 0,
                 f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}",
             )
-            self.assertIn("winps51-native-stderr-pass", completed.stdout)
+            self.assertIn("winps51-process-wrapper-pass", completed.stdout)
 
 
 if __name__ == "__main__":
