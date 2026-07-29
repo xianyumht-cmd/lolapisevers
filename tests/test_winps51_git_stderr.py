@@ -51,7 +51,7 @@ class WindowsPowerShellGitStderrTests(unittest.TestCase):
                     $ErrorActionPreference = "Stop"
                     Set-StrictMode -Version 2.0
 
-                    function Import-NamedFunction {{
+                    function Get-NamedFunctionText {{
                         param([string]$Path, [string]$Name)
                         $tokens = $null
                         $errors = $null
@@ -71,17 +71,17 @@ class WindowsPowerShellGitStderrTests(unittest.TestCase):
                         if ($null -eq $functionAst) {{
                             throw "function not found: $Name"
                         }}
-                        Invoke-Expression $functionAst.Extent.Text
+                        return $functionAst.Extent.Text
                     }}
 
-                    Import-NamedFunction -Path '{_ps_quote(LAUNCHER)}' -Name 'Patch-WindowsPowerShellGitStderr'
+                    Invoke-Expression (Get-NamedFunctionText -Path '{_ps_quote(LAUNCHER)}' -Name 'Patch-WindowsPowerShellGitStderr')
                     Patch-WindowsPowerShellGitStderr -Path '{_ps_quote(deploy_copy)}' -Kind 'deploy'
                     Patch-WindowsPowerShellGitStderr -Path '{_ps_quote(rollback_copy)}' -Kind 'rollback'
 
                     $env:PATH = '{_ps_quote(fake_bin)};' + $env:PATH
                     $ProjectRoot = '{_ps_quote(temp)}'
 
-                    Import-NamedFunction -Path '{_ps_quote(deploy_copy)}' -Name 'Invoke-Git'
+                    Invoke-Expression (Get-NamedFunctionText -Path '{_ps_quote(deploy_copy)}' -Name 'Invoke-Git')
                     $success = Invoke-Git -Arguments @('fetch')
                     if ($success.ExitCode -ne 0) {{
                         throw 'successful stderr command returned nonzero'
@@ -105,7 +105,8 @@ class WindowsPowerShellGitStderrTests(unittest.TestCase):
                         throw 'nonzero git command did not throw'
                     }}
 
-                    Import-NamedFunction -Path '{_ps_quote(rollback_copy)}' -Name 'Invoke-Git'
+                    Remove-Item Function:\Invoke-Git -Force
+                    Invoke-Expression (Get-NamedFunctionText -Path '{_ps_quote(rollback_copy)}' -Name 'Invoke-Git')
                     $rollbackOutput = Invoke-Git -Arguments @('checkout')
                     if (($rollbackOutput -join "`n") -notmatch 'simulated git progress') {{
                         throw 'rollback wrapper did not tolerate stderr progress'
