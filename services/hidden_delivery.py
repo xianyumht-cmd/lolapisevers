@@ -47,7 +47,7 @@ def format_hidden_text(payload: Mapping[str, Any]) -> str:
     return "\n".join(lines).strip()
 
 
-def hidden_meta(payload: Mapping[str, Any]) -> Dict[str, Any]:
+def hidden_meta(payload: Mapping[str, Any], *, delivery_fallback: str = "") -> Dict[str, Any]:
     rows = payload.get("recent_matches") if isinstance(payload.get("recent_matches"), list) else []
     return {
         "source": str(payload.get("source") or ""),
@@ -59,4 +59,5 @@ def hidden_meta(payload: Mapping[str, Any]) -> Dict[str, Any]:
             "name": str(payload.get("name") or ""),
             "region": str(payload.get("region") or ""),
         },
+        "delivery_fallback": str(delivery_fallback or ""),
     }
