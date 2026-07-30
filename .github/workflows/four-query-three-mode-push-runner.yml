@@ -1,0 +1,75 @@
+name: Four query three-mode push runner
+
+on:
+  push:
+    branches:
+      - codex/four-query-three-mode-20260730
+
+permissions:
+  contents: write
+
+jobs:
+  implement:
+    if: ${{ !contains(github.event.head_commit.message, '[api-three-mode-bot]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/four-query-three-mode-20260730
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build implementation script
+        shell: python
+        run: |
+          from pathlib import Path
+          source = Path('.github/workflows/four-query-three-mode-once.yml')
+          lines = source.read_text(encoding='utf-8').splitlines()
+          start = next(i for i, line in enumerate(lines) if line.strip() == '- name: Implement API image/text/forward support')
+          run_index = next(i for i in range(start + 1, len(lines)) if lines[i].strip() == 'run: |')
+          block = []
+          for line in lines[run_index + 1:]:
+              if line.startswith('      - name:'):
+                  break
+              block.append(line[10:] if line.startswith('          ') else line)
+          Path('/tmp/apply_four_query.py').write_text('\n'.join(block), encoding='utf-8')
+      - name: Apply and verify with diagnostics
+        shell: bash
+        run: |
+          set +e
+          : > /tmp/four-query-three-mode.log
+          python /tmp/apply_four_query.py >> /tmp/four-query-three-mode.log 2>&1
+          apply_status=$?
+          if [ "$apply_status" -eq 0 ]; then
+            python -m pip install -r requirements.txt >> /tmp/four-query-three-mode.log 2>&1
+            install_status=$?
+          else
+            install_status=1
+          fi
+          if [ "$apply_status" -eq 0 ] && [ "$install_status" -eq 0 ]; then
+            python -m unittest discover -s tests >> /tmp/four-query-three-mode.log 2>&1
+            test_status=$?
+          else
+            test_status=1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ "$apply_status" -eq 0 ] && [ "$install_status" -eq 0 ] && [ "$test_status" -eq 0 ]; then
+            git rm -f .github/workflows/four-query-three-mode-once.yml .github/workflows/four-query-three-mode-push-runner.yml
+            rm -f docs/four-query-three-mode.trigger docs/four-query-three-mode.trigger2 docs/four-query-three-mode.trigger3 docs/four-query-three-mode.trigger4 docs/four-query-three-mode.trigger5
+            git add -A
+            git commit -m "feat(query): add three-mode delivery for four query features [api-three-mode-bot]"
+          else
+            git reset --hard HEAD
+            mkdir -p diagnostics
+            {
+              echo "apply_status=$apply_status"
+              echo "install_status=$install_status"
+              echo "test_status=$test_status"
+              cat /tmp/four-query-three-mode.log
+            } > diagnostics/four-query-three-mode.log
+            git add diagnostics/four-query-three-mode.log
+            git commit -m "diagnostics: record four-query implementation failure [api-three-mode-bot]"
+          fi
+          git push origin HEAD:codex/four-query-three-mode-20260730
