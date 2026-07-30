@@ -1,13 +1,13 @@
 {
   "task_id": "LAPI-PARSER-CENTER-001",
   "title": "统一第三方接口与自定义解析中心",
-  "status": "in_progress",
+  "status": "ready_for_deployment_review",
   "branch": "codex/lapi-parser-center-001",
   "pull_request": 26,
   "base_commit": "35b258af431cf6117f80138147500eeb24059b0a",
-  "current_head": "3e3d03ef270bb37b0241010d815f689f92978789",
+  "current_head": "see pull_request head",
   "created_at": "2026-07-31T01:51:00+08:00",
-  "updated_at": "2026-07-31T02:31:00+08:00",
+  "updated_at": "2026-07-31T02:52:00+08:00",
   "principles": [
     "GroupGuard 只传递功能名、参数与交付能力，不解析第三方业务响应",
     "lolapisevers 负责第三方请求、解析、缓存、降级、模板和安全过滤",
@@ -15,7 +15,8 @@
     "真实 Token、Cookie、Authorization 和 API Key 不进入普通 JSON、日志或响应",
     "保存配置前必须完成 Schema 校验、测试请求、解析预览与模板预览",
     "现有生产配置保持兼容，任何新解析配置默认不自动接管生产流量",
-    "举报必须先保存本地记录，再执行第三方提交；重复 request_id 不得重复提交"
+    "举报必须先保存本地记录，再执行第三方提交；重复 request_id 不得重复提交",
+    "第三方举报失败进入持久化队列，队列不保存 Provider URL、Headers 或 Secret"
   ],
   "scope": {
     "phase_1": [
@@ -27,7 +28,7 @@
       "结果模板渲染",
       "Secret 引用与全链路脱敏",
       "封号查询接入并显示 ban_reason",
-      "6178 管理接口与独立 WebUI 页面",
+      "6178 管理接口与可视化 WebUI",
       "配置备份、原子保存和回滚兼容"
     ],
     "phase_2": [
@@ -46,8 +47,8 @@
     ],
     "phase_4": [
       "第三方失败持久化待补交队列",
-      "重试调度、退避和最大次数",
-      "WebUI 待补交列表与人工重试"
+      "指数退避、重试上限和到期筛选",
+      "WebUI 待补交列表、单项重试、批量重试和安全移除"
     ]
   },
   "progress": {
@@ -65,7 +66,7 @@
     },
     "P004": {
       "status": "completed",
-      "name": "管理 API 与 WebUI MVP"
+      "name": "管理 API 与可视化 WebUI"
     },
     "P005": {
       "status": "completed",
@@ -91,12 +92,21 @@
       ]
     },
     "P008": {
-      "status": "pending",
-      "name": "持久化待补交队列"
+      "status": "completed",
+      "name": "持久化待补交队列",
+      "guarantees": [
+        "同一 request_id、feature、provider_id 唯一去重",
+        "Provider URL、Headers 和 Secret 不写入队列表",
+        "指数退避与最大重试次数",
+        "单项与批量人工重试",
+        "独立受保护 WebUI 管理页",
+        "移除队列项目不删除本地举报记录"
+      ],
+      "optional_future_enhancement": "增加独立后台定时工作线程；当前版本由 WebUI 或管理 API 触发到期项目重试"
     },
     "P009": {
       "status": "pending",
-      "name": "生产部署与实机验收"
+      "name": "生产合并、部署与实机验收"
     }
   },
   "public_output_policy": {
@@ -161,18 +171,26 @@
     },
     {
       "id": "A8",
-      "description": "第三方举报失败时群内明确提示本地记录已保留，且不暴露第三方身份"
+      "description": "第三方举报失败时群内明确提示本地记录已保留并进入待补交队列，且不暴露第三方身份"
+    },
+    {
+      "id": "A9",
+      "description": "待补交 WebUI 可查看队列、单项或批量重试、移除队列项；移除不影响本地举报记录"
     }
+  ],
+  "webui_routes": [
+    "/parser-center",
+    "/parser-center/report-queue"
   ],
   "implementation_order": [
     "P001 规划与安全契约",
     "P002 通用解析内核",
     "P003 封号生产兼容修复",
-    "P004 管理 API 与 WebUI MVP",
+    "P004 管理 API 与可视化 WebUI",
     "P005 自动化测试与部署门禁",
     "P006 骗子/同行查询迁移",
     "P007 举报第三方提交与回执解析",
     "P008 持久化待补交队列",
-    "P009 生产部署与实机验收"
+    "P009 生产合并、部署与实机验收"
   ]
 }
