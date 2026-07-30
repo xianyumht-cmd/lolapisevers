@@ -73,6 +73,49 @@ def _secret_configured(name: str) -> bool:
     return False
 
 
+def list_parser_backups() -> dict[str, Any]:
+    target = configured_path()
+    backups: list[dict[str, Any]] = []
+    if target.parent.is_dir():
+        for path in sorted(
+            target.parent.glob(f"{target.name}.bak.*"),
+            key=lambda item: item.stat().st_mtime,
+            reverse=True,
+        ):
+            stat = path.stat()
+            backups.append(
+                {
+                    "name": path.name,
+                    "size_bytes": stat.st_size,
+                    "modified_at_epoch": int(stat.st_mtime),
+                }
+            )
+    return {"ok": True, "path": str(target), "backups": backups[:100]}
+
+
+def rollback_parser_center(payload: Mapping[str, Any]) -> dict[str, Any]:
+    backup_name = Path(str(payload.get("backup_name") or "").strip()).name
+    if not backup_name:
+        raise ParserConfigError("backup_name is required")
+    target = configured_path()
+    allowed = {
+        path.name: path
+        for path in target.parent.glob(f"{target.name}.bak.*")
+        if path.is_file()
+    }
+    backup = allowed.get(backup_name)
+    if backup is None:
+        raise ParserConfigError("指定的解析中心备份不存在")
+    config = load_config(backup)
+    result = atomic_write_config(config, target)
+    return {
+        **result,
+        "restored_from": backup_name,
+        "restart_required": True,
+        "message": "解析中心配置已回滚；回滚前的当前配置也已自动备份。重启 LOLDataSystem 后生产查询生效。",
+    }
+
+
 def read_parser_center() -> dict[str, Any]:
     config, target, using_default = _load_effective_config()
     secret_names = sorted(_walk_secret_names(config))
@@ -183,6 +226,19 @@ def install_parser_center_routes(app: FastAPI) -> None:
             return await asyncio.to_thread(read_parser_center)
         except ParserCenterError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    @app.get("/admin/parser-center/backups")
+    async def admin_parser_center_backups() -> dict[str, Any]:
+        return await asyncio.to_thread(list_parser_backups)
+
+    @app.post("/admin/parser-center/rollback")
+    async def admin_parser_center_rollback(payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(rollback_parser_center, payload)
+        except ParserCenterError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f"解析中心配置回滚失败：{exc}") from exc
 
     @app.post("/admin/parser-center/validate")
     async def admin_parser_center_validate(payload: dict[str, Any]) -> dict[str, Any]:
