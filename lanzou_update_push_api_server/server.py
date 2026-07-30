@@ -277,5 +277,5 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             },
         )
 
-    install_control_extensions(app)
+    install_control_extensions(app, service)
     return app
