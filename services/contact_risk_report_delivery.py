@@ -145,7 +145,8 @@ async def report_contact_risk(
     """Persist locally first, then submit configured third-party reports.
 
     The local store remains the source of durability. A duplicate ``request_id``
-    is never submitted again, preventing accidental repeated reports.
+    is never submitted again, preventing accidental repeated reports. A broken
+    submission configuration cannot hide or undo the successful local write.
     """
 
     local_payload = await save_local_contact_risk_report(
@@ -159,7 +160,16 @@ async def report_contact_risk(
         actor_id=actor_id,
         group_id=group_id,
     )
-    profiles = load_report_providers(str(local_payload.get("category") or category))
+    try:
+        profiles = load_report_providers(str(local_payload.get("category") or category))
+    except Exception as exc:
+        return {
+            **local_payload,
+            "submissions": [],
+            "submission_status": "configuration_error",
+            "configured_submission_count": 0,
+            "submission_error_class": type(exc).__name__,
+        }
     if bool(local_payload.get("duplicate")):
         return {
             **local_payload,
@@ -236,6 +246,9 @@ def format_contact_risk_report_text(payload: Mapping[str, Any]) -> str:
         return "\n".join(lines)
     if status == "not_configured":
         lines.append("举报记录已安全保存。")
+        return "\n".join(lines)
+    if status == "configuration_error":
+        lines.append("提交配置暂不可用，本地记录已保留。")
         return "\n".join(lines)
     if status == "accepted":
         lines.append("提交状态：已受理")
