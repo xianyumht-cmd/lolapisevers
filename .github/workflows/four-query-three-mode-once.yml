@@ -1,0 +1,276 @@
+name: Four query three-mode delivery once
+
+on:
+  pull_request:
+    branches: [master]
+    types: [opened, synchronize]
+
+permissions:
+  contents: write
+
+jobs:
+  implement:
+    if: github.head_ref == 'codex/four-query-three-mode-20260730'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Implement API image/text/forward support
+        shell: python
+        run: |
+          from pathlib import Path
+
+          renderer = r'''from __future__ import annotations
+
+from typing import Any, Mapping
+
+from fastapi.responses import Response
+
+from renderers.image_utils import (
+    encode_png_limited,
+    image_footer_left,
+    image_footer_right,
+    load_image_font,
+    wrap_draw_text,
+)
+
+
+_TITLES = {
+    "lolban": "账号封禁查询",
+    "scammer": "骗子信息查询",
+    "peer": "同行信息查询",
+    "dynamic": "动态查询结果",
+}
+
+
+def build_query_text_card_response(feature: str, text: str, payload: Mapping[str, Any]) -> Response:
+    from PIL import Image, ImageDraw
+
+    width = 920
+    outer = 26
+    content_width = width - outer * 2 - 44
+    title_font = load_image_font(30, bold=True)
+    body_font = load_image_font(18)
+    small_font = load_image_font(13)
+
+    logical_lines = []
+    for raw_line in str(text or "").splitlines() or [""]:
+        wrapped = wrap_draw_text(ImageDraw.Draw(Image.new("RGB", (1, 1))), raw_line, body_font, content_width)
+        logical_lines.extend(wrapped or [""])
+    logical_lines = logical_lines[:60]
+
+    line_height = 31
+    body_height = max(150, len(logical_lines) * line_height + 42)
+    header_height = 118
+    footer_height = 58
+    height = outer + header_height + 14 + body_height + footer_height + outer
+
+    bg = (13, 17, 30)
+    panel = (24, 30, 49)
+    panel_soft = (29, 37, 59)
+    border = (52, 65, 91)
+    primary = (241, 245, 252)
+    muted = (158, 171, 193)
+    accent = (70, 207, 224)
+
+    image = Image.new("RGB", (width, height), bg)
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle((outer, outer, width - outer, outer + header_height), radius=18, fill=panel, outline=border)
+    draw.text((outer + 24, outer + 24), _TITLES.get(feature, "查询结果"), fill=primary, font=title_font)
+    source = str(payload.get("source") or payload.get("provider") or "接口实时结果").strip()
+    draw.text((outer + 24, outer + 75), f"结果格式：图片  ·  数据来源：{source}", fill=muted, font=small_font)
+    draw.rounded_rectangle((width - outer - 132, outer + 31, width - outer - 24, outer + 67), radius=18, fill=(24, 82, 92))
+    draw.text((width - outer - 78, outer + 49), "查询完成", fill=accent, font=small_font, anchor="mm")
+
+    body_top = outer + header_height + 14
+    draw.rounded_rectangle((outer, body_top, width - outer, body_top + body_height), radius=18, fill=panel_soft, outline=border)
+    y = body_top + 22
+    for line in logical_lines:
+        draw.text((outer + 22, y), line or " ", fill=primary if line else muted, font=body_font)
+        y += line_height
+
+    footer_y = body_top + body_height
+    draw.line((outer + 8, footer_y + 22, width - outer - 8, footer_y + 22), fill=border, width=1)
+    draw.text((outer + 12, footer_y + 34), image_footer_left(), fill=muted, font=small_font)
+    draw.text((width - outer - 12, footer_y + 34), image_footer_right(), fill=muted, font=small_font, anchor="ra")
+
+    return Response(content=encode_png_limited(image), media_type="image/png")
+'''
+          Path('renderers/query_text_card.py').write_text(renderer, encoding='utf-8')
+
+          path = Path('routers/groupguard_delivery.py')
+          source = path.read_text(encoding='utf-8')
+          source = source.replace(
+              'from renderers.shard_image import build_shard_image_response\n',
+              'from renderers.shard_image import build_shard_image_response\nfrom renderers.query_text_card import build_query_text_card_response\n',
+          )
+          source = source.replace(
+              '_IMAGE_FEATURES = {"shard", "aram", "battle"}',
+              '_IMAGE_FEATURES = {"shard", "aram", "battle", "lolban", "scammer", "peer", "dynamic"}',
+          )
+          old_render = '''async def _render_feature_image(request: Request, feature: str, payload: Dict[str, Any]) -> Response:
+    ctx = getattr(request.app.state, "ctx", None)
+    if feature == "shard":
+        return await asyncio.to_thread(build_shard_image_response, ctx, payload)
+    if feature == "battle":
+        return await asyncio.to_thread(build_cross_image_response, ctx, payload)
+    return await asyncio.to_thread(
+        _build_cached_image_response,
+        ctx,
+        payload,
+        request.headers.get("if-none-match", ""),
+    )
+'''
+          new_render = '''async def _render_feature_image(
+    request: Request,
+    feature: str,
+    payload: Dict[str, Any],
+    text: str,
+) -> Response:
+    ctx = getattr(request.app.state, "ctx", None)
+    if feature == "shard":
+        return await asyncio.to_thread(build_shard_image_response, ctx, payload)
+    if feature == "battle":
+        return await asyncio.to_thread(build_cross_image_response, ctx, payload)
+    if feature == "aram":
+        return await asyncio.to_thread(
+            _build_cached_image_response,
+            ctx,
+            payload,
+            request.headers.get("if-none-match", ""),
+        )
+    return await asyncio.to_thread(build_query_text_card_response, feature, text, payload)
+'''
+          if old_render not in source:
+              raise SystemExit('render function marker not found')
+          source = source.replace(old_render, new_render)
+
+          start = source.index('        if feature == "lolban":')
+          dynamic = source.index('        if feature == "dynamic":', start)
+          lolban = '''        if feature == "lolban":
+            qq = str(parameters.get("qq") or "").strip()
+            if not valid_qq(qq):
+                return _json_error(
+                    feature=feature,
+                    status_code=400,
+                    message="请输入有效的QQ号（5-11位数字）",
+                    client_request_id=client_request_id,
+                    server_request_id=server_request_id,
+                )
+            payload, _source, _ttl = await get_lolban_result(qq)
+            text = format_lolban_text(payload)
+        elif feature == "dynamic":'''
+          source = source[:start] + lolban + source[dynamic + len('        if feature == "dynamic":'):]
+          source = source.replace(
+              'rendered = await _render_feature_image(request, feature, payload)',
+              'rendered = await _render_feature_image(request, feature, payload, text)',
+          )
+          path.write_text(source, encoding='utf-8')
+
+          tests = r'''import json
+import unittest
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
+
+from fastapi.responses import Response
+
+from routers.groupguard_delivery import groupguard_query
+
+
+def request_with_ctx():
+    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(ctx=object())), headers={})
+
+
+def decode(response):
+    return json.loads(bytes(response.body).decode("utf-8"))
+
+
+CASES = (
+    ("lolban", {"qq": "123456789"}),
+    ("scammer", {"identifier_type": "qq", "identifier": "123456789"}),
+    ("peer", {"identifier_type": "qq", "identifier": "123456789"}),
+    ("dynamic", {"command_id": "demo.query", "keyword": "test"}),
+)
+
+
+class FourQueryThreeModeTests(unittest.IsolatedAsyncioTestCase):
+    async def call(self, feature, parameters, preferred):
+        payload = {"source": "live", "status": "ok", "count": 1}
+        patches = [
+            patch("routers.groupguard_delivery.get_lolban_result", new=AsyncMock(return_value=(payload, "live", 60))),
+            patch("routers.groupguard_delivery.query_contact_risk", new=AsyncMock(return_value=payload)),
+            patch("routers.groupguard_delivery.query_dynamic", new=AsyncMock(return_value=payload)),
+            patch("routers.groupguard_delivery.format_lolban_text", return_value=f"{feature} final text"),
+            patch("routers.groupguard_delivery.format_contact_risk_text", return_value=f"{feature} final text"),
+            patch("routers.groupguard_delivery.format_dynamic_text", return_value=f"{feature} final text"),
+        ]
+        for item in patches:
+            item.start()
+        self.addCleanup(lambda: [item.stop() for item in reversed(patches)])
+        return await groupguard_query(
+            request_with_ctx(),
+            {
+                "feature": feature,
+                "parameters": parameters,
+                "preferred": preferred,
+                "capabilities": {"text": True, "image": True, "forward": True},
+            },
+        )
+
+    async def test_text_and_forward_for_all_four_queries(self):
+        for feature, parameters in CASES:
+            with self.subTest(feature=feature, mode="text"):
+                body = decode(await self.call(feature, parameters, "text"))
+                self.assertEqual(body["delivery"]["kind"], "segments")
+                self.assertEqual(body["delivery"]["segments"][0]["type"], "text")
+            with self.subTest(feature=feature, mode="forward"):
+                body = decode(await self.call(feature, parameters, "forward"))
+                self.assertEqual(body["delivery"]["kind"], "forward")
+                self.assertEqual(body["delivery"]["segments"][0]["type"], "forward")
+
+    async def test_image_for_all_four_queries(self):
+        png = b"\x89PNG\r\n\x1a\nquery-card"
+        with patch(
+            "routers.groupguard_delivery.build_query_text_card_response",
+            return_value=Response(content=png, media_type="image/png"),
+        ) as renderer:
+            for feature, parameters in CASES:
+                with self.subTest(feature=feature):
+                    body = decode(await self.call(feature, parameters, "image"))
+                    self.assertEqual(body["delivery"]["segments"][0]["type"], "image")
+        self.assertEqual(renderer.call_count, 4)
+
+    async def test_image_render_failure_falls_back_to_text(self):
+        with patch(
+            "routers.groupguard_delivery.build_query_text_card_response",
+            return_value=Response(content=b"", media_type="image/png", status_code=503),
+        ):
+            body = decode(await self.call("lolban", {"qq": "123456789"}, "image"))
+        self.assertEqual(body["delivery"]["segments"][0]["type"], "text")
+        self.assertEqual(body["meta"]["delivery_fallback"], "image_render_failed")
+
+
+if __name__ == "__main__":
+    unittest.main()
+'''
+          Path('tests/test_groupguard_four_query_three_mode.py').write_text(tests, encoding='utf-8')
+      - name: Run tests
+        run: |
+          python -m pip install -r requirements.txt
+          python -m unittest tests.test_groupguard_four_query_three_mode
+          python -m unittest discover -s tests
+      - name: Commit verified implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -f .github/workflows/four-query-three-mode-once.yml
+          git add routers/groupguard_delivery.py renderers/query_text_card.py tests/test_groupguard_four_query_three_mode.py
+          git commit -m "feat(query): add three-mode delivery for four query features"
+          git push origin HEAD:codex/four-query-three-mode-20260730
