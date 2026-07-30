@@ -200,13 +200,18 @@ def save_parser_secret(payload: Mapping[str, Any]) -> dict[str, Any]:
         management.MAIN_CONFIG_FIELDS.append(spec)
         management._FIELD_BY_KEY[name] = spec
     result = management.update_main_config({name: value})
+    # The 6178 process can use the newly saved secret immediately for the
+    # explicit test action. The independently managed production 5001 process
+    # still requires the normal LOLDataSystem restart before it sees the value.
+    os.environ[name] = value
     return {
         "ok": True,
         "name": name,
         "configured": True,
         "backup_path": str(result.get("backup_path") or ""),
         "restart_required": True,
-        "message": "Secret 已安全写入本地环境配置；值未返回浏览器。重启 LOLDataSystem 后生产查询生效。",
+        "test_available_immediately": True,
+        "message": "Secret 已安全写入本地环境配置；值未返回浏览器。现在可立即测试，生产查询需重启 LOLDataSystem 后生效。",
     }
 
 
