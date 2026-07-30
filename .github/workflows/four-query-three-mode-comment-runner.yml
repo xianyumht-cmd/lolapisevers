@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   implement:
-    if: github.event.issue.pull_request && github.event.issue.number == 24 && github.event.comment.body == '/run-four-query-three-mode'
+    if: github.event.issue.pull_request && github.event.issue.number == 24 && github.event.comment.body == '/run-four-query-three-mode-diagnostic'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,9 +19,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Execute reviewed implementation block
-        shell: python
+      - name: Apply, verify, and write back result
+        shell: bash
         run: |
+          set +e
+          : > /tmp/four-query-three-mode.log
+          python - <<'PY' >> /tmp/four-query-three-mode.log 2>&1
           from pathlib import Path
           path = Path('.github/workflows/four-query-three-mode-once.yml')
           lines = path.read_text(encoding='utf-8').splitlines()
@@ -32,20 +35,42 @@ jobs:
               if line.startswith('      - name:'):
                   break
               block.append(line[10:] if line.startswith('          ') else line)
-          exec(compile('\n'.join(block), str(path), 'exec'), {'__name__': '__main__'})
-      - name: Verify complete API suite
-        run: |
-          python -m pip install -r requirements.txt
-          python -m unittest tests.test_groupguard_four_query_three_mode
-          python -m unittest discover -s tests
-      - name: Commit verified implementation
-        shell: bash
-        run: |
-          set -euo pipefail
+          code = '\n'.join(block)
+          exec(compile(code, str(path), 'exec'), {'__name__': '__main__'})
+          PY
+          apply_status=$?
+          if [ "$apply_status" -eq 0 ]; then
+            python -m pip install -r requirements.txt >> /tmp/four-query-three-mode.log 2>&1
+            install_status=$?
+          else
+            install_status=1
+          fi
+          if [ "$apply_status" -eq 0 ] && [ "$install_status" -eq 0 ]; then
+            python -m unittest discover -s tests >> /tmp/four-query-three-mode.log 2>&1
+            test_status=$?
+          else
+            test_status=1
+          fi
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm -f .github/workflows/four-query-three-mode-once.yml
-          rm -f docs/four-query-three-mode.trigger docs/four-query-three-mode.trigger2 docs/four-query-three-mode.trigger3 docs/four-query-three-mode.trigger4
-          git add -A
-          git commit -m "feat(query): add three-mode delivery for four query features"
+          if [ "$apply_status" -eq 0 ] && [ "$install_status" -eq 0 ] && [ "$test_status" -eq 0 ]; then
+            git rm -f .github/workflows/four-query-three-mode-once.yml
+            rm -f .github/workflows/four-query-three-mode-push-runner.yml
+            rm -f docs/four-query-three-mode.trigger docs/four-query-three-mode.trigger2 docs/four-query-three-mode.trigger3 docs/four-query-three-mode.trigger4 docs/four-query-three-mode.trigger5
+            rm -rf diagnostics
+            git add -A
+            git commit -m "feat(query): add three-mode delivery for four query features [api-three-mode-bot]"
+          else
+            git reset --hard HEAD
+            mkdir -p diagnostics
+            {
+              echo "apply_status=$apply_status"
+              echo "install_status=$install_status"
+              echo "test_status=$test_status"
+              cat /tmp/four-query-three-mode.log
+            } > diagnostics/four-query-three-mode.log
+            git add diagnostics/four-query-three-mode.log
+            git commit -m "diagnostics: record four-query implementation failure [api-three-mode-bot]"
+          fi
           git push origin HEAD:codex/four-query-three-mode-20260730
