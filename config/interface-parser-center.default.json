@@ -103,6 +103,22 @@
           }
         }
       ]
+    },
+    "scammer": {
+      "operation": "query",
+      "providers": []
+    },
+    "peer": {
+      "operation": "query",
+      "providers": []
+    },
+    "scammer_report": {
+      "operation": "report",
+      "providers": []
+    },
+    "peer_report": {
+      "operation": "report",
+      "providers": []
     }
   }
 }
