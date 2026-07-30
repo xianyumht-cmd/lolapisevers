@@ -2,17 +2,18 @@
   "task_id": "WEBUI-IOS-001",
   "repository": "xianyumht-cmd/lolapisevers",
   "branch": "codex/webui-ios-glass-20260730",
-  "status": "VERIFYING",
-  "updated_at": "2026-07-30T22:31:00+08:00",
-  "progress_percent": 70,
+  "merged_commit": "066154ce1737b38de07fa20eb9553ba804a6ee8f",
+  "status": "COMPLETED",
+  "updated_at": "2026-07-30T22:42:00+08:00",
+  "progress_percent": 100,
   "phases": {
     "audit": "COMPLETED",
     "plan": "COMPLETED",
     "implementation": "COMPLETED",
-    "verification": "IN_PROGRESS",
-    "completion": "PENDING"
+    "verification": "COMPLETED",
+    "completion": "COMPLETED"
   },
-  "current_step": "Run full API and generated WebUI verification",
+  "current_step": "Completed and merged to master",
   "completed": [
     "Audited server.py -> ui_runtime.py -> ui_control.py rendering chain",
     "Audited main config, Lanzou config, watcher, target, security, backup and service control paths",
@@ -20,11 +21,11 @@
     "Added shared iOS glass theme module",
     "Applied the theme at the final dashboard response boundary",
     "Added theme persistence, system-mode listener and mobile fallbacks",
-    "Added theme contract tests"
+    "Added theme contract tests",
+    "Updated generated WebUI JavaScript validation for multiple script blocks",
+    "Passed the complete Python test suite",
+    "Passed generated WebUI JavaScript syntax validation",
+    "Merged PR 25 to master"
   ],
-  "remaining": [
-    "Pass full repository CI and generated WebUI JavaScript validation",
-    "Merge to master",
-    "Mark task COMPLETED"
-  ]
+  "remaining": []
 }
