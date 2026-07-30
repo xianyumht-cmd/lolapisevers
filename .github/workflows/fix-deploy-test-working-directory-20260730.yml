@@ -1,0 +1,104 @@
+name: fix deployment test working directory
+
+on:
+  push:
+    branches:
+      - feat/all-query-delivery-hub-20260729
+    paths:
+      - scripts/fix_deploy_test_working_directory_20260730.py
+      - .github/workflows/fix-deploy-test-working-directory-20260730.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    runs-on: windows-2025
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+        with:
+          ref: feat/all-query-delivery-hub-20260729
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Apply asserted deployment fix
+        shell: pwsh
+        run: python scripts/fix_deploy_test_working_directory_20260730.py
+
+      - name: Install dependencies
+        shell: pwsh
+        run: python -m pip install -r requirements.txt
+
+      - name: Run complete tests from repository root
+        shell: pwsh
+        run: python -m unittest discover -s tests -v
+
+      - name: Reproduce external launcher context with fixed project-root semantics
+        shell: pwsh
+        run: |
+          $repo = (Resolve-Path '.').Path
+          $outside = Join-Path $env:TEMP 'lapi-external-launcher-regression'
+          New-Item -ItemType Directory -Path $outside -Force | Out-Null
+          Push-Location $outside
+          try {
+            Push-Location -LiteralPath $repo
+            try {
+              python -m unittest tests.test_cache tests.test_groupguard_video_removed -v
+              if ($LASTEXITCODE -ne 0) { throw 'External-launcher regression tests failed' }
+            } finally {
+              Pop-Location
+            }
+          } finally {
+            Pop-Location
+          }
+
+      - name: Compile and validate generated WebUI
+        shell: pwsh
+        run: |
+          python -m compileall -q .
+          python tests/check_ui_assets.py
+          node --check ui_control.generated.js
+
+      - name: Validate PowerShell syntax
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'ops/Deploy-LapiQueryHardening.ps1'),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            throw 'PowerShell parser rejected deployment script'
+          }
+
+      - name: Verify exact regression markers
+        shell: pwsh
+        run: |
+          $text = Get-Content 'ops/Deploy-LapiQueryHardening.ps1' -Raw -Encoding UTF8
+          if ($text -notmatch 'Push-Location -LiteralPath \$ProjectRoot') { throw 'Project-root push missing' }
+          if ($text -notmatch 'unittest discover -s "tests"') { throw 'Relative tests path missing' }
+          if ($text -notmatch 'finally\s*\{\s*Pop-Location') { throw 'Guaranteed Pop-Location missing' }
+          if ($text -match 'discover -s \(Join-Path \$ProjectRoot "tests"\)') { throw 'Broken absolute tests invocation remains' }
+
+      - name: Remove one-shot machinery and commit verified fix
+        shell: pwsh
+        run: |
+          Remove-Item 'scripts/fix_deploy_test_working_directory_20260730.py' -Force
+          Remove-Item '.github/workflows/fix-deploy-test-working-directory-20260730.yml' -Force
+          Remove-Item 'ui_control.generated.js' -Force -ErrorAction SilentlyContinue
+          Remove-Item 'node-check.txt','ui-generation-error.txt','ui-generation-output.txt' -Force -ErrorAction SilentlyContinue
+          git config user.name 'openai-gpt-5.6-thinking'
+          git config user.email 'actions@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'fix(deploy): run unit tests from project root'
+          git push origin HEAD:feat/all-query-delivery-hub-20260729
