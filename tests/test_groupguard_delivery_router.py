@@ -108,7 +108,7 @@ class GroupGuardDeliveryRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["meta"]["delivery_fallback"], "image_render_failed")
         self.assertNotIn("secret renderer path", str(body))
 
-    async def test_lolban_returns_final_text_without_business_parsing(self):
+    async def test_lolban_explicit_text_returns_final_text_without_business_parsing(self):
         payload = {
             "code": 200,
             "by": "provider-a",
@@ -132,7 +132,8 @@ class GroupGuardDeliveryRouterTests(unittest.IsolatedAsyncioTestCase):
                 {
                     "feature": "lolban",
                     "parameters": {"qq": "2621735529"},
-                    "preferred": "auto",
+                    "preferred": "text",
+                    "capabilities": {"image": True, "text": True, "forward": True},
                 },
             )
 
@@ -196,7 +197,11 @@ class GroupGuardDeliveryRouterTests(unittest.IsolatedAsyncioTestCase):
                 return_value=(
                     {
                         "msg": "此账号状态正常",
-                        "data": {"qq": "2621735529", "status": "正常", "end_time": "账号状态正常"},
+                        "data": {
+                            "qq": "2621735529",
+                            "status": "正常",
+                            "end_time": "账号状态正常",
+                        },
                         "source": "live",
                     },
                     "live",
