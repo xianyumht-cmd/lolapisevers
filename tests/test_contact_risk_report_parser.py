@@ -156,6 +156,38 @@ class ContactRiskReportParserTests(unittest.IsolatedAsyncioTestCase):
         text = format_contact_risk_report_text(result)
         self.assertIn("本地记录已保留", text)
 
+    async def test_invalid_submission_config_still_returns_local_success(self):
+        local_payload = {
+            "category": "scammer",
+            "identifier_type": "qq",
+            "identifier_value": "123456",
+            "duplicate": False,
+            "record": {"report_count": 1},
+        }
+        with patch(
+            "services.contact_risk_report_delivery.save_local_contact_risk_report",
+            new=AsyncMock(return_value=local_payload),
+        ) as local_save, patch(
+            "services.contact_risk_report_delivery.load_report_providers",
+            side_effect=RuntimeError("broken config"),
+        ):
+            result = await report_contact_risk(
+                object(),
+                request_id="risk-report-003",
+                category="scammer",
+                identifier_type="qq",
+                identifier_value="123456",
+                content="收款后失联",
+                source="snowluma",
+            )
+
+        local_save.assert_awaited_once()
+        self.assertEqual(result["record"]["report_count"], 1)
+        self.assertEqual(result["submission_status"], "configuration_error")
+        text = format_contact_risk_report_text(result)
+        self.assertIn("本地记录已保留", text)
+        self.assertNotIn("broken config", text)
+
     def test_public_report_output_has_receipt_but_no_provider_identity(self):
         text = format_contact_risk_report_text(
             {
