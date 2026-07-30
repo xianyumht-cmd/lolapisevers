@@ -13,12 +13,15 @@ from renderers.shard_image import build_shard_image_response
 from routers.aram_augments import _build_cached_image_response
 from services.aram_augments_service import query_aram_augments
 from services.battle_delivery import battle_meta, format_battle_text
+from services.contact_risk_report_delivery import (
+    contact_risk_report_meta,
+    format_contact_risk_report_text,
+    report_contact_risk,
+)
 from services.contact_risk_service import (
     contact_risk_meta,
-    format_contact_risk_report_text,
     format_contact_risk_text,
     query_contact_risk,
-    report_contact_risk,
 )
 from services.cross_query_service import query_cross
 from services.dynamic_query_service import dynamic_meta, format_dynamic_text, query_dynamic
@@ -466,19 +469,11 @@ async def groupguard_report(request: Request, body: Dict[str, Any]):
             capabilities,
             preferred if preferred != "image" else "auto",
         )
-        record = payload.get("record") if isinstance(payload.get("record"), Mapping) else {}
-        meta = {
-            "category": category,
-            "identifier_type": str(payload.get("identifier_type") or ""),
-            "identifier_value": str(payload.get("identifier_value") or ""),
-            "duplicate": bool(payload.get("duplicate")),
-            "report_count": int(record.get("report_count") or 0),
-        }
         return JSONResponse(
             content=success_envelope(
                 feature=feature,
                 delivery=delivery,
-                meta=meta,
+                meta=contact_risk_report_meta(payload),
                 client_request_id=client_request_id,
                 server_request_id=server_request_id,
             )
