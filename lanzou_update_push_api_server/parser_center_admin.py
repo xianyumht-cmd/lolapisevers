@@ -20,7 +20,6 @@ from services.api_parser_center import (
     empty_config,
     find_provider,
     load_config,
-    redact,
     test_provider,
     validate_config,
 )
@@ -31,6 +30,10 @@ from .parser_center_ui import render_parser_center_page
 
 _SECRET_REF_RE = re.compile(r"^\$secret:([A-Za-z_][A-Za-z0-9_]*)$")
 _SECRET_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]{2,95}$")
+_SENSITIVE_KEY_RE = re.compile(
+    r"(?:token|secret|password|passwd|authorization|cookie|api[_-]?key|access[_-]?key)",
+    re.I,
+)
 _DEFAULT_PROFILE_PATH = DEFAULT_CONFIG_PATH.with_name("interface-parser-center.default.json")
 
 
@@ -47,6 +50,30 @@ def _walk_secret_names(value: Any) -> set[str]:
         if match:
             names.add(match.group(1))
     return names
+
+
+def _redact_config(value: Any, *, key: str = "") -> Any:
+    """Redact literal credentials while preserving declarative secret refs.
+
+    The WebUI must receive ``$secret:NAME`` unchanged so a read/edit/save
+    round trip cannot silently replace the reference with ``***``. Resolved
+    or literal credentials under sensitive keys remain hidden.
+    """
+
+    if isinstance(value, str) and _SECRET_REF_RE.fullmatch(value.strip()):
+        return value
+    if _SENSITIVE_KEY_RE.search(str(key or "")):
+        return "***"
+    if isinstance(value, Mapping):
+        return {
+            str(item_key): _redact_config(item, key=str(item_key))
+            for item_key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_config(item) for item in value]
+    if isinstance(value, tuple):
+        return [_redact_config(item) for item in value]
+    return copy.deepcopy(value)
 
 
 def _load_effective_config() -> tuple[dict[str, Any], Path, bool]:
@@ -108,6 +135,7 @@ def rollback_parser_center(payload: Mapping[str, Any]) -> dict[str, Any]:
         raise ParserConfigError("指定的解析中心备份不存在")
     config = load_config(backup)
     result = atomic_write_config(config, target)
+    result["config"] = _redact_config(config)
     return {
         **result,
         "restored_from": backup_name,
@@ -125,7 +153,7 @@ def read_parser_center() -> dict[str, Any]:
         "path": str(target),
         "exists": target.is_file(),
         "using_default": using_default,
-        "config": redact(config),
+        "config": _redact_config(config),
         "secrets": [
             {"name": name, "configured": _secret_configured(name)}
             for name in secret_names
@@ -142,6 +170,7 @@ def save_parser_center(payload: Mapping[str, Any]) -> dict[str, Any]:
     config = payload.get("config") if isinstance(payload.get("config"), Mapping) else payload
     normalized = validate_config(config)
     result = atomic_write_config(normalized)
+    result["config"] = _redact_config(normalized)
     return {
         **result,
         "message": "解析中心配置已保存。已启用 Provider 会在下次服务启动时接管对应功能；测试接口立即使用新配置。",
@@ -211,7 +240,7 @@ def validate_parser_center(payload: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "ok": True,
         "message": "配置结构与公开输出策略校验通过",
-        "config": redact(normalized),
+        "config": _redact_config(normalized),
     }
 
 
