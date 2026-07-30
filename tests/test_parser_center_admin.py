@@ -77,7 +77,7 @@ class ParserCenterAdminTests(unittest.TestCase):
             "$secret:LOLMAP_API_TOKEN",
         )
 
-    def test_secret_write_does_not_return_value(self):
+    def test_secret_write_does_not_return_value_and_activates_test_process(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             local_path = root / "app_env.local.ps1"
@@ -93,10 +93,11 @@ class ParserCenterAdminTests(unittest.TestCase):
                     return_value=(config(), root / "interface-parser-center.json", True),
                 ), patch.object(management, "APP_ENV_PATH", local_path), patch.object(
                     management, "APP_ENV_EXAMPLE_PATH", example_path
-                ):
+                ), patch.dict(os.environ, {}, clear=False):
                     result = save_parser_secret(
                         {"name": "LOLMAP_API_TOKEN", "value": "top-secret-value"}
                     )
+                    self.assertEqual(os.environ["LOLMAP_API_TOKEN"], "top-secret-value")
             finally:
                 if not field_existed:
                     management._FIELD_BY_KEY.pop("LOLMAP_API_TOKEN", None)
@@ -110,6 +111,7 @@ class ParserCenterAdminTests(unittest.TestCase):
         self.assertIn("top-secret-value", written)
         self.assertNotIn("top-secret-value", json.dumps(result, ensure_ascii=False))
         self.assertTrue(result["configured"])
+        self.assertTrue(result["test_available_immediately"])
 
     def test_backup_and_rollback_restore_previous_config(self):
         with tempfile.TemporaryDirectory() as temp:
