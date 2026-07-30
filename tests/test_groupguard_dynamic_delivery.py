@@ -10,6 +10,7 @@ from fastapi import HTTPException
 
 from routers.groupguard_delivery import groupguard_query
 from services.dynamic_query_service import (
+    DEFAULT_CATALOG_PATH,
     DynamicProviderCatalog,
     _validate_destination,
     query_dynamic,
@@ -169,7 +170,10 @@ class GroupGuardDynamicDeliveryTests(unittest.IsolatedAsyncioTestCase):
                 _validate_destination(url, allow_private=False)
 
     def test_default_catalog_contains_current_repository_commands(self):
-        with patch.dict(os.environ, {"DYNAMIC_QUERY_PROVIDERS_PATH": ""}):
+        with patch.dict(
+            os.environ,
+            {"DYNAMIC_QUERY_PROVIDERS_PATH": str(DEFAULT_CATALOG_PATH)},
+        ):
             catalog = DynamicProviderCatalog()
             self.assertEqual(catalog.get("quote.daily").method, "GET")
             self.assertEqual(catalog.get("music.search").text_path, "results[0].trackViewUrl")
