@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "services/**"
+      - "routers/groupguard_delivery.py"
       - "lanzou_update_push_api_server/**"
       - "config/interface-parser-center.default.json"
       - "tests/**"
@@ -26,7 +27,7 @@ jobs:
       - name: Install dependencies
         run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
       - name: Compile Python modules
-        run: python -m compileall -q services lanzou_update_push_api_server tests
+        run: python -m compileall -q services routers lanzou_update_push_api_server tests
       - name: Validate parser default JSON
         run: python -m json.tool config/interface-parser-center.default.json > /dev/null
       - name: Run parser center tests
@@ -36,5 +37,6 @@ jobs:
           tests.test_lolban_reason_output
           tests.test_parser_center_admin
           tests.test_contact_risk_parser_center
+          tests.test_contact_risk_report_parser
       - name: Run full suite
         run: python -m unittest discover -s tests -v
