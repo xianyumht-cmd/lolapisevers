@@ -28,10 +28,11 @@ from .security import control_api_guard
 from .state_recovery import recover_state_file
 from .ui import render_dashboard_page
 from .ui_runtime import render_runtime_dashboard
+from .ui_theme import apply_ios_glass_theme
 
 
 def _control_page() -> str:
-    return render_runtime_dashboard()
+    return apply_ios_glass_theme(render_runtime_dashboard())
 
 
 def _fetch_json(url: str) -> dict[str, Any]:
@@ -259,9 +260,22 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
             return {"ok": False, "error": "snapshot_not_found"}
         return {"ok": True, "snapshot": snapshot}
 
-    @app.post("/notify/test")
-    async def notify_test(watcher_id: str | None = None) -> dict[str, Any]:
-        return await service.send_test_event(watcher_id)
+    @app.get("/last-update")
+    async def last_update() -> dict[str, Any]:
+        event = service.store.last_event()
+        return {"ok": True, "event": event}
 
-    install_control_extensions(app, service)
+    @app.post("/test-push")
+    async def test_push(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        body = payload or {}
+        message = str(body.get("message") or "LOLDataSystem 蓝奏更新推送测试")
+        return await service.notifier.send(
+            message,
+            event={
+                "type": "test",
+                "message": message,
+            },
+        )
+
+    install_control_extensions(app)
     return app
