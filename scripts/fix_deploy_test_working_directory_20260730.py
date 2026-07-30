@@ -79,3 +79,4 @@ if HANDOFF.exists():
         HANDOFF.write_text(handoff_text.rstrip() + "\n" + section, encoding="utf-8", newline="\n")
 
 print("deploy test working-directory fix prepared")
+# retrigger existing one-shot workflow after the workflow file is present on the branch
