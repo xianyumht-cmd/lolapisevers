@@ -18,12 +18,14 @@ from .maintenance import (
     windows_service_status,
 )
 from .parser_center_admin import install_parser_center_routes
+from .parser_center_retry_admin import install_parser_center_retry_routes
 from .security import security_status
 from .state_recovery import recover_state_file
 
 
 def install_control_extensions(app: FastAPI, service) -> None:
     install_parser_center_routes(app)
+    install_parser_center_retry_routes(app)
 
     @app.get("/security/status")
     async def get_security_status() -> dict[str, object]:
