@@ -7,6 +7,10 @@ from db import Database
 from so1_client import So1Client
 
 from core.config import AppConfig, load_config
+from services.contact_risk_store import ContactRiskStore
+from services.image_asset_store import PersistentImageAssetCache
+from services.persistent_snapshot_store import PersistentSnapshotStore
+from services.upstream_http_client import UpstreamHttpClient
 
 
 class AppContext:
@@ -19,10 +23,33 @@ class AppContext:
         self.db_error_message = ""
         self.cross_cache = TTLCache(ttl_seconds=config.cache_seconds)
         self.shard_cache = TTLCache(ttl_seconds=config.shard_cache_seconds)
-        self.aram_augment_cache = TTLCache(ttl_seconds=config.aram_augment_cache_seconds)
-        # Remote icons are shared by both image renderers. A bounded cache avoids
-        # repeated downloads without letting image bytes grow without limit.
-        self.image_asset_cache = TTLCache(
+        self.aram_augment_cache = TTLCache(
+            ttl_seconds=config.aram_augment_cache_seconds
+        )
+        self.aram_image_cache_seconds = max(
+            60,
+            min(config.aram_augment_cache_seconds, 600),
+        )
+        self.aram_image_cache = TTLCache(
+            ttl_seconds=self.aram_image_cache_seconds,
+            max_size=128,
+        )
+        self._aram_image_locks = [
+            threading.Lock()
+            for _ in range(64)
+        ]
+        # All business services share one named upstream client and one atomic
+        # snapshot store. Public URLs stay inside the Windows service boundary.
+        self.upstream_http_client = UpstreamHttpClient(logger=self.logger)
+        self.upstream_snapshot_store = PersistentSnapshotStore()
+        # Risk records and idempotent report events are owned by the Windows
+        # service. This SQLite database is independent from the optional LOL
+        # MySQL database so a MySQL outage never disables scammer/peer storage.
+        self.contact_risk_store = ContactRiskStore()
+        # Existing renderers still use the same get/set contract. Positive image
+        # bytes are persisted by stable resource ID on disk, while the bounded
+        # memory layer keeps hot reads fast.
+        self.image_asset_cache = PersistentImageAssetCache(
             ttl_seconds=max(config.aram_augment_cache_seconds, 3600),
             max_size=512,
         )
@@ -33,6 +60,11 @@ class AppContext:
             timeout_ms=config.so1_timeout_ms,
         )
         self.ensure_db()
+
+    def aram_image_lock(self, key: str) -> threading.Lock:
+        return self._aram_image_locks[
+            hash(key) % len(self._aram_image_locks)
+        ]
 
     def ensure_db(self) -> Optional[Database]:
         if self.db is not None:
@@ -50,5 +82,8 @@ class AppContext:
                 return None
 
 
-def create_app_context(config: Optional[AppConfig] = None, so1_client: Optional[So1Client] = None) -> AppContext:
+def create_app_context(
+    config: Optional[AppConfig] = None,
+    so1_client: Optional[So1Client] = None,
+) -> AppContext:
     return AppContext(config or load_config(), so1_client=so1_client)

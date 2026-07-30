@@ -1,0 +1,1234 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://xianyumht-cmd.github.io/schemas/cross-repo-upgrade-handoff.v1.schema.json",
+  "title": "Cross-repository production integration upgrade handoff",
+  "description": "Machine-readable handoff for coordinated implementation, deployment, acceptance, and rollback across repositories. Records validated facts and references only; plaintext credentials, passwords, tokens, cookies, and private keys are prohibited.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "schema_version",
+    "record_type",
+    "handoff_id",
+    "release_id",
+    "generated_at",
+    "updated_at",
+    "state",
+    "overall_gate",
+    "source_audit",
+    "repositories",
+    "contracts",
+    "changes",
+    "config_migrations",
+    "builds",
+    "deployments",
+    "rollback_plan",
+    "rollback_runs",
+    "acceptance_runs",
+    "release_gate",
+    "known_limits",
+    "secret_handling",
+    "git_safety",
+    "machine_next_actions"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "./schema/cross-repo-upgrade-handoff.v1.schema.json"
+    },
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "record_type": {
+      "const": "cross_repository_production_integration_upgrade_handoff"
+    },
+    "handoff_id": {
+      "$ref": "#/$defs/nonEmptyString"
+    },
+    "release_id": {
+      "$ref": "#/$defs/nonEmptyString"
+    },
+    "generated_at": {
+      "$ref": "#/$defs/dateTime"
+    },
+    "updated_at": {
+      "$ref": "#/$defs/dateTime"
+    },
+    "state": {
+      "$ref": "#/$defs/lifecycleState"
+    },
+    "overall_gate": {
+      "$ref": "#/$defs/gateResult"
+    },
+    "source_audit": {
+      "$ref": "#/$defs/sourceAudit"
+    },
+    "repositories": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "$ref": "#/$defs/repository"
+      }
+    },
+    "contracts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/contract"
+      }
+    },
+    "changes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/change"
+      }
+    },
+    "config_migrations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/configMigration"
+      }
+    },
+    "builds": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/build"
+      }
+    },
+    "deployments": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/deployment"
+      }
+    },
+    "rollback_plan": {
+      "$ref": "#/$defs/rollbackPlan"
+    },
+    "rollback_runs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/rollbackRun"
+      }
+    },
+    "acceptance_runs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/acceptanceRun"
+      }
+    },
+    "release_gate": {
+      "$ref": "#/$defs/releaseGate"
+    },
+    "known_limits": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/knownLimit"
+      }
+    },
+    "secret_handling": {
+      "$ref": "#/$defs/secretHandling"
+    },
+    "git_safety": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "$ref": "#/$defs/gitSafety"
+      }
+    },
+    "machine_next_actions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/machineNextAction"
+      }
+    },
+    "extensions": {
+      "$ref": "#/$defs/extensions"
+    }
+  },
+  "$defs": {
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "dateTime": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "nullableDateTime": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/dateTime"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "revision": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{7,64}$"
+    },
+    "lifecycleState": {
+      "type": "string",
+      "enum": [
+        "planned",
+        "in_progress",
+        "implemented",
+        "validated",
+        "built",
+        "deployed",
+        "verified",
+        "completed",
+        "rolled_back",
+        "blocked"
+      ]
+    },
+    "gateResult": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "partial",
+        "fail",
+        "blocked",
+        "not_run"
+      ]
+    },
+    "workStatus": {
+      "type": "string",
+      "enum": [
+        "planned",
+        "in_progress",
+        "completed",
+        "skipped",
+        "failed",
+        "blocked",
+        "rolled_back"
+      ]
+    },
+    "extensions": {
+      "type": "object",
+      "description": "Namespaced, non-secret extension fields. Extension keys and values must not contain credentials or credential material.",
+      "propertyNames": {
+        "not": {
+          "pattern": "(^|[_-])(password|passwd|token|credential|authorization|cookie|api[_-]?key|private[_-]?key)([_-]|$)"
+        }
+      },
+      "additionalProperties": true
+    },
+    "artifactReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "repository": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "path": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "media_type": {
+          "type": "string"
+        },
+        "extensions": {
+          "$ref": "#/$defs/extensions"
+        }
+      }
+    },
+    "sourceAudit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "audit_id",
+        "record_type",
+        "schema_version",
+        "artifacts",
+        "finding_ids"
+      ],
+      "properties": {
+        "audit_id": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "record_type": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/artifactReference"
+          }
+        },
+        "finding_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
+        },
+        "extensions": {
+          "$ref": "#/$defs/extensions"
+        }
+      }
+    },
+    "pullRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "number",
+        "url",
+        "state"
+      ],
+      "properties": {
+        "number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "draft",
+            "open",
+            "ready",
+            "merged",
+            "closed"
+          ]
+        },
+        "head_revision": {
+          "$ref": "#/$defs/revision"
+        },
+        "extensions": {
+          "$ref": "#/$defs/extensions"
+        }
+      }
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "role",
+        "local_path",
+        "remote_url",
+        "branch",
+        "base_revision",
+        "target_revision",
+        "status"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "role": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "local_path": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "remote_url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "branch": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "base_revision": {
+          "$ref": "#/$defs/revision"
+        },
+        "target_revision": {
+          "$ref": "#/$defs/revision"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "unchanged",
+            "changed",
+            "pushed",
+            "pr_open",
+            "pr_ready",
+            "deployed"
+          ]
+        },
+        "pull_request": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/pullRequest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "extensions": {
+          "$ref": "#/$defs/extensions"
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "reference",
+        "secret_free"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "command",
+            "test",
+            "log",
+            "artifact",
+            "endpoint",
+            "observation",
+            "document"
+          ]
+        },
+        "reference": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "result": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "secret_free": {
+          "const": true
+        },
+        "extensions": {
+          "$ref": "#/$defs/extensions"
+        }
+      }
+    },
+    "contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "direction",
+        "status",
+        "summary",
+        "producer_repository",
+        "consumer_repositories",
+        "verification_run_ids"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "direction": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "status": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "summary": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "version_before": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version_after": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "producer_repository": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "consumer_repositories": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
+        },
+        "verification_run_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence"
+          }
+        },
+        "extensions": {
+          "$ref": "#/$defs/extensions"
+        }
+      }
+    },
+    "change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "repository",
+        "finding_ids",
+        "summary",
+        "files",
+        "status",
+        "verification_run_ids"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "repository": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "finding_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
+        },
+        "summary": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
+        },
+        "status": {
+          "$ref": "#/$defs/workStatus"
+        },
+        "verification_run_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
+        },
+        "extensions": {
+          "$ref": "#/$defs/extensions"
+        }
+      }
+    },
+    "configEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "action",
+        "sensitive",
+        "value_recorded"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "add",
+            "update",
+            "remove",
+            "preserve",
+            "validate"
+          ]
+        },
+        "sensitive": {
+          "type": "boolean"
+        },
+        "value_recorded": {
+          "type": "boolean"
+        },
+        "runtime_source": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "string"
+        },
+        "extensions": {
+          "$ref": "#/$defs/extensions"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "sensitive": {
+                "const": true
+              }
+            },
+            "required": [
+              "sensitive"
+            ]
+          },
+          "then": {
+            "properties": {
+              "value_recorded": {
+                "const": false
+              }
+            }
+          }
+        }
+      ]
+    },
+    "configMigration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "component",
+        "required",
+        "status",
+        "entries"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "component": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "status": {
+          "$ref": "#/$defs/workStatus"
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/configEntry"
+          }
+        },
+        "verification_run_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
+        },
+        "extensions": {
+          "$ref": "#/$defs/extensions"
+        }
+      }
+    },
+    "buildArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "type",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "type": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "extensions": {
+          "$ref": "#/$defs/extensions"
+        }
+      }
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "repository",
+        "revision",
+        "created_at",
+        "status",
+        "commands",
+        "artifacts"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "repository": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "revision": {
+          "$ref": "#/$defs/revision"
+        },
+        "created_at": {
+          "$ref": "#/$defs/dateTime"
+        },
+        "status": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/buildArtifact"
+          }
+        },
+        "extensions": {
+          "$ref": "#/$defs/extensions"
+        }
+      }
+    },
+    "checkResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "status",
+        "checked_at",
+        "evidence"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "status": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "checked_at": {
+          "$ref": "#/$defs/dateTime"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence"
+          }
+        },
+        "extensions": {
+          "$ref": "#/$defs/extensions"
+        }
+      }
+    },
+    "deployment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "environment",
+        "component",
+        "host_ref",
+        "deploy_path",
+        "build_id",
+        "state",
+        "started_at",
+        "finished_at",
+        "backup_references",
+        "checks"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "environment": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "component": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "host_ref": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "deploy_path": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "build_id": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "revision": {
+          "$ref": "#/$defs/revision"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "planned",
+            "deploying",
+            "deployed",
+            "verified",
+            "failed",
+            "rolled_back",
+            "blocked"
+          ]
+        },
+        "started_at": {
+          "$ref": "#/$defs/nullableDateTime"
+        },
+        "finished_at": {
+          "$ref": "#/$defs/nullableDateTime"
+        },
+        "backup_references": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/checkResult"
+          }
+        },
+        "extensions": {
+          "$ref": "#/$defs/extensions"
+        }
+      }
+    },
+    "rollbackPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "recovery_target",
+        "triggers",
+        "steps",
+        "required_artifacts"
+      ],
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/workStatus"
+        },
+        "recovery_target": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "triggers": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
+        },
+        "required_artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
+        },
+        "extensions": {
+          "$ref": "#/$defs/extensions"
+        }
+      }
+    },
+    "rollbackRun": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "deployment_ids",
+        "started_at",
+        "finished_at",
+        "status",
+        "result",
+        "evidence"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "deployment_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
+        },
+        "started_at": {
+          "$ref": "#/$defs/dateTime"
+        },
+        "finished_at": {
+          "$ref": "#/$defs/nullableDateTime"
+        },
+        "status": {
+          "$ref": "#/$defs/workStatus"
+        },
+        "result": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence"
+          }
+        },
+        "extensions": {
+          "$ref": "#/$defs/extensions"
+        }
+      }
+    },
+    "acceptanceRun": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "layer",
+        "scope",
+        "contract_ids",
+        "started_at",
+        "finished_at",
+        "status",
+        "expected",
+        "observed",
+        "evidence"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "layer": {
+          "type": "string",
+          "enum": [
+            "local",
+            "ci",
+            "staging",
+            "production"
+          ]
+        },
+        "scope": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "contract_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
+        },
+        "started_at": {
+          "$ref": "#/$defs/dateTime"
+        },
+        "finished_at": {
+          "$ref": "#/$defs/nullableDateTime"
+        },
+        "status": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "expected": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "observed": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence"
+          }
+        },
+        "extensions": {
+          "$ref": "#/$defs/extensions"
+        }
+      }
+    },
+    "gateCriterion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "description",
+        "status",
+        "acceptance_run_ids"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "description": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "status": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "acceptance_run_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
+        },
+        "extensions": {
+          "$ref": "#/$defs/extensions"
+        }
+      }
+    },
+    "releaseGate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "decision",
+        "decided_at",
+        "criteria",
+        "blocking_items",
+        "required_followups"
+      ],
+      "properties": {
+        "decision": {
+          "$ref": "#/$defs/gateResult"
+        },
+        "decided_at": {
+          "$ref": "#/$defs/nullableDateTime"
+        },
+        "criteria": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/gateCriterion"
+          }
+        },
+        "blocking_items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
+        },
+        "required_followups": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
+        },
+        "extensions": {
+          "$ref": "#/$defs/extensions"
+        }
+      }
+    },
+    "knownLimit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "status",
+        "scope",
+        "impact",
+        "next_action",
+        "related_finding_ids"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "open",
+            "accepted",
+            "mitigated",
+            "resolved",
+            "blocked"
+          ]
+        },
+        "scope": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "impact": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "next_action": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "related_finding_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
+        },
+        "extensions": {
+          "$ref": "#/$defs/extensions"
+        }
+      }
+    },
+    "secretHandling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contains_plaintext_secrets",
+        "contains_embedded_credentials",
+        "prohibited_values_recorded",
+        "redactions_applied",
+        "redacted_fields",
+        "runtime_secret_references",
+        "validation"
+      ],
+      "properties": {
+        "contains_plaintext_secrets": {
+          "const": false
+        },
+        "contains_embedded_credentials": {
+          "const": false
+        },
+        "prohibited_values_recorded": {
+          "const": false
+        },
+        "redactions_applied": {
+          "type": "boolean"
+        },
+        "redacted_fields": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
+        },
+        "runtime_secret_references": {
+          "type": "array",
+          "description": "Names or locations of runtime secret sources only; never secret values.",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
+        },
+        "validation": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail",
+            "not_run"
+          ]
+        },
+        "extensions": {
+          "$ref": "#/$defs/extensions"
+        }
+      }
+    },
+    "gitSafety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "branch",
+        "status_checked_at",
+        "stage_allowlist",
+        "excluded_paths",
+        "unrelated_changes_preserved"
+      ],
+      "properties": {
+        "repository": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "branch": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "status_checked_at": {
+          "$ref": "#/$defs/dateTime"
+        },
+        "stage_allowlist": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
+        },
+        "excluded_paths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
+        },
+        "unrelated_changes_preserved": {
+          "const": true
+        },
+        "extensions": {
+          "$ref": "#/$defs/extensions"
+        }
+      }
+    },
+    "machineNextAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "order",
+        "state",
+        "action",
+        "prerequisites",
+        "success_criteria",
+        "safe_to_automate",
+        "requires_human",
+        "references"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "state": {
+          "$ref": "#/$defs/workStatus"
+        },
+        "action": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "prerequisites": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
+        },
+        "success_criteria": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
+        },
+        "safe_to_automate": {
+          "type": "boolean"
+        },
+        "requires_human": {
+          "type": "boolean"
+        },
+        "references": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
+        },
+        "extensions": {
+          "$ref": "#/$defs/extensions"
+        }
+      }
+    }
+  }
+}

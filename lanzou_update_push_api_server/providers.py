@@ -4,6 +4,7 @@ import hashlib
 import html
 import json
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -15,14 +16,73 @@ from .config import AppConfig, WatcherConfig
 
 
 class ProviderError(RuntimeError):
-    """Raised when a provider cannot fetch a usable file list."""
+    """Raised with a safe machine-readable code for provider failures."""
+
+    def __init__(
+        self,
+        error_code: str = "provider_error",
+        *,
+        retryable: bool = True,
+        status_code: int | None = None,
+        attempts: list[dict[str, Any]] | None = None,
+    ) -> None:
+        candidate = str(error_code or "").strip().lower()
+        safe_error_code = (
+            candidate
+            if re.fullmatch(r"[a-z0-9][a-z0-9_.-]{0,63}", candidate)
+            else "provider_error"
+        )
+        super().__init__(safe_error_code)
+        self.error_code = safe_error_code
+        self.retryable = retryable
+        self.status_code = status_code
+        self.attempts = list(attempts or [])
+
+
+def _safe_identifier(value: Any, fallback: str) -> str:
+    cleaned = re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(value or "").strip()).strip("-")
+    return cleaned[:64] or fallback
+
+
+def _provider_failure(exc: Exception) -> dict[str, Any]:
+    status_code = None
+    retryable = True
+    if isinstance(exc, ProviderError):
+        error_code = exc.error_code
+        status_code = exc.status_code
+        retryable = exc.retryable
+    elif isinstance(exc, requests.ConnectTimeout):
+        error_code = "connect_timeout"
+    elif isinstance(exc, requests.ReadTimeout):
+        error_code = "read_timeout"
+    elif isinstance(exc, requests.Timeout):
+        error_code = "timeout"
+    elif isinstance(exc, requests.ConnectionError):
+        error_code = "connection_error"
+    elif isinstance(exc, requests.HTTPError):
+        error_code = "http_status"
+        response = getattr(exc, "response", None)
+        candidate = getattr(response, "status_code", None)
+        status_code = int(candidate) if isinstance(candidate, int) else None
+        retryable = status_code is None or status_code == 429 or status_code >= 500
+    elif isinstance(exc, (ValueError, json.JSONDecodeError)):
+        error_code = "invalid_response"
+        retryable = False
+    else:
+        error_code = "provider_error"
+    result: dict[str, Any] = {
+        "error_code": error_code,
+        "error_class": type(exc).__name__,
+        "retryable": retryable,
+    }
+    if status_code is not None:
+        result["status_code"] = status_code
+    return result
 
 
 def _stable_file_id(value: Any) -> str:
     """Remove temporary Lanzou query/fragment data from file IDs."""
     text = str(value or "").strip()
-    if "://" in text:
-        return text
     return text.split("?", 1)[0].split("#", 1)[0].strip()
 
 
@@ -56,12 +116,37 @@ class FileEntry:
 
     def fingerprint_payload(self) -> dict[str, str]:
         return {
-            "id": self.id,
+            "id": _stable_file_id(self.id),
             "name": self.name,
             "size": self.size,
             "modified_time": _stable_modified_time(self.modified_time),
-            "link": self.link,
+            "link": _stable_file_link(self.link),
         }
+
+    def canonical_fingerprint_payload(self) -> dict[str, str]:
+        """Return provider-independent fields used for change detection."""
+        return {
+            "key": canonical_file_key(self),
+            "size": re.sub(r"\s+", " ", self.size).strip().casefold(),
+            "modified_time": _stable_modified_time(self.modified_time),
+        }
+
+
+def canonical_file_key(file: FileEntry) -> str:
+    """Identify the same visible file even when providers expose different IDs.
+
+    File names are the only identifier consistently exposed by both the native
+    Lanzou scraper and third-party API. Provider-specific IDs and download
+    links are intentionally used only as fallbacks.
+    """
+    normalized_name = unicodedata.normalize("NFKC", str(file.name or ""))
+    normalized_name = re.sub(r"\s+", " ", normalized_name).strip().casefold()
+    if normalized_name:
+        return f"name:{normalized_name}"
+    stable_link = _stable_file_link(file.link).rstrip("/").casefold()
+    if stable_link:
+        return f"link:{stable_link}"
+    return f"id:{_stable_file_id(file.id).casefold()}"
 
 
 @dataclass(frozen=True)
@@ -76,8 +161,30 @@ class ShareSnapshot:
 
     @property
     def signature(self) -> str:
-        payload = [file.fingerprint_payload() for file in sorted(self.files, key=lambda item: item.id)]
+        payload = sorted(
+            (file.canonical_fingerprint_payload() for file in self.files),
+            key=lambda item: json.dumps(item, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        )
         encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    @property
+    def provider_signature(self) -> str:
+        payload = sorted(
+            (file.fingerprint_payload() for file in self.files),
+            key=lambda item: json.dumps(
+                item,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        )
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
 
     def to_dict(self) -> dict[str, Any]:
@@ -162,7 +269,7 @@ class LanzouWebProvider:
         self.timeout_seconds = timeout_seconds
 
     def fetch(self, watcher: WatcherConfig, _config: AppConfig) -> ShareSnapshot:
-        last_error = "lanzou_web: file list ajax endpoint not found"
+        last_error_code = "file_list_endpoint_not_found"
         for profile in self.browser_profiles:
             session = requests.Session()
             session.headers.update(profile["headers"])
@@ -174,10 +281,10 @@ class LanzouWebProvider:
             if ajax_match:
                 break
             if "arg1=" in page_html and "<title>" not in page_html.lower():
-                last_error = "lanzou_web: anti-bot challenge page returned"
+                last_error_code = "anti_bot_challenge"
                 continue
         else:
-            raise ProviderError(last_error)
+            raise ProviderError(last_error_code)
 
         ajax_url = urljoin(response.url, ajax_match.group(1))
         variables = _extract_js_vars(page_html)
@@ -206,10 +313,10 @@ class LanzouWebProvider:
             try:
                 data = ajax_response.json()
             except ValueError as exc:
-                raise ProviderError(f"lanzou_web: invalid ajax JSON on page {page}") from exc
+                raise ProviderError("invalid_ajax_json") from exc
             if str(data.get("zt")) != "1":
                 if page == 1:
-                    raise ProviderError(f"lanzou_web: ajax status={data.get('zt')} info={data.get('info')}")
+                    raise ProviderError("ajax_status_rejected")
                 break
             rows = data.get("text")
             if not isinstance(rows, list) or not rows:
@@ -261,7 +368,7 @@ class WerApiProvider:
 
     def fetch(self, watcher: WatcherConfig, config: AppConfig) -> ShareSnapshot:
         if not config.wer_api_key:
-            raise ProviderError("wer_api: LANZOU_API_KEY is not configured")
+            raise ProviderError("provider_not_configured", retryable=False)
         payload = {
             "key": config.wer_api_key,
             config.wer_api_url_param: watcher.url,
@@ -277,14 +384,12 @@ class WerApiProvider:
         try:
             body = response.json()
         except ValueError as exc:
-            raise ProviderError("wer_api: response is not JSON") from exc
+            raise ProviderError("invalid_json_response") from exc
         code = body.get("code")
         data = body.get("data")
         if data is None and code not in (0, 1, 200, "0", "1", "200"):
-            raise ProviderError(f"wer_api: code={code} msg={body.get('msg')}")
+            raise ProviderError("provider_status_rejected")
         files = self._extract_files(data, watcher)
-        if not files:
-            raise ProviderError("wer_api: no file entries in response")
         return ShareSnapshot(
             watcher_id=watcher.id,
             title=watcher.title,
@@ -354,21 +459,56 @@ class ProviderChain:
         }
 
     def fetch(self, watcher: WatcherConfig) -> ShareSnapshot:
-        errors: list[str] = []
+        attempts: list[dict[str, Any]] = []
+        empty_snapshot: ShareSnapshot | None = None
+        empty_providers: list[str] = []
         for provider_name in self.config.provider_order:
             provider = self.providers.get(provider_name)
             if not provider:
-                errors.append(f"{provider_name}: unknown provider")
+                attempts.append(
+                    {
+                        "provider": _safe_identifier(provider_name, "unknown-provider"),
+                        "error_code": "unknown_provider",
+                        "error_class": "ProviderConfigurationError",
+                        "retryable": False,
+                    }
+                )
                 continue
             try:
-                return provider.fetch(watcher, self.config)
+                snapshot = provider.fetch(watcher, self.config)
+                if not snapshot.files:
+                    if empty_snapshot is None:
+                        empty_snapshot = snapshot
+                    empty_providers.append(
+                        _safe_identifier(provider_name, "provider")
+                    )
+                    continue
+                return snapshot
             except Exception as exc:
-                message = str(exc)
-                if message.startswith(f"{provider_name}:"):
-                    errors.append(message)
-                else:
-                    errors.append(f"{provider_name}: {message}")
-        raise ProviderError("; ".join(errors) or "no provider configured")
+                attempts.append(
+                    {
+                        "provider": _safe_identifier(provider_name, "provider"),
+                        **_provider_failure(exc),
+                    }
+                )
+        if empty_snapshot is not None:
+            raw_status = dict(empty_snapshot.raw_status)
+            raw_status["empty_candidate"] = True
+            raw_status["empty_providers"] = empty_providers
+            return ShareSnapshot(
+                watcher_id=empty_snapshot.watcher_id,
+                title=empty_snapshot.title,
+                url=empty_snapshot.url,
+                provider=empty_snapshot.provider,
+                fetched_at=empty_snapshot.fetched_at,
+                files=[],
+                raw_status=raw_status,
+            )
+        raise ProviderError(
+            "providers_unavailable" if attempts else "no_provider_configured",
+            retryable=any(item.get("retryable") is True for item in attempts),
+            attempts=attempts,
+        )
 
 
 def snapshot_from_state(value: dict[str, Any]) -> ShareSnapshot:

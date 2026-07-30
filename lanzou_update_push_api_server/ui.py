@@ -75,7 +75,7 @@ def render_dashboard_page() -> str:
         <label><span>通知超时（秒）</span><input id="notifyTimeout" type="number" min="1"></label>
       </div>
       <label class="block" style="margin-top:10px"><span>通知目标 URL（SnowLuma 插件端）</span><input id="notifyUrl"></label>
-      <p class="hint">当前部署建议：蓝奏接口端 `192.168.3.100:6178`，插件端回调 `192.168.3.89:6108`。</p>
+      <p class="hint">请填写当前内网实际地址；程序不再内置固定生产 IP。插件回调路径为 `/api/lanzou-update/event`。</p>
     </div>
   </section>
 

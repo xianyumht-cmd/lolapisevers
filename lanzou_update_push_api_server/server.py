@@ -8,7 +8,9 @@ from typing import Any
 import requests
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
+from fastapi.responses import JSONResponse
 
+from core.build_info import load_build_info
 from .admin_api import build_admin_overview
 from .api_debugger import fetch_openapi, invoke_api
 from .config import AppConfig, sanitized_config
@@ -53,6 +55,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     main_port = int(os.getenv("APP_PORT", "5001"))
     main_base_url = f"http://127.0.0.1:{main_port}"
     lanzou_base_url = f"http://127.0.0.1:{app_config.port}"
+    build_info = {**load_build_info(), "component": "lanzou-update-monitor"}
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -64,7 +67,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     app = FastAPI(
         title="Lanzou Update Push API Server",
-        version="0.3.1",
+        version=str(build_info.get("release") or "0.4.0"),
         lifespan=lifespan,
     )
     app.middleware("http")(control_api_guard)
@@ -73,6 +76,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     app.state.state_recovery = state_recovery
     app.state.main_base_url = main_base_url
     app.state.lanzou_base_url = lanzou_base_url
+    app.state.build_info = build_info
 
     @app.get("/", response_class=HTMLResponse)
     async def dashboard() -> str:
@@ -90,7 +94,23 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     async def health() -> dict[str, Any]:
         status = service.status()
         status["state_recovery"] = app.state.state_recovery
+        status["build"] = app.state.build_info
         return status
+
+    @app.get("/livez")
+    async def livez() -> dict[str, Any]:
+        return {"status": "ok", "liveness": "up", "build": app.state.build_info}
+
+    @app.get("/readyz")
+    async def readyz():
+        status_payload = service.status()
+        ready = status_payload.get("ready") is True and status_payload.get("running") is True
+        status_payload["build"] = app.state.build_info
+        return JSONResponse(status_code=200 if ready else 503, content=status_payload)
+
+    @app.get("/build-info")
+    async def build_info_endpoint() -> dict[str, Any]:
+        return dict(app.state.build_info)
 
     @app.get("/config")
     async def get_config() -> dict[str, Any]:
@@ -213,10 +233,24 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         return {"ok": True, "events": service.store.recent_events(limit)}
 
     @app.post("/scan")
-    async def scan(watcher_id: str | None = None, notify: bool = True) -> dict[str, Any]:
+    async def scan(watcher_id: str | None = None, notify: bool = True):
         if watcher_id:
-            return {"ok": True, "results": [await service.scan_watcher(watcher_id, notify=notify)]}
-        return {"ok": True, "results": await service.scan_all(notify=notify)}
+            results = [
+                await service.scan_watcher(
+                    watcher_id,
+                    notify=notify,
+                )
+            ]
+        else:
+            results = await service.scan_all(notify=notify)
+        ok = all(result.get("ok") is True for result in results)
+        return JSONResponse(
+            status_code=200 if ok else 502,
+            content={
+                "ok": ok,
+                "results": results,
+            },
+        )
 
     @app.get("/files/{watcher_id}")
     async def files(watcher_id: str) -> dict[str, Any]:

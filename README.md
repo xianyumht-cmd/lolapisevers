@@ -54,6 +54,12 @@ $env:SO1_MAX_CONCURRENT_PAGES = "2"
 # API
 $env:APP_HOST = "0.0.0.0"
 $env:APP_PORT = "5001"
+
+# LOL 封禁查询 Provider（示例；真实 URL/凭据仅放在本机文件）
+$env:LOL_BAN_PROVIDERS_JSON = '[{"name":"primary","url":"http://INTRANET_PROVIDER/ban?qq={qq}","method":"GET","timeout_seconds":8}]'
+$env:LOL_BAN_NORMAL_CACHE_SECONDS = "60"
+$env:LOL_BAN_BANNED_CACHE_SECONDS = "300"
+$env:LOL_BAN_STALE_CACHE_SECONDS = "86400"
 ```
 
 ## 启动服务
@@ -78,6 +84,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\ops\run_service.ps1
 
 ```powershell
 Invoke-RestMethod "http://127.0.0.1:5001/health"
+Invoke-RestMethod "http://127.0.0.1:5001/livez"
+Invoke-RestMethod "http://127.0.0.1:5001/readyz"
 ```
 
 完全就绪时返回：
@@ -94,7 +102,7 @@ Invoke-RestMethod "http://127.0.0.1:5001/health"
 }
 ```
 
-健康端始终用 HTTP 200 表示 API 进程仍能响应，并通过字段区分状态：
+兼容端 `/health` 始终用 HTTP 200 表示 API 进程仍能响应，并通过字段区分状态。`/livez` 只检查进程存活；`/readyz` 会执行真实 MySQL `SELECT 1` 和浏览器状态检查，未就绪时返回 HTTP 503：
 
 - `liveness=up`：API 进程存活，健康端可访问。
 - `ready=true` 且 `status=ok`：MySQL 与 so1 浏览器均可用，可以接管业务流量。
@@ -140,12 +148,34 @@ GET /shard_query?hero={英雄名}&output=image|json
 GET /aram_augments?hero={英雄名}&output=image|json
 ```
 
+英雄别名会先归一到 canonical alias；并发相同查询会合并为一次上游请求。图片成品带 `ETag` 和短期 `Cache-Control`，同一数据不会重复下载素材和重新编码 PNG。
+
 ### LOL 封禁查询
 
 ```http
 GET /lolban?qq={QQ号}&output=text|json
 GET /api/v2/lolban?qq={QQ号}&output=text|json
 ```
+
+插件对接使用 `/api/v2/lolban?qq=...&output=json&compat=napcat`。Provider 顺序完全由 `LOL_BAN_PROVIDERS_JSON` 配置；代码不再内置第三方地址。实时 Provider 全部失败时，可在 `LOL_BAN_STALE_CACHE_SECONDS` 窗口内返回最近一次成功结果，响应的 `source` 会明确标为 `stale`。
+
+## 构建与部署追踪
+
+提交并确认工作树干净后生成部署元数据：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Generate-BuildInfo.ps1
+```
+
+部署产物必须包含生成的 `build-info.json`，但该文件不提交到 Git。以下接口会返回完整 40 位源码提交：
+
+```text
+GET /build-info
+GET /health
+GET /readyz
+```
+
+若 `commit_complete=false`，该实例不可通过发布追溯门禁。
 
 FastAPI 自动接口文档：
 

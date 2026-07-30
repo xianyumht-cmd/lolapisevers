@@ -183,11 +183,19 @@ def _status_url_from_notify_target(config: AppConfig) -> str:
         if query.get("token"):
             status_query["token"] = query["token"][0]
         return urlunparse((parsed.scheme, parsed.netloc, "/api/status", "", urlencode(status_query), ""))
-    return "http://192.168.3.89:6108/api/status?token=gg6108"
+    return ""
 
 
 def _plugin_status(config: AppConfig) -> dict[str, Any]:
     url = _status_url_from_notify_target(config)
+    if not url:
+        return {
+            "ok": False,
+            "configured": False,
+            "status": "not_configured",
+            "url": "",
+            "error": "notify_target_not_configured",
+        }
     try:
         data = _fetch_json(url)
         return {"ok": data.get("ok") is not False and "error" not in data, "url": _mask_url_secret(url), "data": data}
@@ -254,16 +262,23 @@ def _clean_notify_targets(raw: Any) -> list[dict[str, Any]]:
     if not isinstance(raw, list):
         return []
     targets = []
-    for item in raw:
+    names: set[str] = set()
+    for index, item in enumerate(raw, start=1):
         if not isinstance(item, dict):
             continue
         url = str(item.get("url") or "").strip()
         if not url:
             continue
+        name = str(item.get("name") or "").strip()
+        if not name:
+            raise ValueError(f"notify target name must be non-empty (index {index})")
+        if name in names:
+            raise ValueError(f"notify target names must be unique (index {index})")
+        names.add(name)
         headers = item.get("headers") if isinstance(item.get("headers"), dict) else {}
         targets.append(
             {
-                "name": str(item.get("name") or "target").strip(),
+                "name": name,
                 "enabled": item.get("enabled") is not False,
                 "url": url,
                 "timeout_seconds": max(0.1, min(120.0, float(item.get("timeout_seconds") or 8.0))),

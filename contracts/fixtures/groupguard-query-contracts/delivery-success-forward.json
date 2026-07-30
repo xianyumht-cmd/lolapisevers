@@ -1,0 +1,43 @@
+{
+  "protocol": "groupguard-query-delivery.v1",
+  "ok": true,
+  "feature": "aram",
+  "request_id": "srv-forward-001",
+  "client_request_id": "cli-forward-001",
+  "delivery": {
+    "kind": "forward",
+    "segments": [
+      {
+        "type": "forward",
+        "nodes": [
+          {
+            "segments": [
+              {
+                "type": "text",
+                "text": "海克斯大乱斗强化榜｜九尾妖狐 · 阿狸\n第 1 页"
+              }
+            ]
+          },
+          {
+            "segments": [
+              {
+                "type": "text",
+                "text": "核心出装与技能顺序\n第 2 页"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "error": null,
+  "retry": {
+    "allowed": false,
+    "after_seconds": 0
+  },
+  "meta": {
+    "source": "cache",
+    "stale": false,
+    "count": 10
+  }
+}

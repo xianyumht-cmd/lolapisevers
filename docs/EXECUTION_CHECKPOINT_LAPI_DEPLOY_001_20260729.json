@@ -1,0 +1,124 @@
+{
+  "schema_version": "lapi-deploy-execution-checkpoint.v1",
+  "updated_at": "2026-07-29T16:56:00+08:00",
+  "repository": "xianyumht-cmd/lolapisevers",
+  "task_id": "LAPI-DEPLOY-001",
+  "task_status": "production_recovery_required",
+  "deployment_completed": false,
+  "merge_allowed": false,
+  "groupguard_migration_allowed": false,
+  "release_branch": "release/lapi-query-hardening-20260729",
+  "draft_pr": 17,
+  "release_branch_head_before_handoff_docs": "3d4e5d8af635705e33599f02bc7dc648d250568d",
+  "handoff_docs_commit": "1ed0c6b546824b7b3a26a875efcc1f23c49908aa",
+  "production": {
+    "project_root": "D:\\project2\\lolapisevers",
+    "service_name": "LOLDataSystem",
+    "base_url": "http://127.0.0.1:5001",
+    "last_verified_git_head": "bd2d92996f8c7af4e6fd51f021f1546bda250a8a",
+    "service_manager_state": "running_reported",
+    "livez_state": "unreachable",
+    "effective_state": "api_unavailable",
+    "backup_directory": "D:\\project2\\lolapisevers.deploy-backups\\20260729-163439-lapi-query-hardening"
+  },
+  "operator_next_uploads": [
+    "recovery diagnostics v2 complete console output",
+    "diagnostics-YYYYMMDD-HHMMSS.zip"
+  ],
+  "next_action": {
+    "id": "LAPI-RECOVERY-DIAG-002",
+    "goal": "Restore port 5001 before any further deployment attempt",
+    "package_already_provided": "loldata-recovery-diagnose-v2-20260729.zip",
+    "must_analyze_first": [
+      "00-summary-before.txt",
+      "01-service-qc.txt",
+      "02-service-queryex.txt",
+      "10-direct-run.stdout.log",
+      "11-direct-run.stderr.log",
+      "12-direct-result.txt",
+      "20-service-retest.txt",
+      "30-temporary-direct.stdout.log",
+      "31-temporary-direct.stderr.log",
+      "32-temporary-direct-result.txt",
+      "99-final-health.txt"
+    ]
+  },
+  "hard_stops": [
+    "Do not run deployment packages v1 through v5",
+    "Do not create or execute v6 before port 5001 is healthy",
+    "Do not merge PR 17",
+    "Do not merge stacked PRs 8 through 16",
+    "Do not begin GG-CLIENT-001",
+    "Do not delete the 20260729-163439 backup directory"
+  ],
+  "confirmed_findings": [
+    {
+      "id": "DEPLOY_TEST_CWD_INVALID",
+      "status": "confirmed",
+      "evidence": "Thirty project-local module imports failed because unittest was launched while the process working directory remained the temporary extracted script directory instead of the repository root.",
+      "examples": [
+        "cache",
+        "services",
+        "routers",
+        "core",
+        "renderers",
+        "lanzou_update_push_api_server"
+      ]
+    },
+    {
+      "id": "ROLLBACK_API_NOT_RESTORED",
+      "status": "confirmed",
+      "evidence": "Rollback checked out bd2d92996f8c7af4e6fd51f021f1546bda250a8a and Windows Service Control Manager reported Running, but /livez remained unreachable."
+    },
+    {
+      "id": "SERVICE_STARTUP_ROOT_CAUSE",
+      "status": "unknown_pending_diagnostics",
+      "rule": "Do not infer build-info, NSSM, Python, port, or configuration root cause before reading diagnostics v2 output."
+    }
+  ],
+  "attempt_history": [
+    {
+      "version": "v1",
+      "result": "preflight_failed",
+      "production_changed": false,
+      "cause": "UTF-8 script text reconstruction corrupted PowerShell syntax"
+    },
+    {
+      "version": "v2",
+      "result": "preflight_failed",
+      "production_changed": false,
+      "cause": "Windows PowerShell 5.1 UTF-8 without BOM parsing incompatibility"
+    },
+    {
+      "version": "v3",
+      "result": "preflight_failed",
+      "production_changed": false,
+      "cause": "Git progress on stderr promoted to NativeCommandError"
+    },
+    {
+      "version": "v4",
+      "result": "preflight_failed",
+      "production_changed": false,
+      "cause": "Windows PowerShell 5.1 mixed native output or generic collection conversion raised Argument types do not match"
+    },
+    {
+      "version": "v5",
+      "result": "deployment_failed_and_rollback_incomplete",
+      "production_changed": true,
+      "target_commit": "3d4e5d8af635705e33599f02bc7dc648d250568d",
+      "rollback_commit": "bd2d92996f8c7af4e6fd51f021f1546bda250a8a",
+      "failure": "Full tests ran with invalid cwd and failed project-local imports",
+      "rollback_failure": "Windows service reported Running but port 5001 did not become healthy"
+    }
+  ],
+  "post_recovery_deployment_redesign": [
+    "Run target tests in a detached temporary git worktree before stopping production",
+    "Set cwd and PYTHONPATH to the target worktree",
+    "Generate and validate build-info before production downtime",
+    "Stop production only after all preflight tests pass",
+    "Record source commit, build-info, local config, snapshots, service configuration, and startup logs for rollback",
+    "Treat HTTP health as authoritative instead of Windows service state alone",
+    "Provide direct-run fallback and diagnostics when rollback service startup fails"
+  ],
+  "new_chat_instruction": "Continue LAPI-DEPLOY-001 production recovery using the three handoff files. Wait for the operator's recovery diagnostics v2 output and ZIP, restore port 5001 first, and do not continue deployment."
+}

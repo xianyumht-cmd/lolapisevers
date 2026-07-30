@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "plan_id": "GGK-INTRANET-QUERY-20260728",
+  "repository": "xianyumht-cmd/lolapisevers",
+  "base_branch": "codex/production-integration-audit-20260726",
+  "status": "deployment_prepared_operator_execution_required",
+  "role": "sole_public_upstream_gateway_and_query_business_service",
+  "architecture_contract": "groupguard-query-delivery.v1",
+  "completed_steps": [
+    {"id": "LAPI-DOC-001", "status": "completed"},
+    {"id": "LAPI-SNAPSHOT-001", "status": "completed", "pull_request": 9, "verification_run_id": 30364375252},
+    {"id": "LAPI-UPSTREAM-001", "status": "completed", "pull_request": 10, "verification_run_id": 30366096077},
+    {"id": "LAPI-SHARD-001", "status": "completed", "pull_request": 11, "verification_run_id": 30368753753},
+    {"id": "LAPI-ARAM-001", "status": "completed", "pull_request": 12, "verification_run_id": 30371393801},
+    {"id": "LAPI-BAN-001", "status": "completed", "pull_request": 13, "verification_run_id": 30373671827},
+    {"id": "LAPI-DELIVERY-001", "status": "completed", "pull_request": 14, "verification_run_id": 30406328207},
+    {"id": "LAPI-OBS-001", "status": "completed", "pull_request": 15, "verification_run_id": 30428182622},
+    {"id": "LAPI-CONTRACT-001", "status": "completed", "pull_request": 16, "verification_run_id": 30429420936, "groupguard_pull_request": 15, "groupguard_ci_run_id": 30429440769, "groupguard_build_run_id": 30429440764}
+  ],
+  "steps": [
+    {"id": "LAPI-SNAPSHOT-001", "status": "completed", "pull_request": 9},
+    {"id": "LAPI-UPSTREAM-001", "status": "completed", "pull_request": 10},
+    {"id": "LAPI-SHARD-001", "status": "completed", "pull_request": 11},
+    {"id": "LAPI-ARAM-001", "status": "completed", "pull_request": 12},
+    {"id": "LAPI-BAN-001", "status": "completed", "pull_request": 13},
+    {"id": "LAPI-DELIVERY-001", "status": "completed", "pull_request": 14},
+    {"id": "LAPI-OBS-001", "status": "completed", "pull_request": 15},
+    {"id": "LAPI-CONTRACT-001", "status": "completed", "pull_request": 16},
+    {
+      "id": "LAPI-DEPLOY-001",
+      "status": "operator_execution_required",
+      "depends_on": ["LAPI-SHARD-001", "LAPI-ARAM-001", "LAPI-BAN-001", "LAPI-DELIVERY-001", "LAPI-OBS-001", "LAPI-CONTRACT-001"],
+      "release_branch": "release/lapi-query-hardening-20260729",
+      "implementation_commit": "cdebd3643c8f359c1f6dbed8bb3dcecfe6916240",
+      "production_previous_commit": "bbc8ea2d2687820e4c4a3b400c7568a771f10519",
+      "production_audit_head": "bd2d92996f8c7af4e6fd51f021f1546bda250a8a",
+      "outputs": [
+        "ops/Deploy-LapiQueryHardening.ps1",
+        "ops/Rollback-LapiQueryHardening.ps1",
+        "ops/Test-LapiQueryHardening.ps1",
+        "tests/test_lapi_deploy_scripts.py",
+        "docs/releases/LAPI_DEPLOY_001_20260729.md",
+        "docs/releases/LAPI_DEPLOY_001_20260729.json"
+      ],
+      "completion_condition": "Production deployment-record.json has status completed, verification-report.json has status pass, and /build-info reports the pinned release commit."
+    }
+  ],
+  "current_findings": [
+    {"severity": "P1", "code": "PRODUCTION_OPERATOR_ACTION_REQUIRED", "path": "192.168.3.100 D:/project2/lolapisevers", "summary": "Repository integration and guarded deployment tooling are prepared, but ChatGPT cannot directly execute on the Windows production host."},
+    {"severity": "P1", "code": "PLUGIN_PUBLIC_SHARD_REMAINS", "path": "groupguard-system/onebot-plugin-groupguard/src/services/interaction_service.ts", "summary": "The deployed GroupGuard still downloads public shard and hero data until service deployment succeeds and GG-CLIENT-001 begins."},
+    {"severity": "P2", "code": "DRAFT_STACK_RETAINED", "path": "pull requests 8-16", "summary": "The reviewed Draft PR stack remains unchanged; the release branch provides one linear deployment head without merging or rewriting those PRs."}
+  ],
+  "release_manifest": "docs/releases/LAPI_DEPLOY_001_20260729.json",
+  "next_recommended_action": {
+    "step_id": "LAPI-DEPLOY-001-PRODUCTION-RUN",
+    "summary": "Run the pinned one-click deployment script as Administrator on the Windows host, then return deployment-record.json and verification-report.json for final acceptance."
+  },
+  "next_after_success": {
+    "repository": "xianyumht-cmd/groupguard-system",
+    "step_id": "GG-CLIENT-001"
+  },
+  "production_rule": "Deploy lolapisevers first, retain rollback backups, verify old endpoint compatibility and new contract health, then migrate GroupGuard. Never restore plugin-side public fallback."
+}

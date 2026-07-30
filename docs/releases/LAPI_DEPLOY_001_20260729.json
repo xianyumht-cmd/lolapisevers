@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "step_id": "LAPI-DEPLOY-001",
+  "release_id": "lapi-query-hardening-20260729",
+  "status": "operator_execution_required",
+  "repository": "xianyumht-cmd/lolapisevers",
+  "release_branch": "release/lapi-query-hardening-20260729",
+  "implementation_commit": "cdebd3643c8f359c1f6dbed8bb3dcecfe6916240",
+  "production_audit_branch": "codex/production-integration-audit-20260726",
+  "production_audit_head": "bd2d92996f8c7af4e6fd51f021f1546bda250a8a",
+  "production_previous_commit": "bbc8ea2d2687820e4c4a3b400c7568a771f10519",
+  "target_host": "192.168.3.100",
+  "project_root": "D:\\project2\\lolapisevers",
+  "service_name_default": "LOLDataSystem",
+  "base_url_default": "http://127.0.0.1:5001",
+  "stacked_pull_requests": [8, 9, 10, 11, 12, 13, 14, 15, 16],
+  "prepared_tools": [
+    "ops/Deploy-LapiQueryHardening.ps1",
+    "ops/Rollback-LapiQueryHardening.ps1",
+    "ops/Test-LapiQueryHardening.ps1"
+  ],
+  "safety_rules": [
+    "require administrator privileges",
+    "reject tracked dirty workspace",
+    "verify exact remote repository and exact target commit",
+    "require current production commit to be an ancestor of the release",
+    "backup local environment, monitor configuration, state, build metadata and query snapshots before stopping the service",
+    "restrict backup directory ACL to the current administrator and SYSTEM",
+    "deploy with detached HEAD without moving the production branch",
+    "run the full Python test suite before service startup",
+    "generate and verify build-info against the exact release commit",
+    "automatically roll back after any post-stop failure"
+  ],
+  "production_acceptance": [
+    "GET /livez returns HTTP 200",
+    "GET /readyz returns HTTP 200",
+    "GET /build-info reports the exact clean target commit",
+    "legacy /shard_query remains compatible",
+    "legacy /aram_augments remains compatible",
+    "POST /api/v1/groupguard/query returns groupguard-query-delivery.v1 for shard and ARAM",
+    "optional lolban delivery verification passes when an operator supplies a test QQ",
+    "GET /api/v1/operations/query-observability returns query-observability.v1 and is not down",
+    "shard, hero and at least one ARAM payload snapshot exist after prewarming"
+  ],
+  "completion_evidence_required": [
+    "deployment-record.json with status completed",
+    "verification-report.json with status pass",
+    "service build-info commit equals the pinned release commit",
+    "backup directory retained for rollback"
+  ],
+  "next_on_success": {
+    "repository": "xianyumht-cmd/groupguard-system",
+    "step_id": "GG-CLIENT-001"
+  },
+  "next_on_failure": {
+    "step_id": "LAPI-DEPLOY-001-ROLLBACK-REVIEW",
+    "summary": "Keep the generated backup directory and deployment record, confirm rollback health, then diagnose the failed gate before retrying."
+  }
+}
