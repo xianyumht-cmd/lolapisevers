@@ -1,0 +1,52 @@
+{
+  "schema": "lapi-video-free-windows-retry-status.v1",
+  "updated_at": "2026-07-30T12:20:00+08:00",
+  "production": {
+    "commit": "ba54d83d7dd8cdbbb213b7bf38264655d671f134",
+    "service": "LOLDataSystem",
+    "status": "running_after_successful_automatic_rollback"
+  },
+  "target_runtime_commit": "f221b64649763eb8d325d87348fd2f42f48a6485",
+  "attempts": [
+    {
+      "package_revision": "v1",
+      "result": "rolled_back",
+      "cause": "unittest ran outside the repository root, so repository modules were not importable"
+    },
+    {
+      "package_revision": "workdir-fix-v2",
+      "result": "rolled_back",
+      "cause": "the default-catalog unit test selected the preserved local dynamic catalog, where video.info was still configured"
+    }
+  ],
+  "repository_test_fix": {
+    "commit": "3549808a3d9368dec601b9f5cfc73f696c576748",
+    "workflow_run": 30513908381,
+    "conclusion": "success",
+    "rule": "tests that assert repository defaults must explicitly select DEFAULT_CATALOG_PATH"
+  },
+  "operator_package_v3": {
+    "filename": "LOLDataSystem-video-free-offline-safe-deploy-local-catalog-fix-v3.zip",
+    "sha256": "aae8835e86237d7250b7bc37fd15d6dc62d0d2078f7048dac8da7cf5dfcd4c0e",
+    "bundle_sha256": "27ac1baa493e7bc00b451b1fe1711ca82bf0f7c052d640e102ff48037b1576a1",
+    "status": "operator_execution_required",
+    "safety": [
+      "run unittest from the repository root",
+      "temporarily isolate and always restore config/dynamic-query-providers.json during tests",
+      "include the local dynamic catalog in the formal deployment backup when present",
+      "back up the configured dynamic catalog before cleanup",
+      "remove only command id video.info",
+      "preserve all non-video dynamic commands and risk-provider configuration",
+      "require video feature HTTP 400",
+      "require dynamic video.info HTTP 404",
+      "restore local configuration and roll back the full service deployment on any post-deployment failure"
+    ]
+  },
+  "groupguard": {
+    "new_dist_allowed": false,
+    "reason": "wait for successful Windows deployment and direct protocol acceptance",
+    "revoked_commit": "029118346adaa9232aeceeb283f5d243a407dc95",
+    "revoked_artifact": "8732028955"
+  },
+  "pull_request_policy": "PR 19 and PR 17 remain draft, open, and unmerged until production acceptance"
+}
