@@ -10,9 +10,12 @@ from services.api_parser_center import (
     ParserCenterError,
     enabled_providers,
     execute_request,
+    find_provider,
+    load_config,
     parse_response,
     prepare_request,
 )
+from services.contact_risk_retry_queue import get_contact_risk_retry_queue
 from services.contact_risk_service import report_contact_risk as save_local_contact_risk_report
 
 
@@ -43,6 +46,10 @@ def _field_text(fields: Mapping[str, Any], keys: tuple[str, ...], limit: int = 5
         if text:
             return text
     return ""
+
+
+def _feature_for_category(category: str) -> str:
+    return "peer_report" if str(category or "").strip().lower() == "peer" else "scammer_report"
 
 
 def _submission_parameters(
@@ -123,11 +130,40 @@ async def _submit_provider(
 
 
 def load_report_providers(category: str) -> list[Dict[str, Any]]:
-    feature = "peer_report" if category == "peer" else "scammer_report"
+    feature = _feature_for_category(category)
     try:
         return enabled_providers(feature, operation="report")[:10]
     except ParserCenterError as exc:
         raise HTTPException(status_code=503, detail="举报提交解析中心配置无效") from exc
+
+
+def _enqueue_failed_submissions(
+    *,
+    request_id: str,
+    feature: str,
+    parameters: Mapping[str, Any],
+    submissions: list[Mapping[str, Any]],
+) -> int:
+    queue = get_contact_risk_retry_queue()
+    queued = 0
+    for submission in submissions:
+        status = str(submission.get("status") or "")
+        outcome = str(submission.get("outcome") or "")
+        if status == "ok" and outcome in {"accepted", "pending", "rejected"}:
+            continue
+        provider_id = str(submission.get("provider") or "").strip()
+        if not provider_id:
+            continue
+        queue.enqueue(
+            request_id=request_id,
+            feature=feature,
+            provider_id=provider_id,
+            parameters=parameters,
+            error_class=str(submission.get("error_class") or outcome or "failed"),
+            delay_seconds=60,
+        )
+        queued += 1
+    return queued
 
 
 async def report_contact_risk(
@@ -145,8 +181,8 @@ async def report_contact_risk(
     """Persist locally first, then submit configured third-party reports.
 
     The local store remains the source of durability. A duplicate ``request_id``
-    is never submitted again, preventing accidental repeated reports. A broken
-    submission configuration cannot hide or undo the successful local write.
+    is never submitted again, preventing accidental repeated reports. Failed
+    provider submissions are queued without storing provider URLs or secrets.
     """
 
     local_payload = await save_local_contact_risk_report(
@@ -168,6 +204,7 @@ async def report_contact_risk(
             "submissions": [],
             "submission_status": "configuration_error",
             "configured_submission_count": 0,
+            "queued_submission_count": 0,
             "submission_error_class": type(exc).__name__,
         }
     if bool(local_payload.get("duplicate")):
@@ -176,6 +213,7 @@ async def report_contact_risk(
             "submissions": [],
             "submission_status": "skipped_duplicate",
             "configured_submission_count": len(profiles),
+            "queued_submission_count": 0,
         }
     if not profiles:
         return {
@@ -183,11 +221,13 @@ async def report_contact_risk(
             "submissions": [],
             "submission_status": "not_configured",
             "configured_submission_count": 0,
+            "queued_submission_count": 0,
         }
 
+    normalized_category = str(local_payload.get("category") or category)
     parameters = _submission_parameters(
         request_id=request_id,
-        category=str(local_payload.get("category") or category),
+        category=normalized_category,
         identifier_type=str(local_payload.get("identifier_type") or identifier_type),
         identifier_value=str(local_payload.get("identifier_value") or identifier_value),
         content=content,
@@ -211,12 +251,99 @@ async def report_contact_risk(
         submission_status = "unavailable"
     else:
         submission_status = "partial"
+    queued_count = await asyncio.to_thread(
+        _enqueue_failed_submissions,
+        request_id=request_id,
+        feature=_feature_for_category(normalized_category),
+        parameters=parameters,
+        submissions=submissions,
+    )
     return {
         **local_payload,
         "submissions": submissions,
         "submission_status": submission_status,
         "configured_submission_count": len(profiles),
+        "queued_submission_count": queued_count,
     }
+
+
+def list_report_retry_queue(*, state: str = "", limit: int = 100) -> Dict[str, Any]:
+    items = get_contact_risk_retry_queue().list(state=state, limit=limit)
+    return {
+        "ok": True,
+        "items": items,
+        "count": len(items),
+    }
+
+
+async def retry_report_queue(*, queue_id: int = 0, limit: int = 20) -> Dict[str, Any]:
+    queue = get_contact_risk_retry_queue()
+    items = await asyncio.to_thread(queue.due, limit=limit, queue_id=queue_id)
+    if not items:
+        return {"ok": True, "processed": 0, "completed": 0, "pending": 0, "rejected": 0}
+    try:
+        config = load_config()
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": "解析中心配置无法读取",
+            "error_class": type(exc).__name__,
+            "processed": 0,
+        }
+
+    completed = 0
+    pending = 0
+    rejected = 0
+    results: list[Dict[str, Any]] = []
+    for item in items:
+        queue_item_id = int(item.get("queue_id") or 0)
+        try:
+            profile = find_provider(
+                config,
+                str(item.get("feature") or ""),
+                str(item.get("provider_id") or ""),
+            )
+            result = await _submit_provider(profile, item.get("parameters") or {})
+        except Exception as exc:
+            result = {
+                "status": "unavailable",
+                "outcome": "unavailable",
+                "error_class": type(exc).__name__,
+            }
+        outcome = str(result.get("outcome") or "")
+        if result.get("status") == "ok" and outcome in {"accepted", "pending"}:
+            await asyncio.to_thread(queue.mark_success, queue_item_id)
+            completed += 1
+        elif result.get("status") == "ok" and outcome == "rejected":
+            await asyncio.to_thread(queue.mark_rejected, queue_item_id)
+            rejected += 1
+        else:
+            await asyncio.to_thread(
+                queue.mark_failed,
+                queue_item_id,
+                error_class=str(result.get("error_class") or outcome or "failed"),
+            )
+            pending += 1
+        results.append(
+            {
+                "queue_id": queue_item_id,
+                "status": str(result.get("status") or ""),
+                "outcome": outcome,
+            }
+        )
+    return {
+        "ok": True,
+        "processed": len(items),
+        "completed": completed,
+        "pending": pending,
+        "rejected": rejected,
+        "results": results,
+    }
+
+
+def remove_report_retry_item(queue_id: int) -> Dict[str, Any]:
+    removed = get_contact_risk_retry_queue().remove(queue_id)
+    return {"ok": removed, "queue_id": int(queue_id)}
 
 
 def _unique_submission_values(payload: Mapping[str, Any], key: str, limit: int) -> list[str]:
@@ -241,6 +368,7 @@ def format_contact_risk_report_text(payload: Mapping[str, Any]) -> str:
         f"累计举报次数：{int(record.get('report_count') or 0)}",
     ]
     status = str(payload.get("submission_status") or "not_configured")
+    queued_count = int(payload.get("queued_submission_count") or 0)
     if status == "skipped_duplicate":
         lines.append("本次请求未重复计数，也未重复提交。")
         return "\n".join(lines)
@@ -260,6 +388,8 @@ def format_contact_risk_report_text(payload: Mapping[str, Any]) -> str:
         lines.append("联网提交暂未完成，本地记录已保留。")
     else:
         lines.append("提交状态：部分完成；本地记录已保留")
+    if queued_count > 0:
+        lines.append(f"待补交：已加入 {queued_count} 项安全重试队列")
 
     case_ids = _unique_submission_values(payload, "case_id", 5)
     review_statuses = _unique_submission_values(payload, "review_status", 5)
@@ -287,4 +417,5 @@ def contact_risk_report_meta(payload: Mapping[str, Any]) -> Dict[str, Any]:
         "successful_submission_count": sum(
             1 for item in submissions if isinstance(item, Mapping) and item.get("status") == "ok"
         ),
+        "queued_submission_count": int(payload.get("queued_submission_count") or 0),
     }
