@@ -8,6 +8,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
 from renderers.cross_image import build_cross_image_response
+from renderers.query_text_card import build_query_text_card_response
 from renderers.shard_image import build_shard_image_response
 from routers.aram_augments import _build_cached_image_response
 from services.aram_augments_service import query_aram_augments
@@ -70,7 +71,15 @@ _REPORT_FEATURE_ALIASES = {
     "peer_report": "peer_report",
     "举报同行": "peer_report",
 }
-_IMAGE_FEATURES = {"shard", "aram", "battle"}
+_IMAGE_FEATURES = {
+    "shard",
+    "aram",
+    "battle",
+    "lolban",
+    "scammer",
+    "peer",
+    "dynamic",
+}
 
 
 def _canonical_feature(value: Any) -> str:
@@ -132,47 +141,80 @@ def _filename(feature: str, payload: Mapping[str, Any]) -> str:
         hero.get("alias")
         or hero.get("name")
         or payload.get("name")
+        or payload.get("qq")
+        or payload.get("identifier_value")
         or "result"
     ).strip()
-    safe = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in identity).strip("-")
+    safe = "".join(
+        ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in identity
+    ).strip("-")
     return f"{feature}-{safe or 'result'}.png"
 
 
-async def _render_feature_image(request: Request, feature: str, payload: Dict[str, Any]) -> Response:
+async def _render_feature_image(
+    request: Request,
+    feature: str,
+    payload: Dict[str, Any],
+    text: str,
+) -> Response:
     ctx = getattr(request.app.state, "ctx", None)
     if feature == "shard":
         return await asyncio.to_thread(build_shard_image_response, ctx, payload)
     if feature == "battle":
         return await asyncio.to_thread(build_cross_image_response, ctx, payload)
+    if feature == "aram":
+        return await asyncio.to_thread(
+            _build_cached_image_response,
+            ctx,
+            payload,
+            request.headers.get("if-none-match", ""),
+        )
     return await asyncio.to_thread(
-        _build_cached_image_response,
-        ctx,
+        build_query_text_card_response,
+        feature,
+        text,
         payload,
-        request.headers.get("if-none-match", ""),
     )
 
 
-def _delivery_for_text(text: str, capabilities: Mapping[str, bool], preferred: str):
+def _delivery_for_text(
+    text: str,
+    capabilities: Mapping[str, bool],
+    preferred: str,
+):
     delivery = choose_text_delivery(text, capabilities, preferred)
     if delivery is None:
         raise ValueError("客户端未声明可用的文本或转发能力")
     return delivery
 
 
-def _meta_for_feature(feature: str, payload: Mapping[str, Any], *, delivery_fallback: str = ""):
+def _meta_for_feature(
+    feature: str,
+    payload: Mapping[str, Any],
+    *,
+    delivery_fallback: str = "",
+):
     if feature == "battle":
         return battle_meta(payload, delivery_fallback=delivery_fallback)
     if feature in {"scammer", "peer"}:
-        return contact_risk_meta(payload)
+        meta = dict(contact_risk_meta(payload))
+        meta["delivery_fallback"] = str(delivery_fallback or "")
+        return meta
     if feature == "dynamic":
-        return dynamic_meta(payload)
+        meta = dict(dynamic_meta(payload))
+        meta["delivery_fallback"] = str(delivery_fallback or "")
+        return meta
     return safe_meta(payload, delivery_fallback=delivery_fallback)
 
 
 def _identifier_parameters(parameters: Mapping[str, Any]) -> tuple[str, str]:
-    identifier_type = str(parameters.get("identifier_type") or parameters.get("type") or "").strip()
+    identifier_type = str(
+        parameters.get("identifier_type") or parameters.get("type") or ""
+    ).strip()
     if not identifier_type:
-        identifier_type = "wechat" if parameters.get("wechat") or parameters.get("wx") else "qq"
+        identifier_type = (
+            "wechat" if parameters.get("wechat") or parameters.get("wx") else "qq"
+        )
     identifier = str(
         parameters.get("identifier")
         or parameters.get("account")
@@ -204,7 +246,14 @@ async def groupguard_query(request: Request, body: Dict[str, Any]):
         )
 
     ctx = getattr(request.app.state, "ctx", None)
-    if feature in {"shard", "aram", "battle", "scammer", "peer", "dynamic"} and ctx is None:
+    if feature in {
+        "shard",
+        "aram",
+        "battle",
+        "scammer",
+        "peer",
+        "dynamic",
+    } and ctx is None:
         return _json_error(
             feature=feature,
             status_code=503,
@@ -226,27 +275,23 @@ async def groupguard_query(request: Request, body: Dict[str, Any]):
                 )
             payload, _source, _ttl = await get_lolban_result(qq)
             text = format_lolban_text(payload)
-            delivery = _delivery_for_text(text, capabilities, preferred)
-            return JSONResponse(
-                content=success_envelope(
-                    feature=feature,
-                    delivery=delivery,
-                    meta=safe_meta(payload),
-                    client_request_id=client_request_id,
-                    server_request_id=server_request_id,
-                )
-            )
-
-        if feature == "dynamic":
+        elif feature == "dynamic":
             command_id = str(parameters.get("command_id") or "").strip()
             payload = await query_dynamic(ctx, command_id, parameters)
             text = format_dynamic_text(payload)
         elif feature in {"scammer", "peer"}:
             identifier_type, identifier = _identifier_parameters(parameters)
-            payload = await query_contact_risk(ctx, feature, identifier_type, identifier)
+            payload = await query_contact_risk(
+                ctx,
+                feature,
+                identifier_type,
+                identifier,
+            )
             text = format_contact_risk_text(payload)
         elif feature == "battle":
-            name = str(parameters.get("name") or parameters.get("player_id") or "").strip()
+            name = str(
+                parameters.get("name") or parameters.get("player_id") or ""
+            ).strip()
             region = str(parameters.get("region") or "").strip() or None
             if not name:
                 return _json_error(
@@ -256,7 +301,12 @@ async def groupguard_query(request: Request, body: Dict[str, Any]):
                     client_request_id=client_request_id,
                     server_request_id=server_request_id,
                 )
-            payload = await query_cross(ctx, name=name, region=region, output_format="pretty")
+            payload = await query_cross(
+                ctx,
+                name=name,
+                region=region,
+                output_format="pretty",
+            )
             text = format_battle_text(payload)
         else:
             hero = str(parameters.get("hero") or "").strip()
@@ -283,8 +333,14 @@ async def groupguard_query(request: Request, body: Dict[str, Any]):
         fallback_reason = ""
         if preferred == "image" and feature not in _IMAGE_FEATURES:
             fallback_reason = "image_not_supported"
+
         if wants_image:
-            rendered = await _render_feature_image(request, feature, payload)
+            rendered = await _render_feature_image(
+                request,
+                feature,
+                payload,
+                text,
+            )
             if _image_response_ok(rendered):
                 delivery = image_delivery(
                     bytes(rendered.body),
@@ -302,12 +358,20 @@ async def groupguard_query(request: Request, body: Dict[str, Any]):
                 )
             fallback_reason = "image_render_failed"
 
-        delivery = _delivery_for_text(text, capabilities, preferred if preferred != "image" else "auto")
+        delivery = _delivery_for_text(
+            text,
+            capabilities,
+            preferred if preferred != "image" else "auto",
+        )
         return JSONResponse(
             content=success_envelope(
                 feature=feature,
                 delivery=delivery,
-                meta=_meta_for_feature(feature, payload, delivery_fallback=fallback_reason),
+                meta=_meta_for_feature(
+                    feature,
+                    payload,
+                    delivery_fallback=fallback_reason,
+                ),
                 client_request_id=client_request_id,
                 server_request_id=server_request_id,
             )
@@ -367,6 +431,7 @@ async def groupguard_report(request: Request, body: Dict[str, Any]):
             client_request_id="",
             server_request_id=server_request_id,
         )
+
     ctx = getattr(request.app.state, "ctx", None)
     if ctx is None:
         return _json_error(
@@ -387,12 +452,20 @@ async def groupguard_report(request: Request, body: Dict[str, Any]):
             identifier_type=identifier_type,
             identifier_value=identifier,
             content=str(parameters.get("content") or parameters.get("evidence") or ""),
-            source=str(body.get("client") or parameters.get("source") or "channel-client"),
+            source=str(
+                body.get("client")
+                or parameters.get("source")
+                or "channel-client"
+            ),
             actor_id=str(parameters.get("actor_id") or ""),
             group_id=str(parameters.get("group_id") or ""),
         )
         text = format_contact_risk_report_text(payload)
-        delivery = _delivery_for_text(text, capabilities, preferred if preferred != "image" else "auto")
+        delivery = _delivery_for_text(
+            text,
+            capabilities,
+            preferred if preferred != "image" else "auto",
+        )
         record = payload.get("record") if isinstance(payload.get("record"), Mapping) else {}
         meta = {
             "category": category,
