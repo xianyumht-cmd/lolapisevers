@@ -30,6 +30,10 @@ jobs:
       - name: Validate parser default JSON
         run: python -m json.tool config/interface-parser-center.default.json > /dev/null
       - name: Run parser center tests
-        run: python -m unittest -v tests.test_api_parser_center tests.test_lolban_reason_output
+        run: >-
+          python -m unittest -v
+          tests.test_api_parser_center
+          tests.test_lolban_reason_output
+          tests.test_parser_center_admin
       - name: Run full suite
         run: python -m unittest discover -s tests -v
