@@ -38,5 +38,6 @@ jobs:
           tests.test_parser_center_admin
           tests.test_contact_risk_parser_center
           tests.test_contact_risk_report_parser
+          tests.test_contact_risk_retry_queue
       - name: Run full suite
         run: python -m unittest discover -s tests -v
