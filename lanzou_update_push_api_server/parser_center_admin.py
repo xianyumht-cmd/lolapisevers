@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import copy
-import json
 import os
 import re
 from pathlib import Path
@@ -26,10 +25,12 @@ from services.api_parser_center import (
     validate_config,
 )
 
+from . import management
 from .parser_center_ui import render_parser_center_page
 
 
 _SECRET_REF_RE = re.compile(r"^\$secret:([A-Za-z_][A-Za-z0-9_]*)$")
+_SECRET_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]{2,95}$")
 _DEFAULT_PROFILE_PATH = DEFAULT_CONFIG_PATH.with_name("interface-parser-center.default.json")
 
 
@@ -57,6 +58,21 @@ def _load_effective_config() -> tuple[dict[str, Any], Path, bool]:
     return empty_config(), target, True
 
 
+def _secret_configured(name: str) -> bool:
+    if str(os.getenv(name) or "").strip():
+        return True
+    try:
+        if management.APP_ENV_PATH.is_file():
+            values = management._parse_env_values(
+                management.APP_ENV_PATH.read_text(encoding="utf-8-sig")
+            )
+            value = str(values.get(name) or "").strip()
+            return bool(value and value != "CHANGE_ME")
+    except OSError:
+        return False
+    return False
+
+
 def read_parser_center() -> dict[str, Any]:
     config, target, using_default = _load_effective_config()
     secret_names = sorted(_walk_secret_names(config))
@@ -68,7 +84,7 @@ def read_parser_center() -> dict[str, Any]:
         "using_default": using_default,
         "config": redact(config),
         "secrets": [
-            {"name": name, "configured": bool(str(os.getenv(name) or "").strip())}
+            {"name": name, "configured": _secret_configured(name)}
             for name in secret_names
         ],
         "public_output_policy": {
@@ -87,6 +103,38 @@ def save_parser_center(payload: Mapping[str, Any]) -> dict[str, Any]:
         **result,
         "message": "解析中心配置已保存。已启用 Provider 会在下次服务启动时接管对应功能；测试接口立即使用新配置。",
         "restart_required": True,
+    }
+
+
+def save_parser_secret(payload: Mapping[str, Any]) -> dict[str, Any]:
+    name = str(payload.get("name") or "").strip().upper()
+    value = str(payload.get("value") or "")
+    if not _SECRET_NAME_RE.fullmatch(name):
+        raise ParserConfigError("Secret 名称必须是大写字母、数字和下划线")
+    if not value.strip():
+        raise ParserConfigError("Secret 值不能为空；空值不会用于清除已有密钥")
+    config, _target, _using_default = _load_effective_config()
+    referenced = _walk_secret_names(config)
+    if name not in referenced:
+        raise ParserConfigError("只能保存当前解析配置中已引用的 Secret")
+
+    if name not in management._FIELD_BY_KEY:
+        spec = {
+            "key": name,
+            "label": f"解析中心 Secret：{name}",
+            "section": "接口与解析中心",
+            "type": "secret",
+        }
+        management.MAIN_CONFIG_FIELDS.append(spec)
+        management._FIELD_BY_KEY[name] = spec
+    result = management.update_main_config({name: value})
+    return {
+        "ok": True,
+        "name": name,
+        "configured": True,
+        "backup_path": str(result.get("backup_path") or ""),
+        "restart_required": True,
+        "message": "Secret 已安全写入本地环境配置；值未返回浏览器。重启 LOLDataSystem 后生产查询生效。",
     }
 
 
@@ -153,6 +201,15 @@ def install_parser_center_routes(app: FastAPI) -> None:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"第三方测试失败：{type(exc).__name__}") from exc
+
+    @app.post("/admin/parser-center/secret")
+    async def admin_parser_center_secret(payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(save_parser_secret, payload)
+        except ParserCenterError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f"Secret 写入失败：{exc}") from exc
 
     @app.post("/admin/parser-center")
     async def admin_parser_center_save(payload: dict[str, Any]) -> dict[str, Any]:
