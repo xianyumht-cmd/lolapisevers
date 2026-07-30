@@ -1,0 +1,37 @@
+{
+  "schema": "lapi-all-query-production-acceptance.v1",
+  "status": "accepted",
+  "accepted_at_local": "2026-07-30T15:37:00+08:00",
+  "service": "LOLDataSystem",
+  "port": 5001,
+  "production_commit": "f221b64649763eb8d325d87348fd2f42f48a6485",
+  "deployment_package": "LOLDataSystem-video-free-offline-safe-deploy-v4.zip",
+  "deployment_result": "success",
+  "unit_tests": {
+    "count": 223,
+    "status": "pass"
+  },
+  "health": {
+    "livez": "pass",
+    "readyz": "pass",
+    "build_info": "pass"
+  },
+  "query_delivery": {
+    "protocol": "groupguard-query-delivery.v1",
+    "legacy_shard": "pass",
+    "legacy_aram": "pass",
+    "delivery_shard": "pass",
+    "delivery_aram": "pass"
+  },
+  "video_retirement": {
+    "query_video_providers_env_removed": true,
+    "dynamic_video_info_removed": true,
+    "aliases_retired": true
+  },
+  "backups": [
+    "D:\\project2\\lolapisevers.deploy-backups\\20260730-131640-lapi-query-hardening",
+    "D:\\project2\\lolapisevers.deploy-backups\\20260730-131717-video-provider-retirement"
+  ],
+  "operator_confirmation": "Windows deployment and subsequent QQ/ARM integration tests reported normal.",
+  "merge_policy": "keep_pr_draft_open_until_final_release_review"
+}
