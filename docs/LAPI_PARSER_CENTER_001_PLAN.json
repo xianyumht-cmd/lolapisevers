@@ -3,7 +3,11 @@
   "title": "统一第三方接口与自定义解析中心",
   "status": "in_progress",
   "branch": "codex/lapi-parser-center-001",
+  "pull_request": 26,
+  "base_commit": "35b258af431cf6117f80138147500eeb24059b0a",
+  "current_head": "f95397dabf950429d5c166618b71226889860bc8",
   "created_at": "2026-07-31T01:51:00+08:00",
+  "updated_at": "2026-07-31T02:23:00+08:00",
   "principles": [
     "GroupGuard 只传递功能名、参数与交付能力，不解析第三方业务响应",
     "lolapisevers 负责第三方请求、解析、缓存、降级、模板和安全过滤",
@@ -29,7 +33,8 @@
       "骗子查询接入通用解析器",
       "同行查询接入通用解析器",
       "多来源记录合并与去重",
-      "修复现有固定字段猜测造成的信息丢失"
+      "修复现有固定字段猜测造成的信息丢失",
+      "移除公开结果中的外部来源与 Provider 名称"
     ],
     "phase_3": [
       "举报骗子第三方提交适配",
@@ -38,6 +43,44 @@
       "第三方失败待补交队列",
       "本地 SQLite 可靠落盘与幂等保持"
     ]
+  },
+  "progress": {
+    "P001": {
+      "status": "completed",
+      "name": "规划与安全契约"
+    },
+    "P002": {
+      "status": "completed",
+      "name": "通用解析内核"
+    },
+    "P003": {
+      "status": "completed",
+      "name": "封号生产兼容修复"
+    },
+    "P004": {
+      "status": "completed",
+      "name": "管理 API 与 WebUI MVP"
+    },
+    "P005": {
+      "status": "completed",
+      "name": "自动化测试与部署门禁",
+      "ci": {
+        "parser_center_workflow": "success",
+        "existing_tests_workflow": "success"
+      }
+    },
+    "P006": {
+      "status": "completed",
+      "name": "骗子/同行查询迁移"
+    },
+    "P007": {
+      "status": "pending",
+      "name": "举报提交迁移"
+    },
+    "P008": {
+      "status": "pending",
+      "name": "生产部署与实机验收"
+    }
   },
   "public_output_policy": {
     "forbidden": [
@@ -90,6 +133,10 @@
     {
       "id": "A5",
       "description": "无效配置不得覆盖当前有效配置；保存前创建备份；写入采用原子替换"
+    },
+    {
+      "id": "A6",
+      "description": "骗子和同行查询可解析多条原因记录，公开结果不显示外部来源或 Provider 名称"
     }
   ],
   "implementation_order": [
@@ -99,6 +146,7 @@
     "P004 管理 API 与 WebUI MVP",
     "P005 自动化测试与部署门禁",
     "P006 骗子/同行查询迁移",
-    "P007 举报提交迁移"
+    "P007 举报提交迁移",
+    "P008 生产部署与实机验收"
   ]
 }
