@@ -1,50 +1,73 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "schema": "lapi-all-query-video-retirement-status.v1",
+  "schema": "lapi-all-query-video-retirement-status.v2",
   "repository": "xianyumht-cmd/lolapisevers",
-  "status": "video_free_package_verified_waiting_for_windows_operator_deployment",
+  "status": "video_free_windows_service_deployed_and_accepted",
   "runtime_commit": "f221b64649763eb8d325d87348fd2f42f48a6485",
-  "groupguard_runtime_commit": "8f37a02a7ac4fbe27dea7197b723d8d60a5b793e",
-  "groupguard_verified_head": "fb3a4eb7865f25ac13727961329a605f81cb51ca",
+  "groupguard_runtime_commit": "3ea7af2c42dee65700c8b10bd43e1bc819ba43e2",
   "removed": {
     "query_aliases": ["video", "video_query", "我要看"],
     "dynamic_provider": "video.info",
-    "service_file": "services/video_query_service.py"
+    "service_file": "services/video_query_service.py",
+    "local_environment_setting": "QUERY_VIDEO_PROVIDERS_JSON"
+  },
+  "production_deployment": {
+    "deployed": true,
+    "deployed_at": "2026-07-30T05:17:15Z",
+    "service": "LOLDataSystem",
+    "port": 5001,
+    "commit": "f221b64649763eb8d325d87348fd2f42f48a6485",
+    "backup": "D:\\project2\\lolapisevers.deploy-backups\\20260730-131640-lapi-query-hardening",
+    "verification_report": "D:\\project2\\lolapisevers.deploy-backups\\20260730-131640-lapi-query-hardening\\verification-report.json",
+    "video_retirement_backup": "D:\\project2\\lolapisevers.deploy-backups\\20260730-131717-video-provider-retirement"
   },
   "verification": {
-    "asserted_migration": "pass",
-    "full_python_tests": "pass",
-    "compileall": "pass",
-    "webui_generation": "pass",
-    "node_syntax": "pass",
-    "windows_powershell_parser": "pass",
+    "full_python_tests": {
+      "status": "pass",
+      "count": 223
+    },
+    "livez": "pass",
+    "readyz": "pass",
+    "build_info": "pass",
+    "legacy_shard": "pass",
+    "legacy_aram": "pass",
+    "delivery_shard": "pass",
+    "delivery_aram": "pass",
+    "video_alias_http_400": "pass",
+    "dynamic_video_info_http_404": "pass",
     "public_fallback_restored": false
   },
-  "offline_deployment_package": {
-    "workflow_run_id": 30487749547,
-    "artifact_id": 8738379173,
-    "artifact_name": "loldata-video-free-offline-safe-deploy-f221b64649763eb8d325d87348fd2f42f48a6485",
-    "artifact_digest": "sha256:27fb4212e440b30265ddbc9772fd8decd29de77069610b2a34b60a272713c2d5",
-    "deployment_zip": "loldata-video-free-offline-safe-deploy-f221b6464976.zip",
-    "deployment_zip_sha256": "864cb567fb760e80b6e0ec6dfe745197b8b5c56ea860297e07b7c9c8766762c2",
+  "operator_package": {
+    "revision": "v4",
+    "filename": "LOLDataSystem-video-free-offline-safe-deploy-v4.zip",
+    "sha256": "26c76796f5f0303119a9f8c74651808aac7d7876752c5fc9098177525deee9d0",
     "git_bundle_sha256": "27ac1baa493e7bc00b451b1fe1711ca82bf0f7c052d640e102ff48037b1576a1",
-    "expires_at": "2026-10-27T20:15:26Z"
+    "status": "deployed_successfully"
   },
   "deployment_safety": {
-    "candidate_tests_before_service_stop": true,
+    "pre_invocation_script_patch_and_parser_check": true,
+    "service_stopped_before_candidate_unit_tests": true,
     "runtime_backup_required": true,
+    "retirement_backup_outside_git_repository": true,
     "remove_only_query_video_providers_json": true,
+    "remove_only_dynamic_video_info": true,
     "preserve_risk_provider_config": true,
-    "preserve_custom_dynamic_provider_config": true,
-    "post_deploy_video_http_400_gate": true,
-    "automatic_full_rollback_on_post_deploy_failure": true
+    "preserve_other_dynamic_provider_config": true,
+    "automatic_full_rollback_on_failure": true
   },
-  "revoked_release": {
-    "groupguard_commit": "029118346adaa9232aeceeb283f5d243a407dc95",
-    "artifact_id": 8732028955,
-    "status": "do_not_deploy"
+  "superseded_packages": {
+    "v1": "do_not_run",
+    "v2": "do_not_run",
+    "v3": "do_not_run"
   },
-  "next_action": "Extract the verified deployment ZIP on the Windows API host, run run-deploy.cmd, and return the complete console output before any new GroupGuard dist is packaged.",
+  "groupguard_release": {
+    "runtime_commit": "3ea7af2c42dee65700c8b10bd43e1bc819ba43e2",
+    "snowluma_seal_run": 30517338525,
+    "artifact_id": 8749395781,
+    "artifact_digest": "sha256:82fc05dad0337edcfb4fb0652fa5c3e596e653f719b7d4cc30a0b7ef1c72374b",
+    "arm_deployed": false
+  },
+  "next_action": "Deploy the sealed GroupGuard SnowLuma dist once on the ARM host, then complete the QQ group command acceptance matrix before merge.",
   "pull_request": {
     "number": 19,
     "draft": true,
