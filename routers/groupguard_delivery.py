@@ -21,7 +21,6 @@ from services.contact_risk_service import (
 )
 from services.cross_query_service import query_cross
 from services.dynamic_query_service import dynamic_meta, format_dynamic_text, query_dynamic
-from services.hidden_delivery import format_hidden_text, hidden_meta
 from services.lolban_service import format_lolban_text, get_lolban_result, valid_qq
 from services.query_delivery import (
     choose_text_delivery,
@@ -56,9 +55,6 @@ _FEATURE_ALIASES = {
     "cross": "battle",
     "cross_query": "battle",
     "查战绩": "battle",
-    "hidden": "hidden",
-    "hidden_query": "hidden",
-    "查隐藏": "hidden",
     "scammer": "scammer",
     "scammer_query": "scammer",
     "查骗子": "scammer",
@@ -166,8 +162,6 @@ def _delivery_for_text(text: str, capabilities: Mapping[str, bool], preferred: s
 def _meta_for_feature(feature: str, payload: Mapping[str, Any], *, delivery_fallback: str = ""):
     if feature == "battle":
         return battle_meta(payload, delivery_fallback=delivery_fallback)
-    if feature == "hidden":
-        return hidden_meta(payload, delivery_fallback=delivery_fallback)
     if feature in {"scammer", "peer"}:
         return contact_risk_meta(payload)
     if feature == "dynamic":
@@ -210,7 +204,7 @@ async def groupguard_query(request: Request, body: Dict[str, Any]):
         )
 
     ctx = getattr(request.app.state, "ctx", None)
-    if feature in {"shard", "aram", "battle", "hidden", "scammer", "peer", "dynamic"} and ctx is None:
+    if feature in {"shard", "aram", "battle", "scammer", "peer", "dynamic"} and ctx is None:
         return _json_error(
             feature=feature,
             status_code=503,
@@ -251,20 +245,19 @@ async def groupguard_query(request: Request, body: Dict[str, Any]):
             identifier_type, identifier = _identifier_parameters(parameters)
             payload = await query_contact_risk(ctx, feature, identifier_type, identifier)
             text = format_contact_risk_text(payload)
-        elif feature in {"battle", "hidden"}:
+        elif feature == "battle":
             name = str(parameters.get("name") or parameters.get("player_id") or "").strip()
             region = str(parameters.get("region") or "").strip() or None
             if not name:
-                message = "请输入玩家ID，例如：张三#12345" if feature == "battle" else "请输入召唤师名称"
                 return _json_error(
                     feature=feature,
                     status_code=400,
-                    message=message,
+                    message="请输入玩家ID，例如：张三#12345",
                     client_request_id=client_request_id,
                     server_request_id=server_request_id,
                 )
             payload = await query_cross(ctx, name=name, region=region, output_format="pretty")
-            text = format_battle_text(payload) if feature == "battle" else format_hidden_text(payload)
+            text = format_battle_text(payload)
         else:
             hero = str(parameters.get("hero") or "").strip()
             if not hero:
