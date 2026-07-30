@@ -2,27 +2,29 @@
   "task_id": "WEBUI-IOS-001",
   "repository": "xianyumht-cmd/lolapisevers",
   "branch": "codex/webui-ios-glass-20260730",
-  "status": "IMPLEMENTING",
-  "updated_at": "2026-07-30T21:53:00+08:00",
-  "progress_percent": 30,
+  "status": "VERIFYING",
+  "updated_at": "2026-07-30T22:31:00+08:00",
+  "progress_percent": 70,
   "phases": {
     "audit": "COMPLETED",
     "plan": "COMPLETED",
-    "implementation": "IN_PROGRESS",
-    "verification": "PENDING",
+    "implementation": "COMPLETED",
+    "verification": "IN_PROGRESS",
     "completion": "PENDING"
   },
-  "current_step": "Implement shared iOS glass theme and runtime injection",
+  "current_step": "Run full API and generated WebUI verification",
   "completed": [
     "Audited server.py -> ui_runtime.py -> ui_control.py rendering chain",
     "Audited main config, Lanzou config, watcher, target, security, backup and service control paths",
-    "Defined light, dark and system theme requirements"
+    "Defined light, dark and system theme requirements",
+    "Added shared iOS glass theme module",
+    "Applied the theme at the final dashboard response boundary",
+    "Added theme persistence, system-mode listener and mobile fallbacks",
+    "Added theme contract tests"
   ],
   "remaining": [
-    "Add theme module",
-    "Inject theme into final runtime HTML",
-    "Add theme contract tests",
-    "Run full CI",
-    "Merge to master and mark COMPLETED"
+    "Pass full repository CI and generated WebUI JavaScript validation",
+    "Merge to master",
+    "Mark task COMPLETED"
   ]
 }
