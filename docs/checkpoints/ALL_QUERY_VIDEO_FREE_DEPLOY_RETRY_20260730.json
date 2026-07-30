@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "schema": "all-query-video-free-deploy-retry.v1",
+  "status": "operator_retry_required_with_workdir_fix_v2",
+  "failed_attempt": {
+    "target_commit": "f221b64649763eb8d325d87348fd2f42f48a6485",
+    "old_zip_sha256": "864cb567fb760e80b6e0ec6dfe745197b8b5c56ea860297e07b7c9c8766762c2",
+    "failure_stage": "pre_start_full_python_unit_tests",
+    "root_cause": "The extracted deployment script ran unittest discovery from the temporary launcher directory, so the repository root was absent from Python import resolution.",
+    "observed_missing_modules": [
+      "cache",
+      "clients",
+      "core",
+      "routers",
+      "services",
+      "renderers",
+      "utils",
+      "lanzou_update_push_api_server"
+    ],
+    "production_changed": false,
+    "automatic_rollback": "success",
+    "restored_commit": "ba54d83d7dd8cdbbb213b7bf38264655d671f134",
+    "service_restored": "LOLDataSystem"
+  },
+  "retry_package": {
+    "delivery": "chat_artifact",
+    "filename": "LOLDataSystem-video-free-offline-safe-deploy-workdir-fix-v2.zip",
+    "zip_sha256": "5359871223c63101fc0cd05e6a480efac2b070acc84a4bb5ea44ab84e427de56",
+    "bundle_sha256": "27ac1baa493e7bc00b451b1fe1711ca82bf0f7c052d640e102ff48037b1576a1",
+    "target_commit": "f221b64649763eb8d325d87348fd2f42f48a6485",
+    "wrapper_revision": "workdir-fix-v2",
+    "fix": [
+      "Patch the extracted Deploy-LapiQueryHardening.ps1 before execution.",
+      "Push-Location to ProjectRoot before unittest discovery.",
+      "Use relative tests directory.",
+      "Always Pop-Location in finally.",
+      "Run PowerShell syntax validation after patching and before production is touched."
+    ]
+  },
+  "next_action": "Extract the v2 ZIP, run run-deploy.cmd, and return the complete console output.",
+  "constraints": [
+    "Do not rerun the old ZIP.",
+    "Do not merge Draft PR 19 or GroupGuard Draft PR 17.",
+    "Do not delete rollback backups.",
+    "Do not deploy the revoked GroupGuard dist commit 029118346adaa9232aeceeb283f5d243a407dc95."
+  ]
+}
