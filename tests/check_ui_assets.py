@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 import sys
 import traceback
 
@@ -17,14 +18,24 @@ except Exception:
     print(details, file=sys.stderr)
     raise
 
-start_marker = "<script>"
-end_marker = "</script>"
-start = html.rfind(start_marker)
-end = html.rfind(end_marker)
-if start < 0 or end <= start:
-    raise SystemExit("dashboard JavaScript block was not found")
+scripts = re.findall(
+    r"<script(?:\s[^>]*)?>(.*?)</script>",
+    html,
+    flags=re.IGNORECASE | re.DOTALL,
+)
+script = next(
+    (
+        candidate
+        for candidate in scripts
+        if "/admin/main-config" in candidate
+        and "/admin/lanzou-config" in candidate
+        and "adminToken" in candidate
+    ),
+    "",
+)
+if not script:
+    raise SystemExit("dashboard main JavaScript block was not found")
 
-script = html[start + len(start_marker) : end]
 required_markers = [
     "/admin/main-config",
     "/admin/lanzou-config",
@@ -54,4 +65,6 @@ if missing:
     raise SystemExit(f"dashboard is missing required controls: {missing}")
 
 Path("ui_control.generated.js").write_text(script, encoding="utf-8")
-print(f"wrote {len(script)} JavaScript characters for syntax validation")
+print(
+    f"wrote {len(script)} JavaScript characters from {len(scripts)} script blocks for syntax validation"
+)
