@@ -1,0 +1,173 @@
+name: temporary commit audit docs 2026-08-01
+
+on:
+  push:
+    branches:
+      - audit/full-bug-inventory-20260801
+    paths:
+      - .github/workflows/temp-commit-audit-docs-20260801.yml
+
+permissions:
+  contents: write
+
+jobs:
+  commit-docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: audit/full-bug-inventory-20260801
+          fetch-depth: 0
+
+      - name: Generate durable audit documents
+        env:
+          AUDIT_JSON_GZ_B64: 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
+        run: |
+          python - <<'PY'
+          import base64
+          import gzip
+          import json
+          import os
+          from pathlib import Path
+
+          raw = gzip.decompress(base64.b64decode(os.environ['AUDIT_JSON_GZ_B64']))
+          data = json.loads(raw.decode('utf-8'))
+          out = Path('docs/audits')
+          out.mkdir(parents=True, exist_ok=True)
+          json_path = out / '2026-08-01-full-bug-inventory.json'
+          json_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+          status_zh = {
+              'CONFIRMED': '已确认',
+              'PROBABLE': '高概率',
+              'DESIGN_RISK': '设计风险',
+              'DEPENDENCY': '依赖漏洞',
+              'CONDITIONAL': '条件风险',
+          }
+          lines = [
+              '# lolapisevers 全仓 Bug 清单（2026-08-01）',
+              '',
+              '审查结论：**本次基线共登记 37 项问题，全部标记为 `OPEN`：P1 10 项、P2 21 项、P3 6 项。**',
+              '',
+              '机器事实源：[2026-08-01-full-bug-inventory.json](./2026-08-01-full-bug-inventory.json)。',
+              '',
+              '## 审查基线',
+              '',
+              '- 仓库：`xianyumht-cmd/lolapisevers`',
+              '- 分支：`master`',
+              f"- SHA：`{data['audited_base_sha']}`",
+              f"- 审计分支：`{data['audit_branch']}`",
+              f"- PR：`#{data['pull_request']}`",
+              '- 范围：主 API、查询协议和官方客户端、蓝奏监控/WebUI、SQLite/MySQL、上游 HTTP、PowerShell 运维、依赖与测试。',
+              '',
+              '> 这里的“全仓”指本次基线、静态检查、跨文件调用链和最小复现能够识别的全部问题，不是对未来代码或不可达生产环境绝对无其他缺陷的证明。',
+              '',
+              '## 审计结果',
+              '',
+              '| 检查 | 结果 |',
+              '|---|---|',
+              '| Linux 单元测试 | 227 通过，2 跳过 |',
+              '| Windows 单元测试 | 227 通过 |',
+              '| Python compileall | 通过 |',
+              '| 全仓 PowerShell 语法 | 通过 |',
+              '| 生成后的 WebUI JavaScript | 通过 |',
+              '| Ruff / Bandit | 已人工复核并剔除误报 |',
+              '| pip-audit | 失败：5 个包、31 个唯一公告 |',
+              '',
+              '现有测试全部通过，但没有覆盖并发不同参数、旧路由兼容、跨端大小限制、匿名写入和部署失败回滚等场景。',
+              '',
+              '## 总览',
+              '',
+              '| ID | 级别 | 状态 | 问题 | 批次 |',
+              '|---|---:|---|---|---:|',
+          ]
+          for finding in data['findings']:
+              lines.append(
+                  f"| `{finding['id']}` | **{finding['severity']}** | "
+                  f"{status_zh[finding['status']]} | {finding['title']} | {finding['fix_batch']} |"
+              )
+          lines.extend(['', '## 详细登记', ''])
+          for finding in data['findings']:
+              refs = '；'.join(f"`{value}`" for value in finding['references'])
+              lines.extend([
+                  f"### {finding['id']} · {finding['severity']} · {status_zh[finding['status']]}：{finding['title']}",
+                  '',
+                  f"- 状态：`OPEN`；组件：`{finding['component']}`；位置：{refs}",
+                  f"- 证据与影响：{finding['evidence']} {finding['impact']}",
+                  f"- 修复与验收：{finding['fix']} 回归测试：{finding['regression_test']}",
+                  f"- 计划：`BATCH-{finding['fix_batch']}`",
+                  '',
+              ])
+          dependency = next(item for item in data['findings'] if item['id'] == 'DEP-001')
+          lines.extend([
+              '## 依赖漏洞摘要',
+              '',
+              '`DEP-001` 是版本级事实，并不表示所有公告都能从本项目路径直接利用；升级后仍需做可达性与兼容性验证。',
+              '',
+              '| 包 | 当前版本 | 唯一公告数 | 修复全部本次公告的观察下限 |',
+              '|---|---:|---:|---|',
+          ])
+          for item in dependency['dependency_summary']:
+              lines.append(
+                  f"| `{item['package']}` | `{item['version']}` | {item['unique_advisories']} | "
+                  f"`{item['minimum_observed_fix']}` |"
+              )
+          lines.extend([
+              '',
+              '## 已排除的扫描误报',
+              '',
+              '- `db.py` 的动态 WHERE 由固定片段组成，值仍使用参数绑定，未按 SQL 注入登记。',
+              '- 部分 requests timeout 通过变量或 kwargs 传入，扫描器无法识别；已逐处人工核对。',
+              '- SHA-1 仅用于非安全缓存/同步指纹，不用于认证或签名。',
+              '- 宽泛异常捕获多数属于降级、截图和审计容错；只有影响正确性的路径被登记。',
+              '- PowerShell `ExecutionPolicy Bypass` 本身是当前启动方式；供应链、误杀和回滚问题已单独登记。',
+              '',
+              '## 修复顺序',
+              '',
+          ])
+          for batch in data['recommended_fix_order']:
+              lines.extend([
+                  f"### BATCH-{batch['batch']}：{batch['goal']}",
+                  '',
+                  '、'.join(f"`{value}`" for value in batch['finding_ids']),
+                  '',
+              ])
+          lines.extend([
+              '每批必须执行：新增失败测试 → 最小修复 → Windows/Linux 全量测试 → WebUI JS 检查 → 隔离实机验收 → 再部署。',
+              '',
+              '## 尚需实机验证',
+              '',
+              '1. 真实 MySQL 初始化、断线、慢查询和配置边界。',
+              '2. 真实 SO1 登录态、过期 cookie、验证码、同名不同 tag 和跨重试延迟响应。',
+              '3. 真实蓝奏/WER 样本、Provider 切换、空列表保护和热更新竞态。',
+              '4. SnowLuma/NapCat 对 text/image/forward、Base64 和失败回退的消费边界。',
+              '5. 隔离 Windows 虚拟机中的 NSSM 安装失败回滚、服务接管误杀保护和任务计划恢复。',
+              '6. 多并发、重启、磁盘写满和超大响应故障注入。',
+              '',
+              '## 关闭条件',
+              '',
+              '问题只有在“旧代码可稳定复现、修复测试先行、全量测试通过、相关文档同步、P1/竞态/PowerShell 项完成实机验收、提交与部署可追溯”全部满足后，才可从 `OPEN` 改为 `FIXED`。',
+              '',
+          ])
+          (out / '2026-08-01-full-bug-inventory.md').write_text('\n'.join(lines), encoding='utf-8')
+          PY
+
+      - name: Validate generated documents
+        run: |
+          python -m json.tool docs/audits/2026-08-01-full-bug-inventory.json >/dev/null
+          grep -q 'GG-001' docs/audits/2026-08-01-full-bug-inventory.md
+          grep -q 'SEC-002' docs/audits/2026-08-01-full-bug-inventory.md
+          test "$(python - <<'PY'
+          import json
+          print(len(json.load(open('docs/audits/2026-08-01-full-bug-inventory.json', encoding='utf-8'))['findings']))
+          PY
+          )" = '37'
+
+      - name: Commit documents
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add docs/audits/2026-08-01-full-bug-inventory.md docs/audits/2026-08-01-full-bug-inventory.json
+          git commit -m 'docs(audit): record full bug inventory for 2026-08-01'
+          git push origin HEAD:audit/full-bug-inventory-20260801
