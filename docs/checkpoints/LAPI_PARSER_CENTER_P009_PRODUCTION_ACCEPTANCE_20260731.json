@@ -1,0 +1,54 @@
+{
+  "schema": "lapi-parser-center-p009-production-acceptance.v1",
+  "task_id": "LAPI-PARSER-CENTER-001",
+  "stage": "P009",
+  "recorded_at": "2026-07-31T13:42:00+08:00",
+  "evidence_source": "operator_console_output",
+  "deployment": {
+    "status": "completed",
+    "package": "LOLDataSystem-LAPI-PARSER-CENTER-P009-safe-deploy-v5",
+    "target_commit": "d2416c90c6a37cc27fed2ccde4c71aa40c81a53b",
+    "service": "LOLDataSystem",
+    "candidate_tests": "all_passed",
+    "production_switch": "completed",
+    "automatic_rollback_triggered": false,
+    "service_reported_success": true
+  },
+  "production_paths": {
+    "external_backup": "D:\\project2\\lolapisevers.deploy-backups\\20260731-134054-lapi-parser-center-p009",
+    "operator_report": "D:\\download\\P009-v5\\LOLDataSystem-LAPI-PARSER-CENTER-P009-safe-deploy-v5\\reports\\deployment-report-20260731-134054.json"
+  },
+  "safety_guarantees_exercised": [
+    "candidate tests completed before production stop",
+    "external backup created before source switch",
+    "target commit pinned and verified",
+    "service restarted and deployment verification completed",
+    "machine-readable report generated"
+  ],
+  "not_changed": [
+    "ARM GroupGuard plugin",
+    "battle query delivery configuration",
+    "repository default branch",
+    "pull request merge state"
+  ],
+  "follow_up": {
+    "battle_query_text_degradation": {
+      "status": "pending_read_only_diagnosis",
+      "command": "run-battle-delivery-diagnosis.cmd",
+      "decision_rule": "inspect delivery.type and meta.delivery_fallback before changing WebUI settings"
+    },
+    "human_acceptance": {
+      "status": "pending",
+      "checks": [
+        "open /parser-center and verify the visual editor loads",
+        "run one real QQ ban query and confirm ban_reason is visible",
+        "confirm public output does not show third-party provider identity"
+      ]
+    },
+    "repository_merge": {
+      "status": "pending",
+      "pull_request": 26,
+      "note": "Production is running the pinned implementation commit; the Draft PR remains unmerged until final acceptance is recorded."
+    }
+  }
+}
