@@ -31,16 +31,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          cp .github/workflows/tests.yml /tmp/original-tests.yml
           truncate -s 6000 .github/fix-bundles/chunks/part-15
           truncate -s 6000 .github/fix-bundles/chunks/part-16
           cat .github/fix-bundles/chunks/part-* > /tmp/full-confirmed-bugs.tar.gz.b64
           echo "3a5a7cb121bc3fb71162ba2508e2056e6bd88307bb6e9ec0f22690f8a20be8c8  /tmp/full-confirmed-bugs.tar.gz.b64" | sha256sum -c -
           base64 --decode /tmp/full-confirmed-bugs.tar.gz.b64 > /tmp/full-confirmed-bugs.tar.gz
           tar -xzf /tmp/full-confirmed-bugs.tar.gz -C .
+          cp /tmp/original-tests.yml .github/workflows/tests.yml
           rm -rf .github/fix-bundles
-          rm -f .github/workflows/full-fix-source-export.yml
-          rm -f .github/workflows/apply-full-fix-bundle.yml
-          rm -f .github/workflows/apply-full-fix-chunks.yml
           git diff --check
 
       - name: Commit repair candidate
