@@ -46,9 +46,17 @@ class FakeContext:
             if not mysql_up or db_error is not None
             else ""
         )
+        async def check_readiness():
+            return {
+                "browser_up": browser_up,
+                "session_authenticated": browser_up,
+                "reason": "authenticated" if browser_up else "browser_down",
+            }
+
         self.so1_client = SimpleNamespace(
             _browser=FakeBrowser(browser_up),
             _max_concurrent_pages=2,
+            check_readiness=check_readiness,
         )
 
     def ensure_db(self):
@@ -126,6 +134,19 @@ class HealthTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["liveness"], "up")
         self.assertFalse(payload["ready"])
         self.assertEqual(payload["so1_browser"], "down")
+
+    async def test_browser_connected_but_session_missing_is_not_ready(self):
+        request = make_request(mysql_up=True, browser_up=True)
+
+        async def unauthenticated():
+            return {"browser_up": True, "session_authenticated": False, "reason": "session_missing"}
+
+        request.app.state.so1_client.check_readiness = unauthenticated
+        request.app.state.ctx.so1_client.check_readiness = unauthenticated
+        payload = await health(request)
+        self.assertFalse(payload["ready"])
+        self.assertEqual(payload["so1_browser"], "up")
+        self.assertEqual(payload["so1_session"], "down")
 
     async def test_lolban_is_optional(self):
         payload = await health(make_request(mysql_up=True, browser_up=True))

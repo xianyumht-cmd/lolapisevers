@@ -242,13 +242,30 @@ class DiskImageAssetStore:
                     "Accept": "image/avif,image/webp,image/*,*/*",
                     "User-Agent": "Mozilla/5.0",
                 },
+                stream=True,
             )
-            content_type = str(response.headers.get("content-type") or "").lower()
-            if not response.ok:
-                raise RuntimeError(f"http_{response.status_code}")
-            if content_type and "image" not in content_type:
-                raise RuntimeError(f"unexpected_content_type:{content_type}")
-            result = self.write_url(normalized, response.content)
+            try:
+                content_type = str(response.headers.get("content-type") or "").lower()
+                if not response.ok:
+                    raise RuntimeError(f"http_{response.status_code}")
+                if content_type and "image" not in content_type:
+                    raise RuntimeError(f"unexpected_content_type:{content_type}")
+                max_bytes = int(os.getenv("IMAGE_ASSET_MAX_BYTES", str(12 * 1024 * 1024)))
+                declared = int(response.headers.get("content-length") or 0)
+                if declared > max_bytes:
+                    raise RuntimeError("image_response_too_large")
+                chunks: list[bytes] = []
+                total = 0
+                for chunk in response.iter_content(chunk_size=64 * 1024):
+                    if not chunk:
+                        continue
+                    total += len(chunk)
+                    if total > max_bytes:
+                        raise RuntimeError("image_response_too_large")
+                    chunks.append(bytes(chunk))
+                result = self.write_url(normalized, b"".join(chunks))
+            finally:
+                response.close()
             result["url"] = normalized
             return result
         except Exception as exc:

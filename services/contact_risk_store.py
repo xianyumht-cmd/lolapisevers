@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from fastapi import HTTPException
+from services.groupguard_protocol import validate_request_id
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -124,15 +125,14 @@ class ContactRiskStore:
             ).fetchone()
             if row is not None and touch:
                 connection.execute(
-                    """UPDATE contact_risk_records SET last_checked_at=?, updated_at=?
+                    """UPDATE contact_risk_records SET last_checked_at=?
                     WHERE category=? AND identifier_type=? AND identifier_value=?""",
-                    (now, now, category, identifier_type, identifier_value),
+                    (now, category, identifier_type, identifier_value),
                 )
                 connection.commit()
             record = self._record(row)
             if record is not None and touch:
                 record["last_checked_at"] = now
-                record["updated_at"] = now
             return record
 
     def report(
@@ -147,27 +147,52 @@ class ContactRiskStore:
         actor_id: str = "",
         group_id: str = "",
     ) -> Tuple[Dict[str, Any], bool]:
-        normalized_request_id = str(request_id or "").strip()[:128]
-        if not normalized_request_id:
-            raise HTTPException(status_code=400, detail="举报请求缺少 request_id")
+        try:
+            normalized_request_id = validate_request_id(request_id, required=True)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         now = int(time.time() * 1000)
         content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
         safe_source = str(source or "client").strip()[:64] or "client"
+        safe_actor_id = str(actor_id or "").strip()[:64]
+        safe_group_id = str(group_id or "").strip()[:64]
         with self._lock, self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             try:
                 existing_event = connection.execute(
-                    "SELECT request_id FROM contact_risk_report_events WHERE request_id=?",
+                    """SELECT request_id, category, identifier_type, identifier_value,
+                        content_sha256, source, actor_id, group_id
+                        FROM contact_risk_report_events WHERE request_id=?""",
                     (normalized_request_id,),
                 ).fetchone()
                 if existing_event is not None:
+                    expected = (
+                        category,
+                        identifier_type,
+                        identifier_value,
+                        content_hash,
+                        safe_source,
+                        safe_actor_id,
+                        safe_group_id,
+                    )
+                    actual = (
+                        str(existing_event["category"]),
+                        str(existing_event["identifier_type"]),
+                        str(existing_event["identifier_value"]),
+                        str(existing_event["content_sha256"]),
+                        str(existing_event["source"]),
+                        str(existing_event["actor_id"]),
+                        str(existing_event["group_id"]),
+                    )
+                    if actual != expected:
+                        raise HTTPException(status_code=409, detail="同一 request_id 已用于另一条举报")
                     row = connection.execute(
                         """SELECT category, identifier_type, identifier_value, report_count,
                             last_report_content, recent_reports_json, sources_json,
                             first_reported_at, last_reported_at, last_checked_at, updated_at
                             FROM contact_risk_records
                             WHERE category=? AND identifier_type=? AND identifier_value=?""",
-                        (category, identifier_type, identifier_value),
+                        (actual[0], actual[1], actual[2]),
                     ).fetchone()
                     connection.commit()
                     record = self._record(row)
@@ -240,8 +265,8 @@ class ContactRiskStore:
                         identifier_value,
                         content_hash,
                         safe_source,
-                        str(actor_id or "")[:64],
-                        str(group_id or "")[:64],
+                        safe_actor_id,
+                        safe_group_id,
                         now,
                     ),
                 )

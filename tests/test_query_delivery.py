@@ -49,12 +49,12 @@ class QueryDeliveryTests(unittest.TestCase):
             feature="lolban",
             delivery={"kind": "segments", "segments": [{"type": "text", "text": "ok"}]},
             meta={"source": "live"},
-            client_request_id="client/unsafe token",
+            client_request_id="client-safe-token",
             server_request_id="server1",
         )
         self.assertEqual(success["protocol"], DELIVERY_PROTOCOL)
         self.assertTrue(success["ok"])
-        self.assertEqual(success["client_request_id"], "client-unsafe-token")
+        self.assertEqual(success["client_request_id"], "client-safe-token")
         self.assertFalse(success["retry"]["allowed"])
 
         error = error_envelope(
@@ -70,6 +70,25 @@ class QueryDeliveryTests(unittest.TestCase):
         self.assertEqual(error["delivery"]["segments"][0]["text"], "服务暂不可用")
         self.assertTrue(error["retry"]["allowed"])
         self.assertEqual(error["retry"]["after_seconds"], 30)
+
+    def test_invalid_request_id_is_rejected_instead_of_rewritten(self):
+        with self.assertRaises(ValueError):
+            success_envelope(
+                feature="lolban",
+                delivery={"kind": "segments", "segments": [{"type": "text", "text": "ok"}]},
+                meta={},
+                client_request_id="a b",
+                server_request_id="server1",
+            )
+
+    def test_forward_overflow_and_payload_limits_fail_loudly(self):
+        with self.assertRaises(ValueError):
+            split_forward_text("A" * (4000 * 33), max_chars=4000)
+        from services.query_delivery import text_delivery
+        with self.assertRaises(ValueError):
+            text_delivery("A" * 20001)
+        with self.assertRaises(ValueError):
+            image_delivery(b"x" * (12 * 1024 * 1024 + 1))
 
     def test_formatters_do_not_require_plugin_business_parsing(self):
         shard = format_shard_text(

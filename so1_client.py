@@ -18,18 +18,7 @@ LEGACY_HISTORY_URL = "https://ww1.lolso1.com/game-lol/customize-normal-match-his
 
 
 class So1Client:
-    _instance: Optional["So1Client"] = None
-    _browser: Optional[Browser] = None
-    _pw_manager: Any = None
-
-    def __new__(cls, *args, **kwargs):
-        if cls._instance is None:
-            cls._instance = super(So1Client, cls).__new__(cls)
-        return cls._instance
-
     def __init__(self, username: str, password: str, headless: bool = True, timeout_ms: int = 15000) -> None:
-        if hasattr(self, "_initialized") and self._initialized:
-            return
         self.username = username
         self.password = password
         self.headless = headless
@@ -37,11 +26,20 @@ class So1Client:
         self.logger = logging.getLogger(self.__class__.__name__)
         self._state_path = os.path.join(os.path.dirname(__file__), ".so1_state.json")
         self._token_path = os.path.join(os.path.dirname(__file__), ".so1_token.txt")
+        self._browser: Optional[Browser] = None
+        self._pw_manager: Any = None
         self._browser_lock = asyncio.Lock()
         self._manual_login_lock = asyncio.Lock()
-        self._max_concurrent_pages = max(int(os.getenv("SO1_MAX_CONCURRENT_PAGES", "2")), 1)
+        raw_max_pages = os.getenv("SO1_MAX_CONCURRENT_PAGES", "2").strip()
+        try:
+            parsed_max_pages = int(raw_max_pages)
+        except ValueError as exc:
+            raise ValueError("SO1_MAX_CONCURRENT_PAGES must be an integer") from exc
+        if parsed_max_pages < 1 or parsed_max_pages > 32:
+            raise ValueError("SO1_MAX_CONCURRENT_PAGES must be between 1 and 32")
+        self._max_concurrent_pages = parsed_max_pages
         self._query_semaphore = asyncio.Semaphore(self._max_concurrent_pages)
-        self._initialized = True
+        self._readiness_cache: tuple[float, bool, str] = (0.0, False, "not_checked")
 
     async def init_browser(self):
         async with self._browser_lock:
@@ -87,6 +85,7 @@ class So1Client:
                         await page.wait_for_timeout(1000)
                         if await self._is_logged_in(page):
                             await context.storage_state(path=self._state_path)
+                            self._readiness_cache = (time.monotonic(), True, "authenticated")
                             return
                     raise So1ClientError("manual login timed out")
                 finally:
@@ -115,6 +114,7 @@ class So1Client:
 
     async def _login(self, page: Page) -> None:
         if await self._is_logged_in(page):
+            self._readiness_cache = (time.monotonic(), True, "authenticated")
             return
         self.logger.info("so1 session is missing or expired, logging in")
         payload = await page.evaluate(
@@ -141,6 +141,40 @@ class So1Client:
         if not await self._is_logged_in(page):
             raise So1ClientError("so1 login did not produce a valid session")
         self.logger.info("so1 login succeeded")
+        self._readiness_cache = (time.monotonic(), True, "authenticated")
+
+    async def check_readiness(self, ttl_seconds: float = 30.0) -> Dict[str, Any]:
+        browser = self._browser
+        if browser is None or not browser.is_connected():
+            return {"browser_up": False, "session_authenticated": False, "reason": "browser_down"}
+        cached_at, cached_ok, cached_reason = self._readiness_cache
+        if cached_at and time.monotonic() - cached_at <= max(1.0, float(ttl_seconds)):
+            return {
+                "browser_up": True,
+                "session_authenticated": cached_ok,
+                "reason": cached_reason,
+            }
+        if not os.path.isfile(self._state_path):
+            self._readiness_cache = (time.monotonic(), False, "session_missing")
+            return {"browser_up": True, "session_authenticated": False, "reason": "session_missing"}
+        context: BrowserContext | None = None
+        try:
+            context = await browser.new_context(storage_state=self._state_path)
+            page = await context.new_page()
+            await page.goto("https://lolso1.com", wait_until="domcontentloaded", timeout=min(self.timeout_ms, 10000))
+            authenticated = await self._is_logged_in(page)
+            reason = "authenticated" if authenticated else "session_expired_or_challenge"
+        except Exception as exc:
+            authenticated = False
+            reason = type(exc).__name__
+        finally:
+            if context is not None:
+                try:
+                    await context.close()
+                except Exception:
+                    pass
+        self._readiness_cache = (time.monotonic(), authenticated, reason)
+        return {"browser_up": True, "session_authenticated": authenticated, "reason": reason}
 
     async def _capture_debug_screenshot(self, page: Page, filename: str = "debug.png") -> None:
         try:

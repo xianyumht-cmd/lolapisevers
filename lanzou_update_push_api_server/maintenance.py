@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import threading
 import time
 import uuid
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -15,6 +17,37 @@ from .management import APP_ENV_PATH, LOGS_DIR, _atomic_write_text, _backup_file
 
 AUDIT_PATH = LOGS_DIR / "admin_audit.jsonl"
 SERVICE_NAME = "LOLDataSystem"
+_AUDIT_LOCK = threading.RLock()
+
+
+def _audit_limits() -> tuple[int, int]:
+    try:
+        max_bytes = int(os.getenv("ADMIN_AUDIT_MAX_BYTES", str(5 * 1024 * 1024)))
+    except ValueError:
+        max_bytes = 5 * 1024 * 1024
+    try:
+        backups = int(os.getenv("ADMIN_AUDIT_BACKUPS", "5"))
+    except ValueError:
+        backups = 5
+    return max(64 * 1024, min(max_bytes, 100 * 1024 * 1024)), max(1, min(backups, 20))
+
+
+def _rotate_audit_if_needed(incoming_bytes: int) -> None:
+    max_bytes, backups = _audit_limits()
+    try:
+        current_size = AUDIT_PATH.stat().st_size
+    except OSError:
+        current_size = 0
+    if current_size + incoming_bytes <= max_bytes:
+        return
+    oldest = AUDIT_PATH.with_name(f"{AUDIT_PATH.name}.{backups}")
+    oldest.unlink(missing_ok=True)
+    for index in range(backups - 1, 0, -1):
+        source = AUDIT_PATH.with_name(f"{AUDIT_PATH.name}.{index}")
+        if source.exists():
+            os.replace(source, AUDIT_PATH.with_name(f"{AUDIT_PATH.name}.{index + 1}"))
+    if AUDIT_PATH.exists():
+        os.replace(AUDIT_PATH, AUDIT_PATH.with_name(f"{AUDIT_PATH.name}.1"))
 
 
 def _utc_now() -> str:
@@ -41,16 +74,19 @@ def append_audit(
         "path": path,
         "detail": detail or {},
     }
-    with AUDIT_PATH.open("a", encoding="utf-8", newline="\n") as handle:
-        handle.write(json.dumps(entry, ensure_ascii=False, separators=(",", ":")))
-        handle.write("\n")
+    line = json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n"
+    with _AUDIT_LOCK:
+        _rotate_audit_if_needed(len(line.encode("utf-8")))
+        with AUDIT_PATH.open("a", encoding="utf-8", newline="\n") as handle:
+            handle.write(line)
 
 
 def read_audit(limit: int = 100) -> dict[str, Any]:
     count = max(1, min(1000, int(limit)))
     if not AUDIT_PATH.exists():
         return {"ok": True, "path": str(AUDIT_PATH), "events": []}
-    lines = AUDIT_PATH.read_text(encoding="utf-8", errors="replace").splitlines()[-count:]
+    with _AUDIT_LOCK, AUDIT_PATH.open("r", encoding="utf-8", errors="replace") as handle:
+        lines = list(deque(handle, maxlen=count))
     events: list[dict[str, Any]] = []
     for line in reversed(lines):
         try:

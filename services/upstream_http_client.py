@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import logging
 import random
@@ -133,6 +134,7 @@ class UpstreamHttpClient:
         monotonic_fn: Callable[[], float] = time.monotonic,
         random_fn: Callable[[], float] = random.random,
         logger: Optional[logging.Logger] = None,
+        max_response_bytes: int = 4 * 1024 * 1024,
     ) -> None:
         self.session = session or requests.Session()
         self.connect_timeout = max(0.1, float(connect_timeout))
@@ -146,6 +148,7 @@ class UpstreamHttpClient:
         self.monotonic_fn = monotonic_fn
         self.random_fn = random_fn
         self.logger = logger or logging.getLogger("LOLDataSystem")
+        self.max_response_bytes = max(1024, min(int(max_response_bytes), 64 * 1024 * 1024))
         self._lock = threading.RLock()
         self._circuits: Dict[str, _CircuitState] = {}
         self._flights: Dict[str, Future[UpstreamResponse]] = {}
@@ -224,6 +227,45 @@ class UpstreamHttpClient:
             merged["If-Modified-Since"] = last_modified
         return merged
 
+    @staticmethod
+    def _flight_key(source: str, method: str, url: str, headers: Mapping[str, str]) -> str:
+        canonical_headers = "\n".join(
+            f"{str(key).lower()}:{str(value)}" for key, value in sorted(headers.items(), key=lambda item: str(item[0]).lower())
+        )
+        digest = hashlib.sha256(
+            f"{method.upper()}\n{url}\n{canonical_headers}".encode("utf-8")
+        ).hexdigest()
+        return f"{source}:{digest}"
+
+    def _read_bounded_text(self, response: requests.Response) -> str:
+        declared = str(response.headers.get("Content-Length") or "").strip()
+        if declared:
+            try:
+                declared_size = int(declared)
+            except ValueError:
+                declared_size = -1
+            if declared_size > self.max_response_bytes:
+                raise ValueError("upstream response exceeds byte limit")
+        iterator = getattr(response, "iter_content", None)
+        if callable(iterator):
+            chunks = []
+            total = 0
+            for chunk in iterator(chunk_size=64 * 1024):
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > self.max_response_bytes:
+                    raise ValueError("upstream response exceeds byte limit")
+                chunks.append(bytes(chunk))
+            raw = b"".join(chunks)
+            encoding = str(getattr(response, "encoding", "") or "utf-8")
+            return raw.decode(encoding, errors="replace").replace("\x00", "").strip()
+        # Compatibility for lightweight response doubles used by callers/tests.
+        text = str(getattr(response, "text", "") or "")
+        if len(text.encode("utf-8")) > self.max_response_bytes:
+            raise ValueError("upstream response exceeds byte limit")
+        return text.replace("\x00", "").strip()
+
     def request(
         self,
         source_id: str,
@@ -258,14 +300,16 @@ class UpstreamHttpClient:
                 circuit_state="open",
             )
 
+        request_headers = self._headers(headers, etag, last_modified)
+        flight_key = self._flight_key(source, method, normalized_url, request_headers)
         flight: Optional[Future[UpstreamResponse]] = None
         owner = True
         if singleflight:
             with self._lock:
-                flight = self._flights.get(source)
+                flight = self._flights.get(flight_key)
                 if flight is None:
                     flight = Future()
-                    self._flights[source] = flight
+                    self._flights[flight_key] = flight
                 else:
                     owner = False
         if not owner and flight is not None:
@@ -286,6 +330,7 @@ class UpstreamHttpClient:
                 connect_timeout=connect_timeout,
                 read_timeout=read_timeout,
                 gate_state=gate_state,
+                request_headers=request_headers,
             )
             if flight is not None and not flight.done():
                 flight.set_result(result)
@@ -300,8 +345,8 @@ class UpstreamHttpClient:
         finally:
             if singleflight:
                 with self._lock:
-                    if self._flights.get(source) is flight:
-                        self._flights.pop(source, None)
+                    if self._flights.get(flight_key) is flight:
+                        self._flights.pop(flight_key, None)
 
     def _request_owned(
         self,
@@ -318,17 +363,23 @@ class UpstreamHttpClient:
         connect_timeout: Optional[float],
         read_timeout: Optional[float],
         gate_state: str,
+        request_headers: Mapping[str, str],
     ) -> UpstreamResponse:
         started = self.monotonic_fn()
         limit = max(1, min(int(attempts or self.attempts), MAX_ATTEMPTS))
         timeout = (max(0.1, float(connect_timeout or self.connect_timeout)), max(0.1, float(read_timeout or self.read_timeout)))
-        request_headers = self._headers(headers, etag, last_modified)
         last_error: Optional[UpstreamError] = None
 
         for index in range(limit):
             response: Optional[requests.Response] = None
             try:
-                response = self.session.request(method.upper(), url, headers=request_headers, timeout=timeout)
+                response = self.session.request(
+                    method.upper(),
+                    url,
+                    headers=dict(request_headers),
+                    timeout=timeout,
+                    stream=True,
+                )
                 response_etag = str(response.headers.get("ETag") or "")
                 response_last_modified = str(response.headers.get("Last-Modified") or "")
 
@@ -350,7 +401,7 @@ class UpstreamHttpClient:
                     circuit = self._failure(source, error) if retryable else gate_state
                     return UpstreamResponse(False, source, "failed", response.status_code, index + 1, etag=response_etag, last_modified=response_last_modified, error=error, elapsed_ms=round((self.monotonic_fn() - started) * 1000, 1), circuit_state=circuit)
 
-                text = response.text.replace("\x00", "").strip()
+                text = self._read_bounded_text(response)
                 data: Any = None
                 if parse_json:
                     try:
@@ -397,6 +448,6 @@ class UpstreamHttpClient:
                     "last_error_class": state.last_error_class,
                     "last_error_at_monotonic": state.last_error_at,
                     "last_success_at_monotonic": state.last_success_at,
-                    "in_flight": source in self._flights,
+                    "in_flight": any(key.startswith(source + ":") for key in self._flights),
                 }
             return result

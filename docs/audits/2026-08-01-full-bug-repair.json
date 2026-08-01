@@ -1,0 +1,89 @@
+{
+  "schema_version": "lolapisevers-full-bug-repair.v1",
+  "record_type": "repository_bug_repair",
+  "repair_id": "LOLAPI-FULL-BUG-REPAIR-20260801",
+  "repository": "xianyumht-cmd/lolapisevers",
+  "base_branch": "master",
+  "base_sha": "1232c7d97ecc11f2cde6343d277ddd8445205dad",
+  "repair_branch": "fix/all-confirmed-bugs-20260801",
+  "pull_request": 28,
+  "repair_date": "2026-08-01",
+  "summary": {
+    "confirmed_code_bugs_fixed": 29,
+    "dependency_issues_fixed": 1,
+    "unconfirmed_findings_excluded": 7,
+    "state": "VERIFIED_ON_REPAIR_BRANCH"
+  },
+  "verification": {
+    "linux_python_3_12": {
+      "total": 258,
+      "passed": 254,
+      "skipped_windows_powershell_only": 4,
+      "result": "PASS"
+    },
+    "windows_python_3_12": {
+      "total": 258,
+      "passed": 258,
+      "result": "PASS"
+    },
+    "python_compileall": "PASS",
+    "webui_asset_generation": "PASS",
+    "generated_javascript_node_check": "PASS",
+    "powershell_files_parsed": 16,
+    "powershell_syntax": "PASS",
+    "pip_audit_strict": {
+      "result": "PASS",
+      "output": "No known vulnerabilities found"
+    }
+  },
+  "fixed_findings": [
+    {"id":"GG-001","status":"FIXED","proof":"Concurrent requests for different account identifiers now use distinct singleflight keys."},
+    {"id":"LZ-001","status":"FIXED","proof":"Both test-push routes call LanzouMonitorService.send_test_event."},
+    {"id":"GG-002","status":"FIXED","proof":"Idempotency events store a request fingerprint and return HTTP 409 for key reuse with a different payload."},
+    {"id":"GG-003","status":"FIXED","proof":"The official report client rejects a blank request_id."},
+    {"id":"GG-004","status":"FIXED","proof":"Request IDs are validated without lossy character replacement."},
+    {"id":"GG-005","status":"FIXED","proof":"Client and server use the same canonical feature aliases."},
+    {"id":"GG-006","status":"FIXED","proof":"Forward delivery exceeding 32 nodes raises an explicit error and does not truncate silently."},
+    {"id":"GG-007","status":"FIXED","proof":"Server, schema and official client enforce shared delivery limits."},
+    {"id":"GG-008","status":"FIXED","proof":"The official client enforces the response limit while streaming."},
+    {"id":"CR-001","status":"FIXED","proof":"Read operations update last_checked_at without changing updated_at."},
+    {"id":"DYN-001","status":"FIXED","proof":"Every redirect target is revalidated, DNS is pinned to validated public addresses and response size is capped."},
+    {"id":"WEB-001","status":"FIXED","proof":"GroupGuard report writes require a write token or an operating-system-confirmed loopback connection."},
+    {"id":"WEB-002","status":"FIXED","proof":"SO1 manual login requires control authorization and is rate limited by a cooldown."},
+    {"id":"WEB-003","status":"FIXED","proof":"Upstream responses are read in bounded chunks."},
+    {"id":"SEC-001","status":"FIXED","proof":"Control audit logs use locking, rotation and tail reads."},
+    {"id":"SO1-002","status":"FIXED","proof":"So1Client is no longer a process-global singleton and retains per-instance configuration and synchronization primitives."},
+    {"id":"HLTH-001","status":"FIXED","proof":"SO1 readiness validates authenticated session state instead of browser connection alone."},
+    {"id":"LZ-002","status":"FIXED","proof":"Blank and duplicate watcher IDs are rejected during configuration loading."},
+    {"id":"LZ-003","status":"FIXED","proof":"scan_on_start=false reports a warming state instead of degraded before the first scheduled scan."},
+    {"id":"LZ-004","status":"FIXED","proof":"Boolean, numeric and HTTP method configuration values are parsed strictly."},
+    {"id":"ADMIN-001","status":"FIXED","proof":"Diagnostics read configured ports, platform paths and current log names."},
+    {"id":"ADMIN-002","status":"FIXED","proof":"Internal API debugger requests forward the configured admin token."},
+    {"id":"API-001","status":"FIXED","proof":"Invalid Lanzou configuration is translated to HTTP 400 with a specific message."},
+    {"id":"OPS-001","status":"FIXED","proof":"Service takeover only terminates app.py processes inside the expected project root."},
+    {"id":"OPS-002","status":"FIXED","proof":"Persistence installation validates the candidate before stopping production and restores the previous service on failure."},
+    {"id":"OPS-003","status":"FIXED","proof":"NSSM archives must match a configured SHA-256 before execution."},
+    {"id":"OPS-004","status":"FIXED","proof":"Operations scripts use the current main_api log names and configurable paths."},
+    {"id":"CFG-001","status":"FIXED","proof":"Numeric environment variables use bounded typed parsers with explicit errors."},
+    {"id":"DB-001","status":"FIXED","proof":"MySQL database names and character sets are restricted to validated allowlists."},
+    {"id":"DEP-001","status":"FIXED","proof":"Pinned dependencies were updated and pip-audit --strict reports no known vulnerabilities."}
+  ],
+  "excluded_unconfirmed_findings": [
+    "SO1-001",
+    "HLTH-002",
+    "LZ-005",
+    "LZ-006",
+    "PROV-001",
+    "XQ-001",
+    "SEC-002"
+  ],
+  "dependency_versions": {
+    "requests": "2.34.2",
+    "urllib3": "2.7.0",
+    "cryptography": "49.0.0",
+    "Pillow": "12.3.0",
+    "fastapi": "0.141.1",
+    "playwright": "1.58.0"
+  },
+  "regression_test_file": "tests/test_confirmed_bug_repairs.py"
+}

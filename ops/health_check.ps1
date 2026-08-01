@@ -1,14 +1,18 @@
+param(
+  [string]$ProjectRoot = (Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)),
+  [string]$ServiceName = "LOLDataSystem",
+  [int]$Port = 5001,
+  [int]$LanzouPort = 6178
+)
+
 $ErrorActionPreference = "Continue"
 
-$ProjectRoot = "D:\project2\lolapisevers"
-$ServiceName = "LOLDataSystem"
-$Port = 5001
+$ProjectRoot = [IO.Path]::GetFullPath($ProjectRoot)
 $HealthUrl = "http://127.0.0.1:$Port/health"
-$LanzouPort = 6178
 $LanzouHealthUrl = "http://127.0.0.1:$LanzouPort/health"
 $LogsDir = Join-Path $ProjectRoot "logs"
-$StderrLog = Join-Path $LogsDir "service.stderr.log"
-$StdoutLog = Join-Path $LogsDir "service.stdout.log"
+$StderrLog = Join-Path $LogsDir "main_api.stderr.log"
+$StdoutLog = Join-Path $LogsDir "main_api.stdout.log"
 $LanzouStderrLog = Join-Path $LogsDir "lanzou_monitor.stderr.log"
 $LanzouStdoutLog = Join-Path $LogsDir "lanzou_monitor.stdout.log"
 $MainApiReady = $false

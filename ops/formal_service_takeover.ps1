@@ -1,9 +1,14 @@
-﻿$ErrorActionPreference = "Continue"
+param(
+    [string]$ProjectRoot = (Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)),
+    [string]$ServiceName = "LOLDataSystem",
+    [int]$Port = 5001
+)
 
-$ProjectRoot = "D:\project2\lolapisevers"
-$ServiceName = "LOLDataSystem"
-$HealthUrl = "http://127.0.0.1:5001/health"
-$Port = 5001
+$ErrorActionPreference = "Continue"
+
+$ProjectRoot = [IO.Path]::GetFullPath($ProjectRoot)
+$HealthUrl = "http://127.0.0.1:$Port/health"
+$ExpectedAppPath = [IO.Path]::GetFullPath((Join-Path $ProjectRoot "app.py"))
 $Time = Get-Date -Format "yyyyMMdd-HHmmss"
 $LogsDir = Join-Path $ProjectRoot "logs"
 $BackupFile = Join-Path $LogsDir "formal_takeover_backup_$Time.txt"
@@ -88,15 +93,15 @@ function Save-Diagnostics([string]$path, [string]$nssmExe) {
 
     "`n==== app.py python processes ====" | Out-File $path -Append -Encoding UTF8
     Get-CimInstance Win32_Process | Where-Object {
-        $_.Name -like "python*" -and $_.CommandLine -match "app\.py"
+        $_.Name -like "python*" -and $_.CommandLine -and ($_.CommandLine -like "*$ExpectedAppPath*" -or $_.CommandLine -like "*$ProjectRoot*")
     } | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath,CommandLine | Format-List | Out-String | Out-File $path -Append -Encoding UTF8
 }
 
 function Stop-AppPyConsoleProcesses {
-    Write-Step "[4] 停止当前手动/控制台 app.py 进程..."
+    Write-Step "[4] 停止当前项目的手动/控制台 app.py 进程..."
 
     $appPyProcesses = Get-CimInstance Win32_Process | Where-Object {
-        $_.Name -like "python*" -and $_.CommandLine -match "app\.py"
+        $_.Name -like "python*" -and $_.CommandLine -and ($_.CommandLine -like "*$ExpectedAppPath*" -or $_.CommandLine -like "*$ProjectRoot*")
     } | Sort-Object ProcessId -Descending
 
     if (-not $appPyProcesses) {
@@ -225,12 +230,12 @@ if ($afterHealth) {
 
 Write-Host "服务接管失败，准备回滚，避免接口长时间不可用。" -ForegroundColor Red
 
-Write-Step "[失败诊断] service.stderr.log 最近 80 行"
-$stderr = Join-Path $LogsDir "service.stderr.log"
+Write-Step "[失败诊断] main_api.stderr.log 最近 80 行"
+$stderr = Join-Path $LogsDir "main_api.stderr.log"
 if (Test-Path $stderr) {
     Get-Content $stderr -Tail 80
 } else {
-    Write-Host "未找到 service.stderr.log"
+    Write-Host "未找到 main_api.stderr.log"
 }
 
 Write-Step "[回滚] 停止服务并改回手动"

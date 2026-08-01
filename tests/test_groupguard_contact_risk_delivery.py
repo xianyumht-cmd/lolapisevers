@@ -17,7 +17,11 @@ def decode(response):
 
 def request_with_store(store):
     ctx = SimpleNamespace(contact_risk_store=store, upstream_http_client=object())
-    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(ctx=ctx)), headers={})
+    return SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(ctx=ctx)),
+        headers={},
+        client=SimpleNamespace(host="127.0.0.1"),
+    )
 
 
 class GroupGuardContactRiskDeliveryTests(unittest.IsolatedAsyncioTestCase):
@@ -95,6 +99,35 @@ class GroupGuardContactRiskDeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(query["meta"]["local_report_count"], 1)
         text = query["delivery"]["segments"][0]["text"]
         self.assertIn("收款后失联", text)
+
+    async def test_same_request_id_with_different_report_is_rejected(self):
+        request = request_with_store(self.store)
+        first = await groupguard_report(request, {
+            "feature": "scammer_report",
+            "parameters": {"qq": "11111", "content": "第一条"},
+            "request_id": "collision-001",
+        })
+        second = await groupguard_report(request, {
+            "feature": "scammer_report",
+            "parameters": {"qq": "22222", "content": "第二条"},
+            "request_id": "collision-001",
+        })
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 409)
+        self.assertIsNone(self.store.get("scammer", "qq", "22222", touch=False))
+
+    async def test_read_does_not_change_updated_at(self):
+        request = request_with_store(self.store)
+        await groupguard_report(request, {
+            "feature": "scammer_report",
+            "parameters": {"qq": "123456", "content": "证据"},
+            "request_id": "updated-at-001",
+        })
+        before = self.store.get("scammer", "qq", "123456", touch=False)
+        self.store.get("scammer", "qq", "123456", touch=True)
+        after = self.store.get("scammer", "qq", "123456", touch=False)
+        self.assertEqual(before["updated_at"], after["updated_at"])
+        self.assertNotEqual(before["last_checked_at"], after["last_checked_at"])
 
     async def test_scammer_and_peer_records_are_isolated(self):
         request = request_with_store(self.store)
