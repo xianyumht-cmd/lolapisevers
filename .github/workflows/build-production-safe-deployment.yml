@@ -42,6 +42,39 @@ jobs:
           }
           Expand-Archive -LiteralPath $zipPath -DestinationPath $pwd -Force
 
+          # Windows runners may expose TEMP through an 8.3 alias while
+          # Get-ChildItem returns the canonical long path. Patch the reviewed
+          # builder deterministically so manifest paths remain package-relative.
+          $builderPath = Join-Path $pwd "ops\Build-FullBugRepairPackage.ps1"
+          $builderText = Get-Content $builderPath -Raw -Encoding UTF8
+          $oldBlock = @'
+$packageRoot = Join-Path $workRoot $packageName
+$payloadRoot = Join-Path $packageRoot "payload"
+$wheelhouse = Join-Path $payloadRoot "wheelhouse"
+New-Item -ItemType Directory -Path $wheelhouse -Force | Out-Null
+'@
+          $newBlock = @'
+$packageRoot = Join-Path $workRoot $packageName
+$payloadRoot = Join-Path $packageRoot "payload"
+$wheelhouse = Join-Path $payloadRoot "wheelhouse"
+New-Item -ItemType Directory -Path $wheelhouse -Force | Out-Null
+$packageRoot = (Resolve-Path -LiteralPath $packageRoot).Path
+$payloadRoot = Join-Path $packageRoot "payload"
+$wheelhouse = Join-Path $payloadRoot "wheelhouse"
+'@
+          if (-not $builderText.Contains($oldBlock)) {
+            throw "Reviewed builder patch anchor was not found."
+          }
+          $patchedBuilder = $builderText.Replace($oldBlock, $newBlock)
+          if ($patchedBuilder.Contains($oldBlock)) {
+            throw "Reviewed builder patch was not unique."
+          }
+          [System.IO.File]::WriteAllText(
+            $builderPath,
+            $patchedBuilder,
+            [System.Text.UTF8Encoding]::new($false)
+          )
+
       - name: Validate deployment safety invariants
         shell: pwsh
         run: |
