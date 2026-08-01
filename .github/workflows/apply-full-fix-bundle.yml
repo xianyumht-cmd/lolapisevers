@@ -1,0 +1,43 @@
+name: Apply full confirmed bug repair bundle
+
+on:
+  push:
+    branches:
+      - fix/all-confirmed-bugs-20260801
+    paths:
+      - .github/workflows/apply-full-fix-bundle.yml
+      - .github/fix-bundles/full-confirmed-bugs.tar.gz.b64
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repair branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/all-confirmed-bugs-20260801
+          fetch-depth: 0
+
+      - name: Apply verified repair bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 --decode .github/fix-bundles/full-confirmed-bugs.tar.gz.b64 > /tmp/full-confirmed-bugs.tar.gz
+          tar -xzf /tmp/full-confirmed-bugs.tar.gz -C .
+          rm -f .github/workflows/full-fix-source-export.yml
+          rm -f .github/fix-bundles/full-confirmed-bugs.tar.gz.b64
+          rm -f .github/workflows/apply-full-fix-bundle.yml
+          git diff --check
+
+      - name: Commit repair candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "fix: repair all confirmed audit bugs"
+          git push origin HEAD:fix/all-confirmed-bugs-20260801
