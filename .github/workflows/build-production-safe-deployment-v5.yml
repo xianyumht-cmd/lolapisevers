@@ -1,0 +1,200 @@
+name: Build production safe deployment package V5
+
+on:
+  push:
+    branches:
+      - release/full-bug-repair-safe-deploy-p009-integrated-v5-20260801
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+jobs:
+  build-package-v5:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      TARGET_COMMIT: e2f433f75937b188d95b7a2be6d426ca9e60f95c
+      P009_COMMIT: d2416c90c6a37cc27fed2ccde4c71aa40c81a53b
+      FULL_REPAIR_MASTER_COMMIT: 330d286ce953e47950f7f4eab13a43d4d34eb5e7
+
+    steps:
+      - name: Checkout V5 builder branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Verify P009-integrated target
+        shell: pwsh
+        run: |
+          git cat-file -e "$env:TARGET_COMMIT^{commit}"
+          if ($LASTEXITCODE -ne 0) { throw "Target commit is unavailable." }
+
+          git merge-base --is-ancestor $env:P009_COMMIT $env:TARGET_COMMIT
+          if ($LASTEXITCODE -ne 0) {
+            throw "Target is not descended from the deployed P009 commit."
+          }
+
+          git merge-base --is-ancestor $env:FULL_REPAIR_MASTER_COMMIT $env:TARGET_COMMIT
+          if ($LASTEXITCODE -ne 0) {
+            throw "Target does not contain the full bug repair masterline."
+          }
+
+          git worktree add --detach candidate-v5 $env:TARGET_COMMIT
+          if ($LASTEXITCODE -ne 0) { throw "Unable to create immutable target worktree." }
+
+          foreach ($requiredPath in @(
+            "candidate-v5/services/api_parser_center.py",
+            "candidate-v5/lanzou_update_push_api_server/parser_center_admin.py",
+            "candidate-v5/config/interface-parser-center.default.json",
+            "candidate-v5/tests/test_api_parser_center.py",
+            "candidate-v5/tests/test_confirmed_bug_repairs.py",
+            "candidate-v5/docs/audits/2026-08-01-full-bug-repair.json"
+          )) {
+            if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
+              throw "Integrated target is missing required file: $requiredPath"
+            }
+          }
+
+      - name: Install target dependencies and audit tool
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r candidate-v5/requirements.txt
+          python -m pip install pip-audit
+
+      - name: Run immutable integrated target tests
+        shell: pwsh
+        run: |
+          Push-Location candidate-v5
+          try {
+            python -m compileall -q .
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            python -m unittest discover -s tests -p "test_*.py" -v
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            python tests/check_ui_assets.py
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            node --check ui_control.generated.js
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally {
+            Pop-Location
+          }
+
+      - name: Parse every integrated target script with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $files = @(Get-ChildItem candidate-v5 -Filter *.ps1 -File -Recurse)
+          if ($files.Count -eq 0) { throw "No PowerShell files were found." }
+          foreach ($file in $files) {
+              $tokens = $null
+              $errors = $null
+              [System.Management.Automation.Language.Parser]::ParseFile(
+                  $file.FullName,
+                  [ref]$tokens,
+                  [ref]$errors
+              ) | Out-Null
+              if ($errors -and $errors.Count -gt 0) {
+                  $errors | ForEach-Object { Write-Error "$($file.FullName): $($_.Message)" }
+                  exit 1
+              }
+          }
+          Write-Host "Windows PowerShell 5.1 parsed $($files.Count) scripts successfully."
+
+      - name: Audit integrated target dependency set
+        shell: pwsh
+        run: python -m pip_audit -r candidate-v5/requirements.txt --strict
+
+      - name: Build V5 immutable offline deployment package
+        shell: powershell
+        run: |
+          .\ops\Build-FullBugRepairPackageV5.ps1 `
+              -RepositoryRoot "$pwd" `
+              -TargetCommit "$env:TARGET_COMMIT" `
+              -OutputRoot "$pwd\dist-v5"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify V5 package hashes lineage and safety flags
+        shell: pwsh
+        run: |
+          $metadataFile = Get-ChildItem dist-v5 -Filter *.metadata.json -File | Select-Object -First 1
+          $zipFile = Get-ChildItem dist-v5 -Filter *.zip -File | Select-Object -First 1
+          if (-not $metadataFile -or -not $zipFile) { throw "V5 package files are missing." }
+
+          $metadata = Get-Content $metadataFile.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+          if ("$($metadata.target_commit)" -ne $env:TARGET_COMMIT) { throw "V5 target mismatch." }
+          if ([int]$metadata.package_revision -ne 5) { throw "V5 revision mismatch." }
+          foreach ($flag in @(
+            "p009_lineage_preserved",
+            "parser_center_present",
+            "full_bug_repair_integrated",
+            "ancestry_guard_preserved",
+            "powershell_utf8_parse_input"
+          )) {
+            if (-not [bool]$metadata.$flag) { throw "V5 metadata flag is missing: $flag" }
+          }
+
+          $zipHash = (Get-FileHash $zipFile.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($zipHash -ne "$($metadata.zip_sha256)".ToLowerInvariant()) { throw "V5 ZIP hash mismatch." }
+
+          $extract = Join-Path $env:RUNNER_TEMP "full-bug-repair-v5-final"
+          if (Test-Path -LiteralPath $extract) { Remove-Item $extract -Recurse -Force }
+          Expand-Archive -LiteralPath $zipFile.FullName -DestinationPath $extract -Force
+          $manifestFile = Get-ChildItem $extract -Filter manifest.json -File -Recurse | Select-Object -First 1
+          if (-not $manifestFile) { throw "V5 manifest is missing." }
+          $packageRoot = $manifestFile.Directory.FullName
+          $manifest = Get-Content $manifestFile.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+
+          if ("$($manifest.target_commit)" -ne $env:TARGET_COMMIT) { throw "Embedded target mismatch." }
+          if ([int]$manifest.package_revision -ne 5) { throw "Embedded revision mismatch." }
+          foreach ($flag in @(
+            "candidate_tests_before_stop",
+            "automatic_rollback",
+            "offline_dependencies",
+            "powershell_utf8_parse_input",
+            "p009_lineage_preserved",
+            "parser_center_present",
+            "full_bug_repair_integrated",
+            "ancestry_guard_preserved"
+          )) {
+            if (-not [bool]$manifest.deployment.$flag) { throw "Missing safety flag: $flag" }
+          }
+
+          foreach ($entry in @($manifest.files)) {
+            $path = Join-Path $packageRoot ("$($entry.path)".Replace("/", "\"))
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing file: $($entry.path)" }
+            if ((Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant() -ne "$($entry.sha256)".ToLowerInvariant()) {
+              throw "File hash mismatch: $($entry.path)"
+            }
+            if ([int64](Get-Item $path).Length -ne [int64]$entry.bytes) { throw "File size mismatch: $($entry.path)" }
+          }
+
+          $deployFile = Join-Path $packageRoot "Deploy-FullBugRepairSafe.ps1"
+          $deployText = Get-Content $deployFile -Raw -Encoding UTF8
+          foreach ($marker in @(
+            "Parser]::ParseInput(",
+            "merge-base",
+            "--is-ancestor",
+            "Production was not stopped or changed",
+            "Automatic rollback is starting"
+          )) {
+            if (-not $deployText.Contains($marker)) { throw "Deployment marker is missing: $marker" }
+          }
+
+          Get-Content $metadataFile.FullName -Raw
+
+      - name: Upload V5 production deployment package
+        uses: actions/upload-artifact@v4
+        with:
+          name: LOLDataSystem-full-bug-repair-safe-deploy-p009-integrated-v5
+          path: |
+            dist-v5/*.zip
+            dist-v5/*.metadata.json
+          if-no-files-found: error
+          retention-days: 14
