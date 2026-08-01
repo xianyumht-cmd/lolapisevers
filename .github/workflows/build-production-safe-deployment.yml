@@ -46,29 +46,18 @@ jobs:
           # Get-ChildItem returns the canonical long path. Patch the reviewed
           # builder deterministically so manifest paths remain package-relative.
           $builderPath = Join-Path $pwd "ops\Build-FullBugRepairPackage.ps1"
-          $builderText = Get-Content $builderPath -Raw -Encoding UTF8
-          $oldBlock = @'
-          $packageRoot = Join-Path $workRoot $packageName
-          $payloadRoot = Join-Path $packageRoot "payload"
-          $wheelhouse = Join-Path $payloadRoot "wheelhouse"
-          New-Item -ItemType Directory -Path $wheelhouse -Force | Out-Null
-          '@
-          $newBlock = @'
-          $packageRoot = Join-Path $workRoot $packageName
-          $payloadRoot = Join-Path $packageRoot "payload"
-          $wheelhouse = Join-Path $payloadRoot "wheelhouse"
-          New-Item -ItemType Directory -Path $wheelhouse -Force | Out-Null
-          $packageRoot = (Resolve-Path -LiteralPath $packageRoot).Path
-          $payloadRoot = Join-Path $packageRoot "payload"
-          $wheelhouse = Join-Path $payloadRoot "wheelhouse"
-          '@
-          if (-not $builderText.Contains($oldBlock)) {
-            throw "Reviewed builder patch anchor was not found."
+          $builderText = (Get-Content $builderPath -Raw -Encoding UTF8).Replace("`r`n", "`n")
+          $anchor = 'New-Item -ItemType Directory -Path $wheelhouse -Force | Out-Null'
+          if ([regex]::Matches($builderText, [regex]::Escape($anchor)).Count -ne 1) {
+            throw "Reviewed builder patch anchor was not unique."
           }
-          $patchedBuilder = $builderText.Replace($oldBlock, $newBlock)
-          if ($patchedBuilder.Contains($oldBlock)) {
-            throw "Reviewed builder patch was not unique."
-          }
+          $replacement = @(
+            $anchor,
+            '$packageRoot = (Resolve-Path -LiteralPath $packageRoot).Path',
+            '$payloadRoot = Join-Path $packageRoot "payload"',
+            '$wheelhouse = Join-Path $payloadRoot "wheelhouse"'
+          ) -join "`n"
+          $patchedBuilder = $builderText.Replace($anchor, $replacement)
           [System.IO.File]::WriteAllText(
             $builderPath,
             $patchedBuilder,
