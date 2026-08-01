@@ -162,26 +162,25 @@ try {
 '@
     $deployText = $deployText.Replace($bootstrapAnchor, $bootstrapReplacement.TrimEnd())
 
-    $parseFileBlock = @'
-            [System.Management.Automation.Language.Parser]::ParseFile(
-                $file.FullName,
-                [ref]$tokens,
-                [ref]$errors
-            ) | Out-Null
-'@
-    $parseInputBlock = @'
-            $scriptText = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8
-            [System.Management.Automation.Language.Parser]::ParseInput(
-                $scriptText,
-                $file.FullName,
-                [ref]$tokens,
-                [ref]$errors
-            ) | Out-Null
-'@
-    if ([regex]::Matches($deployText, [regex]::Escape($parseFileBlock.TrimEnd())).Count -ne 1) {
-        throw "Candidate PowerShell parser patch anchor was not unique."
+    $parseFilePattern = '(?ms)(?<indent>^[ \t]*)\[System\.Management\.Automation\.Language\.Parser\]::ParseFile\(\s*\$file\.FullName,\s*\[ref\]\$tokens,\s*\[ref\]\$errors\s*\)\s*\|\s*Out-Null'
+    $parseMatches = [regex]::Matches($deployText, $parseFilePattern)
+    if ($parseMatches.Count -ne 1) {
+        throw "Candidate PowerShell parser patch anchor count was $($parseMatches.Count), expected 1."
     }
-    $deployText = $deployText.Replace($parseFileBlock.TrimEnd(), $parseInputBlock.TrimEnd())
+    $parseMatch = $parseMatches[0]
+    $indent = $parseMatch.Groups["indent"].Value
+    $parseInputBlock = @(
+        ('{0}$scriptText = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8' -f $indent),
+        ('{0}[System.Management.Automation.Language.Parser]::ParseInput(' -f $indent),
+        ('{0}    $scriptText,' -f $indent),
+        ('{0}    $file.FullName,' -f $indent),
+        ('{0}    [ref]$tokens,' -f $indent),
+        ('{0}    [ref]$errors' -f $indent),
+        ('{0}) | Out-Null' -f $indent)
+    ) -join "`n"
+    $deployText = $deployText.Substring(0, $parseMatch.Index) +
+        $parseInputBlock +
+        $deployText.Substring($parseMatch.Index + $parseMatch.Length)
     Write-Utf8NoBom -Path $deployPath -Text $deployText
 
     $syntaxCommand = @'
