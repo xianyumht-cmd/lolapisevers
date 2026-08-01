@@ -31,6 +31,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          truncate -s 6000 .github/fix-bundles/chunks/part-15
+          truncate -s 6000 .github/fix-bundles/chunks/part-16
           cat .github/fix-bundles/chunks/part-* > /tmp/full-confirmed-bugs.tar.gz.b64
           echo "3a5a7cb121bc3fb71162ba2508e2056e6bd88307bb6e9ec0f22690f8a20be8c8  /tmp/full-confirmed-bugs.tar.gz.b64" | sha256sum -c -
           base64 --decode /tmp/full-confirmed-bugs.tar.gz.b64 > /tmp/full-confirmed-bugs.tar.gz
