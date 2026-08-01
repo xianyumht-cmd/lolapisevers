@@ -3,7 +3,7 @@ name: Build production safe deployment package
 on:
   push:
     branches:
-      - release/full-bug-repair-safe-deploy-20260801
+      - release/full-bug-repair-safe-deploy-pycompat-v2-20260801
   pull_request:
     branches:
       - master
@@ -12,7 +12,7 @@ on:
 jobs:
   build-package:
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 75
     env:
       TARGET_COMMIT: a28483eadb25986031d11ca40e0d26aa6f9e6dfa
       TOOLS_ZIP_SHA256: 30266c26bc21b4600d7e2cf63a27978f486958fa7c1e65a11e19484587a54237
@@ -178,7 +178,148 @@ jobs:
             exit $LASTEXITCODE
           }
 
-      - name: Verify generated package hashes
+      - name: Add Python 3.11 to 3.14 offline compatibility
+        shell: pwsh
+        run: |
+          $oldZip = Get-ChildItem dist -Filter *.zip -File | Select-Object -First 1
+          $oldMetadata = Get-ChildItem dist -Filter *.metadata.json -File | Select-Object -First 1
+          if (-not $oldZip -or -not $oldMetadata) {
+            throw "Base deployment package was not generated."
+          }
+
+          $staging = Join-Path $env:RUNNER_TEMP "full-bug-repair-pycompat-v2"
+          if (Test-Path -LiteralPath $staging) {
+            Remove-Item -LiteralPath $staging -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $staging -Force | Out-Null
+          Expand-Archive -LiteralPath $oldZip.FullName -DestinationPath $staging -Force
+          $packageRoot = Get-ChildItem $staging -Directory | Select-Object -First 1
+          if (-not $packageRoot) {
+            throw "Expanded package root is missing."
+          }
+
+          $newPackageName = "LOLDataSystem-full-bug-repair-safe-deploy-a28483eadb25-py311-py314-v2"
+          $renamedRoot = Join-Path $staging $newPackageName
+          Rename-Item -LiteralPath $packageRoot.FullName -NewName $newPackageName
+          $packageRoot = Get-Item -LiteralPath $renamedRoot
+          $wheelhouse = Join-Path $packageRoot.FullName "payload\wheelhouse"
+          $requirements = Join-Path $packageRoot.FullName "payload\requirements.txt"
+
+          foreach ($pythonVersion in @("3.11", "3.12", "3.13", "3.14")) {
+            $abi = "cp" + $pythonVersion.Replace(".", "")
+            Write-Host "Downloading offline wheels for Python $pythonVersion ($abi)..."
+            python -m pip download `
+              --disable-pip-version-check `
+              --dest $wheelhouse `
+              --only-binary=:all: `
+              --platform win_amd64 `
+              --implementation cp `
+              --python-version $pythonVersion `
+              --abi $abi `
+              -r $requirements
+            if ($LASTEXITCODE -ne 0) {
+              throw "Offline wheel download failed for Python $pythonVersion."
+            }
+          }
+
+          foreach ($pythonVersion in @("3.11", "3.12", "3.13", "3.14")) {
+            $tag = "cp" + $pythonVersion.Replace(".", "")
+            foreach ($package in @("pillow", "pydantic_core", "cffi", "greenlet", "charset_normalizer")) {
+              $match = Get-ChildItem $wheelhouse -File | Where-Object {
+                $_.Name -like "$package-*-$tag-$tag-win_amd64.whl"
+              } | Select-Object -First 1
+              if (-not $match) {
+                throw "Missing $package wheel for Python $pythonVersion."
+              }
+            }
+          }
+
+          $deployPath = Join-Path $packageRoot.FullName "Deploy-FullBugRepairSafe.ps1"
+          $deployText = Get-Content $deployPath -Raw -Encoding UTF8
+          $anchor = '    $bootstrapPython = Resolve-BootstrapPython -Root $ProjectRoot'
+          if ([regex]::Matches($deployText, [regex]::Escape($anchor)).Count -ne 1) {
+            throw "Bootstrap Python patch anchor was not unique."
+          }
+          $replacement = @'
+              $bootstrapPython = Resolve-BootstrapPython -Root $ProjectRoot
+              $bootstrapVersion = (& $bootstrapPython -c "import sys; print(str(sys.version_info[0]) + str(sys.version_info[1]))").Trim()
+              if ($LASTEXITCODE -ne 0 -or $bootstrapVersion -notin @("311", "312", "313", "314")) {
+                  throw "Production Python must be 3.11, 3.12, 3.13, or 3.14 for this offline package."
+              }
+              Write-Host ("Candidate Python: {0} (Python {1}.{2})" -f $bootstrapPython, $bootstrapVersion.Substring(0, 1), $bootstrapVersion.Substring(1))
+          '@
+          $replacement = ($replacement -replace '(?m)^ {10}', '    ').TrimEnd()
+          $deployText = $deployText.Replace($anchor, $replacement)
+          [System.IO.File]::WriteAllText($deployPath, $deployText, [System.Text.UTF8Encoding]::new($false))
+
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile($deployPath, [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors -and $errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            throw "Patched deployment script failed PowerShell syntax validation."
+          }
+
+          $manifestPath = Join-Path $packageRoot.FullName "manifest.json"
+          $manifest = Get-Content $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+          $manifest.package_id = "LOLAPI-FULL-BUG-REPAIR-SAFE-DEPLOY-20260801-a28483eadb25-PYCOMPAT-V2"
+          $manifest.built_at = [DateTime]::UtcNow.ToString("o")
+          $manifest.ci.python = "3.11, 3.12, 3.13, 3.14"
+          $manifest.deployment | Add-Member -NotePropertyName supported_python_versions -NotePropertyValue @("3.11", "3.12", "3.13", "3.14") -Force
+          $manifest.deployment | Add-Member -NotePropertyName bootstrap_python_version_logged -NotePropertyValue $true -Force
+          $manifest | Add-Member -NotePropertyName package_revision -NotePropertyValue 2 -Force
+
+          $entries = @(
+            Get-ChildItem $packageRoot.FullName -Recurse -File |
+              Where-Object { $_.FullName -ne $manifestPath } |
+              ForEach-Object {
+                $relative = $_.FullName.Substring($packageRoot.FullName.Length).TrimStart("\") -replace "\\", "/"
+                [ordered]@{
+                  path = $relative
+                  sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+                  bytes = [int64]$_.Length
+                }
+              } |
+              Sort-Object path
+          )
+          $contentLines = ($entries | ForEach-Object { "$($_.path)`t$($_.sha256)`t$($_.bytes)" }) -join "`n"
+          $sha256 = [System.Security.Cryptography.SHA256]::Create()
+          try {
+            $contentDigest = ([BitConverter]::ToString($sha256.ComputeHash([Text.Encoding]::UTF8.GetBytes($contentLines)))).Replace("-", "").ToLowerInvariant()
+          } finally {
+            $sha256.Dispose()
+          }
+          $manifest.package_content_sha256 = $contentDigest
+          $manifest.files = $entries
+          [System.IO.File]::WriteAllText(
+            $manifestPath,
+            (($manifest | ConvertTo-Json -Depth 20) + [Environment]::NewLine),
+            [System.Text.UTF8Encoding]::new($false)
+          )
+
+          Remove-Item -LiteralPath $oldZip.FullName -Force
+          Remove-Item -LiteralPath $oldMetadata.FullName -Force
+          $newZip = Join-Path $pwd "dist\$newPackageName.zip"
+          Compress-Archive -LiteralPath $packageRoot.FullName -DestinationPath $newZip -CompressionLevel Optimal -Force
+          $zipHash = (Get-FileHash -LiteralPath $newZip -Algorithm SHA256).Hash.ToLowerInvariant()
+          $metadata = [ordered]@{
+            schema_version = "lolapisevers-safe-deployment-artifact.v1"
+            filename = [IO.Path]::GetFileName($newZip)
+            target_commit = $env:TARGET_COMMIT
+            zip_sha256 = $zipHash
+            bytes = [int64](Get-Item -LiteralPath $newZip).Length
+            package_content_sha256 = $contentDigest
+            supported_python_versions = @("3.11", "3.12", "3.13", "3.14")
+            package_revision = 2
+          }
+          $metadataPath = Join-Path $pwd "dist\$newPackageName.metadata.json"
+          [System.IO.File]::WriteAllText(
+            $metadataPath,
+            (($metadata | ConvertTo-Json -Depth 10) + [Environment]::NewLine),
+            [System.Text.UTF8Encoding]::new($false)
+          )
+
+      - name: Verify generated package hashes and Python compatibility
         shell: pwsh
         run: |
           $metadataFile = Get-ChildItem dist -Filter *.metadata.json -File | Select-Object -First 1
@@ -194,7 +335,10 @@ jobs:
           if ($zipHash -ne "$($metadata.zip_sha256)".ToLowerInvariant()) {
             throw "Package ZIP hash mismatch."
           }
-          $extract = Join-Path $env:RUNNER_TEMP "full-bug-repair-package"
+          $extract = Join-Path $env:RUNNER_TEMP "full-bug-repair-package-final"
+          if (Test-Path -LiteralPath $extract) {
+            Remove-Item -LiteralPath $extract -Recurse -Force
+          }
           Expand-Archive -LiteralPath $zipFile.FullName -DestinationPath $extract -Force
           $manifestFile = Get-ChildItem $extract -Filter manifest.json -File -Recurse | Select-Object -First 1
           if (-not $manifestFile) {
@@ -203,6 +347,14 @@ jobs:
           $manifest = Get-Content $manifestFile.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
           if ("$($manifest.target_commit)" -ne $env:TARGET_COMMIT) {
             throw "Embedded target commit mismatch."
+          }
+          if ([int]$manifest.package_revision -ne 2) {
+            throw "Embedded package revision mismatch."
+          }
+          foreach ($version in @("3.11", "3.12", "3.13", "3.14")) {
+            if (@($manifest.deployment.supported_python_versions) -notcontains $version) {
+              throw "Embedded manifest is missing Python $version support."
+            }
           }
           foreach ($entry in @($manifest.files)) {
             $path = Join-Path $manifestFile.Directory.FullName ("$($entry.path)".Replace("/", "\"))
@@ -213,13 +365,16 @@ jobs:
             if ($actual -ne "$($entry.sha256)".ToLowerInvariant()) {
               throw "Embedded package hash mismatch: $($entry.path)"
             }
+            if ([int64](Get-Item -LiteralPath $path).Length -ne [int64]$entry.bytes) {
+              throw "Embedded package size mismatch: $($entry.path)"
+            }
           }
           Get-Content $metadataFile.FullName -Raw
 
       - name: Upload production deployment package
         uses: actions/upload-artifact@v4
         with:
-          name: LOLDataSystem-full-bug-repair-safe-deploy
+          name: LOLDataSystem-full-bug-repair-safe-deploy-pycompat-v2
           path: |
             dist/*.zip
             dist/*.metadata.json
