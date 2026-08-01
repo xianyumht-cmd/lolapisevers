@@ -68,7 +68,22 @@ try {
     }
     Expand-Archive -LiteralPath $toolsZip -DestinationPath $toolsRoot -Force
 
-    $baseBuilder = Join-Path $toolsRoot "ops\Build-FullBugRepairPackage.ps1"
+    $toolNames = @(
+        "Deploy-FullBugRepairSafe.ps1",
+        "Rollback-FullBugRepairSafe.ps1",
+        "Verify-FullBugRepairProduction.ps1",
+        "Build-FullBugRepairPackage.ps1"
+    )
+    foreach ($toolName in $toolNames) {
+        $sourceTool = Join-Path $toolsRoot "ops\$toolName"
+        $targetTool = Join-Path $RepositoryRoot "ops\$toolName"
+        if (-not (Test-Path -LiteralPath $sourceTool -PathType Leaf)) {
+            throw "Reconstructed deployment tool is missing: $toolName"
+        }
+        Copy-Item -LiteralPath $sourceTool -Destination $targetTool -Force
+    }
+
+    $baseBuilder = Join-Path $RepositoryRoot "ops\Build-FullBugRepairPackage.ps1"
     if (-not (Test-Path -LiteralPath $baseBuilder -PathType Leaf)) {
         throw "Base package builder is missing."
     }
