@@ -7,14 +7,16 @@ import json
 import os
 import re
 import socket
+import ssl
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 import requests
+import urllib3
 from fastapi import HTTPException
 
 
@@ -29,6 +31,8 @@ _PATH_TOKEN_RE = re.compile(r"([^.[\]]+)|\[(\d+)\]")
 _TEMPLATE_RE = re.compile(r"\{([^{}]+)\}")
 _DOT_PATH_RE = re.compile(r"^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\[\d+\])*$")
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+_MAX_PROVIDER_BYTES = 1024 * 1024
+_MAX_REDIRECTS = 4
 
 
 @dataclass(frozen=True)
@@ -238,16 +242,14 @@ def _blocked_address(address: str) -> bool:
     )
 
 
-def _validate_destination(url: str, allow_private: bool) -> None:
+def _validate_destination(url: str, allow_private: bool) -> tuple[Any, str]:
     parts = urlsplit(url)
     if parts.scheme not in {"http", "https"} or not parts.hostname:
         raise HTTPException(status_code=503, detail="动态 Provider 地址无效")
     if parts.username or parts.password:
         raise HTTPException(status_code=503, detail="动态 Provider 地址禁止内嵌凭据")
     host = parts.hostname.lower()
-    if allow_private:
-        return
-    if host in {"localhost", "localhost.localdomain"} or host.endswith(".local"):
+    if not allow_private and (host in {"localhost", "localhost.localdomain"} or host.endswith(".local")):
         raise HTTPException(status_code=503, detail="动态 Provider 禁止访问本机或私网")
     try:
         addresses = {
@@ -260,8 +262,123 @@ def _validate_destination(url: str, allow_private: bool) -> None:
         }
     except OSError as exc:
         raise HTTPException(status_code=503, detail="动态 Provider 域名解析失败") from exc
-    if not addresses or any(_blocked_address(address) for address in addresses):
+    if not addresses:
+        raise HTTPException(status_code=503, detail="动态 Provider 域名解析失败")
+    if not allow_private and any(_blocked_address(address) for address in addresses):
         raise HTTPException(status_code=503, detail="动态 Provider 禁止访问本机或私网")
+    # The exact address returned here is used for the connection, so DNS is not
+    # resolved a second time between validation and the socket connection.
+    return parts, sorted(addresses, key=lambda item: (":" in item, item))[0]
+
+
+@dataclass(frozen=True)
+class _ProviderHttpResponse:
+    status_code: int
+    headers: Mapping[str, str]
+    body: bytes
+
+    @property
+    def ok(self) -> bool:
+        return 200 <= self.status_code < 400
+
+
+def _read_requests_response(response: requests.Response) -> bytes:
+    declared = str(response.headers.get("Content-Length") or "").strip()
+    if declared:
+        try:
+            if int(declared) > _MAX_PROVIDER_BYTES:
+                raise RuntimeError("provider_response_too_large")
+        except ValueError:
+            pass
+    chunks: List[bytes] = []
+    total = 0
+    for chunk in response.iter_content(chunk_size=64 * 1024):
+        if not chunk:
+            continue
+        total += len(chunk)
+        if total > _MAX_PROVIDER_BYTES:
+            raise RuntimeError("provider_response_too_large")
+        chunks.append(bytes(chunk))
+    return b"".join(chunks)
+
+
+def _request_once(
+    definition: DynamicProviderDefinition,
+    url: str,
+    headers: Mapping[str, str],
+    body: Mapping[str, str],
+    timeout_seconds: float,
+) -> _ProviderHttpResponse:
+    parts, address = _validate_destination(url, definition.allow_private)
+    if definition.allow_private:
+        response: Optional[requests.Response] = None
+        try:
+            response = _session.request(
+                definition.method,
+                url,
+                headers=dict(headers) or None,
+                json=dict(body) if definition.method == "POST" and body else None,
+                timeout=(min(3.0, timeout_seconds), timeout_seconds),
+                allow_redirects=False,
+                stream=True,
+            )
+            return _ProviderHttpResponse(response.status_code, dict(response.headers), _read_requests_response(response))
+        finally:
+            if response is not None:
+                response.close()
+
+    port = parts.port or (443 if parts.scheme == "https" else 80)
+    host_header = parts.hostname or ""
+    if parts.port and parts.port != (443 if parts.scheme == "https" else 80):
+        host_header = f"{host_header}:{parts.port}"
+    request_headers = dict(headers)
+    request_headers["Host"] = host_header
+    payload = None
+    if definition.method == "POST" and body:
+        payload = json.dumps(dict(body), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        request_headers.setdefault("Content-Type", "application/json")
+    target = parts.path or "/"
+    if parts.query:
+        target = f"{target}?{parts.query}"
+    timeout = urllib3.Timeout(connect=min(3.0, timeout_seconds), read=timeout_seconds)
+    if parts.scheme == "https":
+        pool: Any = urllib3.HTTPSConnectionPool(
+            address,
+            port,
+            assert_hostname=parts.hostname,
+            server_hostname=parts.hostname,
+            ssl_context=ssl.create_default_context(),
+            maxsize=1,
+            block=True,
+        )
+    else:
+        pool = urllib3.HTTPConnectionPool(address, port, maxsize=1, block=True)
+    response = None
+    try:
+        response = pool.urlopen(
+            definition.method,
+            target,
+            body=payload,
+            headers=request_headers,
+            redirect=False,
+            preload_content=False,
+            timeout=timeout,
+        )
+        declared = str(response.headers.get("Content-Length") or "").strip()
+        if declared:
+            try:
+                if int(declared) > _MAX_PROVIDER_BYTES:
+                    raise RuntimeError("provider_response_too_large")
+            except ValueError:
+                pass
+        raw = response.read(_MAX_PROVIDER_BYTES + 1, decode_content=True)
+        if len(raw) > _MAX_PROVIDER_BYTES:
+            raise RuntimeError("provider_response_too_large")
+        return _ProviderHttpResponse(int(response.status), dict(response.headers), bytes(raw))
+    finally:
+        if response is not None:
+            response.release_conn()
+        pool.close()
 
 
 def _extract_path(value: Any, path: str) -> Any:
@@ -321,30 +438,35 @@ def _execute_provider(
     definition: DynamicProviderDefinition,
     parameters: Mapping[str, str],
 ) -> str:
-    url = _build_url(definition, parameters)
-    _validate_destination(url, definition.allow_private)
+    initial_url = _build_url(definition, parameters)
     headers = _replace_map(definition.headers, parameters)
     body = _replace_map(definition.body, parameters)
     timeout_seconds = definition.timeout_ms / 1000.0
     last_error = ""
     for attempt in range(2):
-        response: Optional[requests.Response] = None
         try:
-            response = _session.request(
-                definition.method,
-                url,
-                headers=headers or None,
-                json=body if definition.method == "POST" and body else None,
-                timeout=(min(3.0, timeout_seconds), timeout_seconds),
-            )
+            url = initial_url
+            response: Optional[_ProviderHttpResponse] = None
+            for redirect_index in range(_MAX_REDIRECTS + 1):
+                response = _request_once(definition, url, headers, body, timeout_seconds)
+                if response.status_code in {301, 302, 303, 307, 308}:
+                    location = str(response.headers.get("Location") or response.headers.get("location") or "").strip()
+                    if not location or redirect_index >= _MAX_REDIRECTS:
+                        raise RuntimeError("provider_redirect_invalid")
+                    url = urljoin(url, location)
+                    # The next call validates and pins every redirect destination.
+                    continue
+                break
+            if response is None:
+                raise RuntimeError("provider_no_response")
             if response.status_code in _RETRYABLE_STATUS and attempt == 0:
                 time.sleep(0.2)
                 continue
             if not response.ok:
                 raise RuntimeError(f"provider_http_{response.status_code}")
-            raw_text = response.text.strip()
+            raw_text = response.body.decode("utf-8", errors="replace").strip()
             try:
-                decoded: Any = response.json()
+                decoded: Any = json.loads(raw_text)
                 is_json = True
             except ValueError:
                 decoded = raw_text
@@ -362,14 +484,11 @@ def _execute_provider(
             if not result:
                 raise RuntimeError("provider_empty_response")
             return result[:20000]
-        except (requests.RequestException, RuntimeError) as exc:
+        except (requests.RequestException, urllib3.exceptions.HTTPError, RuntimeError, HTTPException) as exc:
             last_error = str(exc)[:120]
             if attempt == 0:
                 time.sleep(0.2)
                 continue
-        finally:
-            if response is not None:
-                response.close()
     raise RuntimeError(last_error or "provider_unavailable")
 
 

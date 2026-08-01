@@ -12,9 +12,33 @@ on:
   workflow_dispatch:
 
 jobs:
-  unittest:
-    runs-on: windows-latest
+  linux-unittest:
+    runs-on: ubuntu-latest
     timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Compile Python source
+        run: python -m compileall -q .
+
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+
+  windows-unittest:
+    runs-on: windows-latest
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,6 +54,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
+
+      - name: Compile Python source
+        shell: pwsh
+        run: python -m compileall -q .
 
       - name: Run unit tests
         shell: pwsh
@@ -79,29 +107,53 @@ jobs:
           Get-Content node-check.txt -Raw | Write-Error
           exit 1
 
-      - name: Validate PowerShell operations scripts
+      - name: Validate every PowerShell script
         shell: pwsh
         run: |
-          $files = @(
-            "ops/run_service.ps1",
-            "scripts/Generate-BuildInfo.ps1",
-            "scripts/RuntimeSourceManifest.ps1"
-          )
+          $files = Get-ChildItem -Path . -Filter *.ps1 -File -Recurse |
+            Where-Object { $_.FullName -notmatch '[\\/]\.venv[\\/]' }
+          if ($files.Count -eq 0) {
+            Write-Error "No PowerShell scripts found"
+            exit 1
+          }
           foreach ($file in $files) {
             $tokens = $null
             $errors = $null
             [System.Management.Automation.Language.Parser]::ParseFile(
-              (Resolve-Path $file),
+              $file.FullName,
               [ref]$tokens,
               [ref]$errors
             ) | Out-Null
             if ($errors.Count -gt 0) {
-              $errors | ForEach-Object { Write-Error "$file`: $($_.Message)" }
+              $errors | ForEach-Object { Write-Error "$($file.FullName): $($_.Message)" }
               exit 1
             }
           }
+          Write-Host "Parsed $($files.Count) PowerShell scripts successfully."
 
       - name: Remove generated diagnostics
         if: always()
         shell: pwsh
         run: Remove-Item ui_control.generated.js,node-check.txt,ui-generation-error.txt,ui-generation-output.txt -Force -ErrorAction SilentlyContinue
+
+  dependency-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install audit tool and project dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pip-audit
+
+      - name: Audit dependency set
+        run: python -m pip_audit --strict

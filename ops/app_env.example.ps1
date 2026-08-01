@@ -1,4 +1,4 @@
-# lolapisevers environment template
+﻿# lolapisevers environment template
 # Copy this file to ops\app_env.local.ps1 on the target machine and fill in real values there.
 # Do not commit real passwords, tokens, cookies, or account credentials.
 
@@ -11,6 +11,7 @@ $env:REQUIRE_BUILD_INFO = "1"
 # WebUI security
 # Leave empty for loopback-only administration. Set a strong random token before allowing LAN access.
 $env:WEBUI_ADMIN_TOKEN = ""
+$env:GROUPGUARD_WRITE_TOKEN = ""
 
 # Cache
 $env:CACHE_SECONDS = "300"

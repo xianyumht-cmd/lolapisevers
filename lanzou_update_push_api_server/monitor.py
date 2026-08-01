@@ -523,6 +523,7 @@ class LanzouMonitorService:
         self.provider_chain = ProviderChain(config)
         self._stop_event = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
+        self._started_monotonic = 0.0
         self._watcher_locks: dict[str, threading.Lock] = {}
         self._watcher_locks_guard = threading.Lock()
         self.store.reconcile_watchers(
@@ -594,6 +595,13 @@ class LanzouMonitorService:
         never_scanned_ids = enabled_ids - set(last_scan)
         guarded_ids = enabled_ids & set(guard_candidates)
         running = self._task is not None and not self._task.done()
+        warming_up = bool(
+            running
+            and not self.config.scan_on_start
+            and never_scanned_ids
+            and self._started_monotonic
+            and time.monotonic() - self._started_monotonic < self.config.scan_interval_seconds
+        )
         counts = {
             "enabled": len(enabled_ids),
             "failed": len(failed_ids),
@@ -607,9 +615,11 @@ class LanzouMonitorService:
             degraded_reasons.append("background_loop_not_running")
         degraded_reasons.extend(
             name
-            for name in ("failed", "pending", "never_scanned", "orphan", "guarded")
+            for name in ("failed", "pending", "orphan", "guarded")
             if counts[name] > 0
         )
+        if counts["never_scanned"] > 0 and not warming_up:
+            degraded_reasons.append("never_scanned")
         ready = not degraded_reasons
         return {
             "ok": ready,
@@ -618,6 +628,7 @@ class LanzouMonitorService:
             "degraded": not ready,
             "degraded_reasons": degraded_reasons,
             "running": running,
+            "warming_up": warming_up,
             "scan_interval_seconds": self.config.scan_interval_seconds,
             "watcher_count": len(self.config.watchers),
             "enabled_watcher_count": counts["enabled"],
@@ -636,6 +647,7 @@ class LanzouMonitorService:
         if self._task and not self._task.done():
             return
         self._stop_event.clear()
+        self._started_monotonic = time.monotonic()
         self._task = asyncio.create_task(self._run_loop())
 
     async def stop(self) -> None:

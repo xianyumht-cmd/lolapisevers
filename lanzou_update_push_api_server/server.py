@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from contextlib import asynccontextmanager
 from typing import Any
@@ -36,15 +37,39 @@ def _control_page() -> str:
 
 
 def _fetch_json(url: str) -> dict[str, Any]:
-    response = requests.get(url, timeout=5, headers={"accept": "application/json"})
+    response = requests.get(url, timeout=5, headers={"accept": "application/json"}, stream=True)
     try:
-        data = response.json()
-    except ValueError:
-        data = {"ok": False, "status_code": response.status_code, "error": response.text[:2000]}
-    if isinstance(data, dict):
-        data.setdefault("ok", response.ok)
-        return data
-    return {"ok": response.ok, "status_code": response.status_code, "data": data}
+        declared = int(response.headers.get("content-length") or 0)
+        if declared > 2_000_000:
+            return {"ok": False, "status_code": response.status_code, "error": "response_too_large"}
+        iterator = getattr(response, "iter_content", None)
+        if callable(iterator):
+            chunks: list[bytes] = []
+            total = 0
+            for chunk in iterator(chunk_size=64 * 1024):
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > 2_000_000:
+                    return {"ok": False, "status_code": response.status_code, "error": "response_too_large"}
+                chunks.append(bytes(chunk))
+            raw = b"".join(chunks)
+        else:
+            raw = bytes(getattr(response, "content", b""))
+            if len(raw) > 2_000_000:
+                return {"ok": False, "status_code": response.status_code, "error": "response_too_large"}
+        try:
+            data = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            data = {"ok": False, "status_code": response.status_code, "error": raw.decode("utf-8", errors="replace")[:2000]}
+        if isinstance(data, dict):
+            data.setdefault("ok", response.ok)
+            return data
+        return {"ok": response.ok, "status_code": response.status_code, "data": data}
+    finally:
+        close = getattr(response, "close", None)
+        if callable(close):
+            close()
 
 
 def create_app(config: AppConfig | None = None) -> FastAPI:
@@ -53,7 +78,12 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     app_config = config or load_config()
     state_recovery = recover_state_file(app_config.state_path)
     service = LanzouMonitorService(app_config)
-    main_port = int(os.getenv("APP_PORT", "5001"))
+    try:
+        main_port = int(os.getenv("APP_PORT", "5001"))
+    except ValueError as exc:
+        raise ValueError("APP_PORT must be an integer") from exc
+    if main_port < 1 or main_port > 65535:
+        raise ValueError("APP_PORT must be between 1 and 65535")
     main_base_url = f"http://127.0.0.1:{main_port}"
     lanzou_base_url = f"http://127.0.0.1:{app_config.port}"
     build_info = {**load_build_info(), "component": "lanzou-update-monitor"}
@@ -154,7 +184,12 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     @app.post("/admin/lanzou-config")
     async def admin_save_lanzou_config(patch: dict[str, Any]) -> dict[str, Any]:
-        next_config, backup_path = await asyncio.to_thread(update_lanzou_config, patch)
+        try:
+            next_config, backup_path = await asyncio.to_thread(update_lanzou_config, patch)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail="蓝奏配置文件写入失败") from exc
         if service.store.path != next_config.state_path:
             app.state.state_recovery = await asyncio.to_thread(recover_state_file, next_config.state_path)
         service.reload_config(next_config)
@@ -190,7 +225,12 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
                 base_url = app.state.lanzou_base_url
             else:
                 raise ValueError("service must be main or lanzou")
-            return await asyncio.to_thread(invoke_api, base_url, payload)
+            token = (
+                str(os.getenv("GROUPGUARD_WRITE_TOKEN") or os.getenv("WEBUI_ADMIN_TOKEN") or "").strip()
+                if service_name == "main"
+                else str(os.getenv("WEBUI_ADMIN_TOKEN") or "").strip()
+            )
+            return await asyncio.to_thread(invoke_api, base_url, payload, admin_token=token)
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
@@ -265,17 +305,12 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
         event = service.store.last_event()
         return {"ok": True, "event": event}
 
+    @app.post("/notify/test")
     @app.post("/test-push")
     async def test_push(payload: dict[str, Any] | None = None) -> dict[str, Any]:
         body = payload or {}
-        message = str(body.get("message") or "LOLDataSystem 蓝奏更新推送测试")
-        return await service.notifier.send(
-            message,
-            event={
-                "type": "test",
-                "message": message,
-            },
-        )
+        watcher_id = str(body.get("watcher_id") or "").strip() or None
+        return await service.send_test_event(watcher_id)
 
     install_control_extensions(app, service)
     return app

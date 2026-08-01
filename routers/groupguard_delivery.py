@@ -26,6 +26,8 @@ from services.contact_risk_service import (
 from services.cross_query_service import query_cross
 from services.dynamic_query_service import dynamic_meta, format_dynamic_text, query_dynamic
 from services.lolban_service import format_lolban_text, get_lolban_result, valid_qq
+from services.groupguard_protocol import canonical_feature, canonical_report_feature
+from services.main_control_security import require_control_access
 from services.query_delivery import (
     choose_text_delivery,
     error_envelope,
@@ -45,35 +47,6 @@ from services.shard_service import query_shard
 router = APIRouter()
 logger = logging.getLogger("LOLDataSystem")
 
-_FEATURE_ALIASES = {
-    "shard": "shard",
-    "shard_query": "shard",
-    "合集": "shard",
-    "aram": "aram",
-    "aram_augments": "aram",
-    "海符榜": "aram",
-    "lolban": "lolban",
-    "ban": "lolban",
-    "查封号": "lolban",
-    "battle": "battle",
-    "cross": "battle",
-    "cross_query": "battle",
-    "查战绩": "battle",
-    "scammer": "scammer",
-    "scammer_query": "scammer",
-    "查骗子": "scammer",
-    "peer": "peer",
-    "peer_query": "peer",
-    "查同行": "peer",
-    "dynamic": "dynamic",
-    "dynamic_query": "dynamic",
-}
-_REPORT_FEATURE_ALIASES = {
-    "scammer_report": "scammer_report",
-    "举报骗子": "scammer_report",
-    "peer_report": "peer_report",
-    "举报同行": "peer_report",
-}
 _IMAGE_FEATURES = {
     "shard",
     "aram",
@@ -86,11 +59,11 @@ _IMAGE_FEATURES = {
 
 
 def _canonical_feature(value: Any) -> str:
-    return _FEATURE_ALIASES.get(str(value or "").strip().lower(), "")
+    return canonical_feature(value)
 
 
 def _canonical_report_feature(value: Any) -> str:
-    return _REPORT_FEATURE_ALIASES.get(str(value or "").strip().lower(), "")
+    return canonical_report_feature(value)
 
 
 def _error_code(status_code: int) -> tuple[str, bool, int]:
@@ -233,7 +206,16 @@ def _identifier_parameters(parameters: Mapping[str, Any]) -> tuple[str, str]:
 async def groupguard_query(request: Request, body: Dict[str, Any]):
     server_request_id = request_id()
     body = body if isinstance(body, dict) else {}
-    client_request_id = safe_client_request_id(body.get("request_id"))
+    try:
+        client_request_id = safe_client_request_id(body.get("request_id"))
+    except ValueError as exc:
+        return _json_error(
+            feature="unknown",
+            status_code=400,
+            message=str(exc),
+            client_request_id="",
+            server_request_id=server_request_id,
+        )
     feature = _canonical_feature(body.get("feature"))
     parameters = body.get("parameters") if isinstance(body.get("parameters"), dict) else {}
     capabilities = normalize_capabilities(body.get("capabilities"))
@@ -412,7 +394,26 @@ async def groupguard_query(request: Request, body: Dict[str, Any]):
 async def groupguard_report(request: Request, body: Dict[str, Any]):
     server_request_id = request_id()
     body = body if isinstance(body, dict) else {}
-    client_request_id = safe_client_request_id(body.get("request_id"))
+    try:
+        require_control_access(request)
+    except Exception as exc:
+        return _json_error(
+            feature="unknown",
+            status_code=int(getattr(exc, "status_code", 403) or 403),
+            message=str(getattr(exc, "detail", "") or "举报接口需要管理员凭据"),
+            client_request_id="",
+            server_request_id=server_request_id,
+        )
+    try:
+        client_request_id = safe_client_request_id(body.get("request_id"))
+    except ValueError as exc:
+        return _json_error(
+            feature="unknown",
+            status_code=400,
+            message=str(exc),
+            client_request_id="",
+            server_request_id=server_request_id,
+        )
     feature = _canonical_report_feature(body.get("feature"))
     parameters = body.get("parameters") if isinstance(body.get("parameters"), dict) else {}
     capabilities = normalize_capabilities(body.get("capabilities"))

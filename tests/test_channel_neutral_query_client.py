@@ -19,6 +19,7 @@ class FakeResponse:
         self.status_code = status_code
         self.ok = 200 <= status_code < 400
         self.content = b"{}"
+        self.headers = {}
         self.closed = False
 
     def json(self):
@@ -97,7 +98,7 @@ class ChannelNeutralQueryClientTests(unittest.TestCase):
         )
         session = Mock(spec=requests.Session)
         session.post.return_value = response
-        client = IntranetQueryClient("http://10.0.0.8:5001", session=session)
+        client = IntranetQueryClient("http://10.0.0.8:5001", session=session, write_token="write-secret")
         envelope = client.report(
             "scammer_report",
             {"identifier_type": "qq", "identifier": "123456", "content": "收款后失联"},
@@ -108,6 +109,30 @@ class ChannelNeutralQueryClientTests(unittest.TestCase):
         self.assertEqual(args[0], "http://10.0.0.8:5001/api/v1/groupguard/report")
         self.assertEqual(kwargs["json"]["request_id"], "official-message-99")
         self.assertFalse(kwargs["json"]["capabilities"]["image"])
+        self.assertEqual(kwargs["headers"]["X-GroupGuard-Token"], "write-secret")
+
+    def test_report_rejects_blank_and_lossy_request_ids(self):
+        client = IntranetQueryClient("http://10.0.0.8:5001", session=Mock(spec=requests.Session))
+        with self.assertRaises(QueryClientError) as blank:
+            client.report("scammer_report", {"qq": "123456", "content": "证据"}, request_id="")
+        self.assertEqual(blank.exception.code, "report_request_id_required")
+        with self.assertRaises(QueryClientError) as invalid:
+            client.report("scammer_report", {"qq": "123456", "content": "证据"}, request_id="a b")
+        self.assertEqual(invalid.exception.code, "invalid_request_id")
+
+    def test_feature_alias_is_canonicalized_before_round_trip(self):
+        response = FakeResponse({
+            "protocol": "groupguard-query-delivery.v1", "ok": True, "feature": "lolban",
+            "request_id": "server-alias-1", "client_request_id": "client-alias-1",
+            "delivery": {"kind": "segments", "segments": [{"type": "text", "text": "结果"}]},
+            "error": None, "retry": {"allowed": False, "after_seconds": 0}, "meta": {}
+        })
+        session = Mock(spec=requests.Session)
+        session.post.return_value = response
+        client = IntranetQueryClient("http://10.0.0.8:5001", session=session)
+        envelope = client.query("ban", {"qq": "123456"}, request_id="client-alias-1")
+        self.assertEqual(envelope.feature, "lolban")
+        self.assertEqual(session.post.call_args.kwargs["json"]["feature"], "lolban")
 
     def test_image_segment_is_hash_verified_before_channel_delivery(self):
         image = b"fake-png-body"
