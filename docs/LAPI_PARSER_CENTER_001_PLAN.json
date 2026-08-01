@@ -1,0 +1,196 @@
+{
+  "task_id": "LAPI-PARSER-CENTER-001",
+  "title": "统一第三方接口与自定义解析中心",
+  "status": "ready_for_deployment_review",
+  "branch": "codex/lapi-parser-center-001",
+  "pull_request": 26,
+  "base_commit": "35b258af431cf6117f80138147500eeb24059b0a",
+  "current_head": "see pull_request head",
+  "created_at": "2026-07-31T01:51:00+08:00",
+  "updated_at": "2026-07-31T02:52:00+08:00",
+  "principles": [
+    "GroupGuard 只传递功能名、参数与交付能力，不解析第三方业务响应",
+    "lolapisevers 负责第三方请求、解析、缓存、降级、模板和安全过滤",
+    "群消息与图片不得出现第三方域名、Provider 名称、by 字段或接口来源",
+    "真实 Token、Cookie、Authorization 和 API Key 不进入普通 JSON、日志或响应",
+    "保存配置前必须完成 Schema 校验、测试请求、解析预览与模板预览",
+    "现有生产配置保持兼容，任何新解析配置默认不自动接管生产流量",
+    "举报必须先保存本地记录，再执行第三方提交；重复 request_id 不得重复提交",
+    "第三方举报失败进入持久化队列，队列不保存 Provider URL、Headers 或 Secret"
+  ],
+  "scope": {
+    "phase_1": [
+      "通用请求构造器",
+      "通用 JSON 字段路径解析器",
+      "命中与错误条件判定",
+      "任意字段映射与值转换",
+      "数组记录解析",
+      "结果模板渲染",
+      "Secret 引用与全链路脱敏",
+      "封号查询接入并显示 ban_reason",
+      "6178 管理接口与可视化 WebUI",
+      "配置备份、原子保存和回滚兼容"
+    ],
+    "phase_2": [
+      "骗子查询接入通用解析器",
+      "同行查询接入通用解析器",
+      "多来源记录合并与去重",
+      "修复现有固定字段猜测造成的信息丢失",
+      "移除公开结果中的外部来源与 Provider 名称"
+    ],
+    "phase_3": [
+      "举报骗子第三方提交适配",
+      "举报同行第三方提交适配",
+      "案件号、审核状态、平台回执解析",
+      "本地先落盘与 request_id 幂等控制",
+      "第三方失败时保留本地记录"
+    ],
+    "phase_4": [
+      "第三方失败持久化待补交队列",
+      "指数退避、重试上限和到期筛选",
+      "WebUI 待补交列表、单项重试、批量重试和安全移除"
+    ]
+  },
+  "progress": {
+    "P001": {
+      "status": "completed",
+      "name": "规划与安全契约"
+    },
+    "P002": {
+      "status": "completed",
+      "name": "通用解析内核"
+    },
+    "P003": {
+      "status": "completed",
+      "name": "封号生产兼容修复"
+    },
+    "P004": {
+      "status": "completed",
+      "name": "管理 API 与可视化 WebUI"
+    },
+    "P005": {
+      "status": "completed",
+      "name": "自动化测试与部署门禁",
+      "ci": {
+        "parser_center_workflow": "success",
+        "existing_tests_workflow": "success"
+      }
+    },
+    "P006": {
+      "status": "completed",
+      "name": "骗子/同行查询迁移"
+    },
+    "P007": {
+      "status": "completed",
+      "name": "举报第三方提交与回执解析",
+      "guarantees": [
+        "本地先落盘",
+        "重复 request_id 不重复提交",
+        "案件号、审核状态和回执可配置解析",
+        "第三方失败不丢本地记录",
+        "公开结果不显示 Provider 或第三方域名"
+      ]
+    },
+    "P008": {
+      "status": "completed",
+      "name": "持久化待补交队列",
+      "guarantees": [
+        "同一 request_id、feature、provider_id 唯一去重",
+        "Provider URL、Headers 和 Secret 不写入队列表",
+        "指数退避与最大重试次数",
+        "单项与批量人工重试",
+        "独立受保护 WebUI 管理页",
+        "移除队列项目不删除本地举报记录"
+      ],
+      "optional_future_enhancement": "增加独立后台定时工作线程；当前版本由 WebUI 或管理 API 触发到期项目重试"
+    },
+    "P009": {
+      "status": "pending",
+      "name": "生产合并、部署与实机验收"
+    }
+  },
+  "public_output_policy": {
+    "forbidden": [
+      "第三方域名",
+      "Provider 名称",
+      "by",
+      "接口来源",
+      "Token",
+      "Cookie",
+      "Authorization",
+      "API Key"
+    ],
+    "allowed_business_fields": [
+      "账号",
+      "状态",
+      "封禁原因",
+      "封禁时间",
+      "剩余时间",
+      "举报原因",
+      "举报记录",
+      "证据",
+      "案件编号",
+      "审核状态",
+      "平台回执"
+    ]
+  },
+  "acceptance": [
+    {
+      "id": "A1",
+      "command": "查封号 97077000",
+      "must_contain": "封禁原因：游戏环境异常：检测到违规软件加载"
+    },
+    {
+      "id": "A2",
+      "must_not_contain": [
+        "q.lolmap.cn",
+        "Provider",
+        "接口来源",
+        "by"
+      ]
+    },
+    {
+      "id": "A3",
+      "description": "WebUI 可配置 GET/POST、Query、Headers、Form/JSON Body、Secret 引用、成功条件、命中条件、字段路径和模板"
+    },
+    {
+      "id": "A4",
+      "description": "管理员测试返回脱敏请求、脱敏原始响应、结构化解析结果和最终机器人文本预览"
+    },
+    {
+      "id": "A5",
+      "description": "无效配置不得覆盖当前有效配置；保存前创建备份；写入采用原子替换"
+    },
+    {
+      "id": "A6",
+      "description": "骗子和同行查询可解析多条原因记录，公开结果不显示外部来源或 Provider 名称"
+    },
+    {
+      "id": "A7",
+      "description": "举报先本地落盘；重复 request_id 不重复提交；可解析案件编号、审核状态与回执"
+    },
+    {
+      "id": "A8",
+      "description": "第三方举报失败时群内明确提示本地记录已保留并进入待补交队列，且不暴露第三方身份"
+    },
+    {
+      "id": "A9",
+      "description": "待补交 WebUI 可查看队列、单项或批量重试、移除队列项；移除不影响本地举报记录"
+    }
+  ],
+  "webui_routes": [
+    "/parser-center",
+    "/parser-center/report-queue"
+  ],
+  "implementation_order": [
+    "P001 规划与安全契约",
+    "P002 通用解析内核",
+    "P003 封号生产兼容修复",
+    "P004 管理 API 与可视化 WebUI",
+    "P005 自动化测试与部署门禁",
+    "P006 骗子/同行查询迁移",
+    "P007 举报第三方提交与回执解析",
+    "P008 持久化待补交队列",
+    "P009 生产合并、部署与实机验收"
+  ]
+}

@@ -8,6 +8,7 @@ from fastapi.responses import HTMLResponse
 
 from services.image_asset_store import get_image_asset_sync_manager
 
+from . import parser_center_admin
 from .config import sanitized_config
 from .image_cache_ui import render_image_cache_page
 from .maintenance import (
@@ -17,11 +18,17 @@ from .maintenance import (
     schedule_windows_service_restart,
     windows_service_status,
 )
+from .parser_center_retry_admin import install_parser_center_retry_routes
+from .parser_center_ui_guard import render_parser_center_page as render_guarded_parser_center_page
 from .security import security_status
 from .state_recovery import recover_state_file
 
 
 def install_control_extensions(app: FastAPI, service) -> None:
+    parser_center_admin.render_parser_center_page = render_guarded_parser_center_page
+    parser_center_admin.install_parser_center_routes(app)
+    install_parser_center_retry_routes(app)
+
     @app.get("/security/status")
     async def get_security_status() -> dict[str, object]:
         return security_status()
