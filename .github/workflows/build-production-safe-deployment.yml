@@ -15,7 +15,7 @@ jobs:
     timeout-minutes: 60
     env:
       TARGET_COMMIT: a28483eadb25986031d11ca40e0d26aa6f9e6dfa
-      TOOLS_ZIP_SHA256: 61d9224287b59c76842936a8c2da9d1ea10c78343dc97a7955ab65ada769497b
+      TOOLS_ZIP_SHA256: 30266c26bc21b4600d7e2cf63a27978f486958fa7c1e65a11e19484587a54237
     steps:
       - name: Checkout package builder branch
         uses: actions/checkout@v4
@@ -41,28 +41,6 @@ jobs:
             throw "Deployment tools archive SHA-256 mismatch."
           }
           Expand-Archive -LiteralPath $zipPath -DestinationPath $pwd -Force
-
-          # Windows runners may expose TEMP through an 8.3 alias while
-          # Get-ChildItem returns the canonical long path. Patch the reviewed
-          # builder deterministically so manifest paths remain package-relative.
-          $builderPath = Join-Path $pwd "ops\Build-FullBugRepairPackage.ps1"
-          $builderText = (Get-Content $builderPath -Raw -Encoding UTF8).Replace("`r`n", "`n")
-          $anchor = 'New-Item -ItemType Directory -Path $wheelhouse -Force | Out-Null'
-          if ([regex]::Matches($builderText, [regex]::Escape($anchor)).Count -ne 1) {
-            throw "Reviewed builder patch anchor was not unique."
-          }
-          $replacement = @(
-            $anchor,
-            '$packageRoot = (Resolve-Path -LiteralPath $packageRoot).Path',
-            '$payloadRoot = Join-Path $packageRoot "payload"',
-            '$wheelhouse = Join-Path $payloadRoot "wheelhouse"'
-          ) -join "`n"
-          $patchedBuilder = $builderText.Replace($anchor, $replacement)
-          [System.IO.File]::WriteAllText(
-            $builderPath,
-            $patchedBuilder,
-            [System.Text.UTF8Encoding]::new($false)
-          )
 
       - name: Validate deployment safety invariants
         shell: pwsh
