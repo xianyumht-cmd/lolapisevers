@@ -48,20 +48,20 @@ jobs:
           $builderPath = Join-Path $pwd "ops\Build-FullBugRepairPackage.ps1"
           $builderText = Get-Content $builderPath -Raw -Encoding UTF8
           $oldBlock = @'
-$packageRoot = Join-Path $workRoot $packageName
-$payloadRoot = Join-Path $packageRoot "payload"
-$wheelhouse = Join-Path $payloadRoot "wheelhouse"
-New-Item -ItemType Directory -Path $wheelhouse -Force | Out-Null
-'@
+          $packageRoot = Join-Path $workRoot $packageName
+          $payloadRoot = Join-Path $packageRoot "payload"
+          $wheelhouse = Join-Path $payloadRoot "wheelhouse"
+          New-Item -ItemType Directory -Path $wheelhouse -Force | Out-Null
+          '@
           $newBlock = @'
-$packageRoot = Join-Path $workRoot $packageName
-$payloadRoot = Join-Path $packageRoot "payload"
-$wheelhouse = Join-Path $payloadRoot "wheelhouse"
-New-Item -ItemType Directory -Path $wheelhouse -Force | Out-Null
-$packageRoot = (Resolve-Path -LiteralPath $packageRoot).Path
-$payloadRoot = Join-Path $packageRoot "payload"
-$wheelhouse = Join-Path $payloadRoot "wheelhouse"
-'@
+          $packageRoot = Join-Path $workRoot $packageName
+          $payloadRoot = Join-Path $packageRoot "payload"
+          $wheelhouse = Join-Path $payloadRoot "wheelhouse"
+          New-Item -ItemType Directory -Path $wheelhouse -Force | Out-Null
+          $packageRoot = (Resolve-Path -LiteralPath $packageRoot).Path
+          $payloadRoot = Join-Path $packageRoot "payload"
+          $wheelhouse = Join-Path $payloadRoot "wheelhouse"
+          '@
           if (-not $builderText.Contains($oldBlock)) {
             throw "Reviewed builder patch anchor was not found."
           }
