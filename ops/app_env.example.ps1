@@ -1,4 +1,4 @@
-# lolapisevers environment template
+﻿# lolapisevers environment template
 # Copy this file to ops\app_env.local.ps1 on the target machine and fill in real values there.
 # Do not commit real passwords, tokens, cookies, or account credentials.
 
