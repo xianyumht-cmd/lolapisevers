@@ -7,6 +7,12 @@ on:
     paths:
       - .github/workflows/apply-full-fix-chunks.yml
       - .github/fix-bundles/chunks/**
+  pull_request:
+    branches:
+      - master
+    paths:
+      - .github/workflows/apply-full-fix-chunks.yml
+      - .github/fix-bundles/chunks/**
 
 permissions:
   contents: write
