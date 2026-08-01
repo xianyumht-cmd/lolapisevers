@@ -11,6 +11,7 @@ $env:REQUIRE_BUILD_INFO = "1"
 # WebUI security
 # Leave empty for loopback-only administration. Set a strong random token before allowing LAN access.
 $env:WEBUI_ADMIN_TOKEN = ""
+$env:GROUPGUARD_WRITE_TOKEN = ""
 
 # Cache
 $env:CACHE_SECONDS = "300"

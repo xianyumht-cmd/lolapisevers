@@ -3,19 +3,27 @@ from __future__ import annotations
 import base64
 import hashlib
 import ipaddress
+import json
 import re
-import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 from urllib.parse import urlsplit
 
 import requests
 
+from services.groupguard_protocol import (
+    DELIVERY_PROTOCOL,
+    MAX_IMAGE_BASE64_CHARS,
+    MAX_IMAGE_BYTES,
+    MAX_RESPONSE_BYTES,
+    MAX_TEXT_CHARS,
+    canonical_feature,
+    canonical_report_feature,
+    validate_request_id,
+)
 
-DELIVERY_PROTOCOL = "groupguard-query-delivery.v1"
 _QUERY_PATH = "/api/v1/groupguard/query"
 _REPORT_PATH = "/api/v1/groupguard/report"
-_SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_.:-]+")
 _ALLOWED_PREFERRED = {"auto", "text", "image", "forward"}
 _ALLOWED_REPORT_FEATURES = {"scammer_report", "peer_report"}
 
@@ -64,9 +72,18 @@ class DeliveryEnvelope:
 
 
 def _safe_request_id(value: str = "") -> str:
-    raw = str(value or uuid.uuid4().hex).strip()
-    cleaned = _SAFE_ID_RE.sub("-", raw).strip("-")[:128]
-    return cleaned or uuid.uuid4().hex
+    try:
+        return validate_request_id(value, generate_if_blank=True)
+    except ValueError as exc:
+        raise QueryClientError("invalid_request_id", str(exc)) from exc
+
+
+def _required_request_id(value: str) -> str:
+    try:
+        return validate_request_id(value, required=True)
+    except ValueError as exc:
+        code = "report_request_id_required" if not str(value or "").strip() else "invalid_request_id"
+        raise QueryClientError(code, str(exc)) from exc
 
 
 def _is_intranet_host(hostname: str) -> bool:
@@ -109,7 +126,7 @@ def _bounded_text(value: Any, limit: int) -> str:
 
 
 def _parse_text_segment(value: Mapping[str, Any]) -> DeliverySegment:
-    text = _bounded_text(value.get("text"), 20000)
+    text = _bounded_text(value.get("text"), MAX_TEXT_CHARS)
     return DeliverySegment(type="text", text=text)
 
 
@@ -117,14 +134,14 @@ def _parse_image_segment(value: Mapping[str, Any]) -> DeliverySegment:
     if str(value.get("encoding") or "") != "base64":
         raise QueryClientError("invalid_delivery", "图片交付编码不受支持")
     encoded = str(value.get("data") or "")
-    if len(encoded) > 16 * 1024 * 1024:
+    if len(encoded) > MAX_IMAGE_BASE64_CHARS:
         raise QueryClientError("invalid_delivery", "图片交付数据过大")
     try:
         body = base64.b64decode(encoded, validate=True)
     except Exception as exc:
         raise QueryClientError("invalid_delivery", "图片交付数据不是有效 Base64") from exc
     declared_bytes = int(value.get("bytes") or len(body))
-    if declared_bytes != len(body) or len(body) > 12 * 1024 * 1024:
+    if declared_bytes != len(body) or len(body) > MAX_IMAGE_BYTES:
         raise QueryClientError("invalid_delivery", "图片交付字节数不一致或超过限制")
     declared_sha = str(value.get("sha256") or "").lower()
     actual_sha = hashlib.sha256(body).hexdigest()
@@ -222,26 +239,60 @@ class IntranetQueryClient:
         timeout_seconds: float = 20.0,
         session: Optional[requests.Session] = None,
         client_name: str = "channel-neutral-client",
+        write_token: str = "",
     ) -> None:
         self.base_url = normalize_intranet_base_url(base_url)
         self.timeout_seconds = max(1.0, min(float(timeout_seconds), 120.0))
         self.session = session or requests.Session()
         self.client_name = str(client_name or "channel-neutral-client")[:64]
+        self.write_token = str(write_token or "").strip()
 
-    def _post(self, path: str, payload: Mapping[str, Any], expected_feature: str) -> DeliveryEnvelope:
+    @staticmethod
+    def _read_response(response: requests.Response) -> bytes:
+        declared = str(getattr(response, "headers", {}).get("Content-Length") or "").strip()
+        if declared:
+            try:
+                if int(declared) > MAX_RESPONSE_BYTES:
+                    raise QueryClientError("response_too_large", "接口响应超过客户端限制")
+            except ValueError:
+                pass
+        iterator = getattr(response, "iter_content", None)
+        if callable(iterator) and not hasattr(response, "_body"):
+            chunks: List[bytes] = []
+            total = 0
+            for chunk in iterator(chunk_size=64 * 1024):
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > MAX_RESPONSE_BYTES:
+                    raise QueryClientError("response_too_large", "接口响应超过客户端限制")
+                chunks.append(bytes(chunk))
+            return b"".join(chunks)
+        body = bytes(getattr(response, "content", b""))
+        if len(body) > MAX_RESPONSE_BYTES:
+            raise QueryClientError("response_too_large", "接口响应超过客户端限制")
+        return body
+
+    def _post(self, path: str, payload: Mapping[str, Any], expected_feature: str, *, write: bool = False) -> DeliveryEnvelope:
         response: Optional[requests.Response] = None
         try:
+            headers = {"Accept": "application/json", "Content-Type": "application/json"}
+            if write and self.write_token:
+                headers["X-GroupGuard-Token"] = self.write_token
             response = self.session.post(
                 f"{self.base_url}{path}",
                 json=dict(payload),
-                headers={"Accept": "application/json", "Content-Type": "application/json"},
+                headers=headers,
                 timeout=(min(3.0, self.timeout_seconds), self.timeout_seconds),
+                stream=True,
             )
-            if len(response.content) > 16 * 1024 * 1024:
-                raise QueryClientError("response_too_large", "接口响应超过客户端限制")
             try:
-                decoded = response.json()
-            except ValueError as exc:
+                if hasattr(response, "_body"):
+                    decoded = response.json()
+                else:
+                    raw = self._read_response(response)
+                    decoded = json.loads(raw.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError, json.JSONDecodeError) as exc:
                 raise QueryClientError("invalid_json", f"接口返回非 JSON（HTTP {response.status_code}）") from exc
             envelope = parse_delivery_envelope(decoded, expected_feature=expected_feature)
             if not response.ok:
@@ -266,9 +317,9 @@ class IntranetQueryClient:
         capabilities: Optional[Mapping[str, bool]] = None,
         request_id: str = "",
     ) -> DeliveryEnvelope:
-        normalized_feature = _bounded_text(feature, 96)
+        normalized_feature = canonical_feature(_bounded_text(feature, 96))
         if not normalized_feature:
-            raise QueryClientError("feature_required", "查询功能不能为空")
+            raise QueryClientError("feature_required", "查询功能无效")
         normalized_preferred = preferred if preferred in _ALLOWED_PREFERRED else "auto"
         clean_parameters = {
             str(key).strip(): str(value).strip()
@@ -299,7 +350,7 @@ class IntranetQueryClient:
         request_id: str,
         preferred: str = "text",
     ) -> DeliveryEnvelope:
-        normalized_feature = _bounded_text(feature, 96)
+        normalized_feature = canonical_report_feature(_bounded_text(feature, 96))
         if normalized_feature not in _ALLOWED_REPORT_FEATURES:
             raise QueryClientError("report_feature_invalid", "举报功能类型无效")
         clean_parameters = {
@@ -314,7 +365,7 @@ class IntranetQueryClient:
             "parameters": clean_parameters,
             "preferred": preferred if preferred in {"text", "forward"} else "text",
             "capabilities": {"text": True, "image": False, "forward": True},
-            "request_id": _safe_request_id(request_id),
+            "request_id": _required_request_id(request_id),
             "client": self.client_name,
         }
-        return self._post(_REPORT_PATH, payload, normalized_feature)
+        return self._post(_REPORT_PATH, payload, normalized_feature, write=True)

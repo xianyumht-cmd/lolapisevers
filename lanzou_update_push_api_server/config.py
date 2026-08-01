@@ -51,6 +51,16 @@ class AppConfig:
     notify_targets: list[NotifyTargetConfig] = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        watcher_ids: set[str] = set()
+        for index, watcher in enumerate(self.watchers, start=1):
+            watcher_id = str(watcher.id or "").strip()
+            if not watcher_id:
+                raise ValueError(f"watcher id must be non-empty (index {index})")
+            if watcher_id in watcher_ids:
+                raise ValueError(f"watcher ids must be unique: {watcher_id}")
+            watcher_ids.add(watcher_id)
+        if str(self.wer_api_method or "").upper() not in {"GET", "POST"}:
+            raise ValueError("wer_api_method must be GET or POST")
         names: set[str] = set()
         for index, target in enumerate(self.notify_targets, start=1):
             name = str(target.name or "").strip()
@@ -71,23 +81,31 @@ def _as_bool(value: Any, fallback: bool) -> bool:
         return True
     if text in {"0", "false", "no", "off"}:
         return False
-    return fallback
+    raise ValueError(f"invalid boolean value: {value}")
 
 
 def _as_int(value: Any, fallback: int, minimum: int = 1, maximum: int = 86_400) -> int:
+    if value is None or str(value).strip() == "":
+        return fallback
     try:
         parsed = int(value)
-    except (TypeError, ValueError):
-        return fallback
-    return max(minimum, min(maximum, parsed))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid integer value: {value}") from exc
+    if parsed < minimum or parsed > maximum:
+        raise ValueError(f"integer must be between {minimum} and {maximum}: {parsed}")
+    return parsed
 
 
 def _as_float(value: Any, fallback: float, minimum: float = 0.1, maximum: float = 120.0) -> float:
+    if value is None or str(value).strip() == "":
+        return fallback
     try:
         parsed = float(value)
-    except (TypeError, ValueError):
-        return fallback
-    return max(minimum, min(maximum, parsed))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid number value: {value}") from exc
+    if parsed < minimum or parsed > maximum:
+        raise ValueError(f"number must be between {minimum} and {maximum}: {parsed}")
+    return parsed
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -116,13 +134,19 @@ def _watchers_from_env() -> list[dict[str, Any]]:
 def _parse_watchers(raw: Any) -> list[WatcherConfig]:
     source = raw if isinstance(raw, list) else _watchers_from_env()
     watchers: list[WatcherConfig] = []
+    ids: set[str] = set()
     for index, item in enumerate(source, start=1):
         if not isinstance(item, dict):
-            continue
+            raise ValueError(f"watcher {index} must be an object")
         url = str(item.get("url") or "").strip()
         if not url:
-            continue
-        watcher_id = str(item.get("id") or f"watcher-{index}").strip()
+            raise ValueError(f"watcher url must be non-empty (index {index})")
+        watcher_id = str(item.get("id") or "").strip()
+        if not watcher_id:
+            raise ValueError(f"watcher id must be non-empty (index {index})")
+        if watcher_id in ids:
+            raise ValueError(f"watcher ids must be unique: {watcher_id}")
+        ids.add(watcher_id)
         title = str(item.get("title") or item.get("name") or watcher_id).strip()
         watchers.append(
             WatcherConfig(

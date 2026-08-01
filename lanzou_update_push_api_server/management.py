@@ -6,6 +6,7 @@ import os
 import re
 import socket
 import subprocess
+import sys
 import time
 import uuid
 from collections import deque
@@ -30,6 +31,7 @@ MAIN_CONFIG_FIELDS: list[dict[str, Any]] = [
     {"key": "APP_PORT", "label": "主接口端口", "section": "主接口", "type": "int", "min": 1, "max": 65535},
     {"key": "PYTHONIOENCODING", "label": "Python 输出编码", "section": "主接口", "type": "text"},
     {"key": "REQUIRE_BUILD_INFO", "label": "托管启动强制构建追踪", "section": "主接口", "type": "bool"},
+    {"key": "GROUPGUARD_WRITE_TOKEN", "label": "举报与人工登录写入令牌", "section": "安全", "type": "secret"},
     {"key": "CACHE_SECONDS", "label": "通用缓存秒数", "section": "缓存", "type": "int", "min": 1, "max": 86400},
     {"key": "SHARD_CACHE_SECONDS", "label": "云顶合集缓存秒数", "section": "缓存", "type": "int", "min": 1, "max": 86400},
     {"key": "ARAM_AUGMENT_CACHE_SECONDS", "label": "大乱斗缓存秒数", "section": "缓存", "type": "int", "min": 1, "max": 86400},
@@ -58,8 +60,8 @@ _FIELD_BY_KEY = {field["key"]: field for field in MAIN_CONFIG_FIELDS}
 _ENV_LINE_RE = re.compile(r"^(?P<prefix>\s*\$env:)(?P<key>[A-Za-z_][A-Za-z0-9_]*)(?P<middle>\s*=\s*)(?P<value>.*?)(?P<suffix>\s*)$")
 
 LOG_FILES = {
-    "main_stdout": LOGS_DIR / "service.stdout.log",
-    "main_stderr": LOGS_DIR / "service.stderr.log",
+    "main_stdout": LOGS_DIR / "main_api.stdout.log",
+    "main_stderr": LOGS_DIR / "main_api.stderr.log",
     "lanzou_stdout": LOGS_DIR / "lanzou_monitor.stdout.log",
     "lanzou_stderr": LOGS_DIR / "lanzou_monitor.stderr.log",
     "keepalive": LOGS_DIR / "keepalive.log",
@@ -156,7 +158,12 @@ def _normalize_main_value(spec: dict[str, Any], value: Any) -> str:
     if field_type == "bool":
         if isinstance(value, bool):
             return "1" if value else "0"
-        return "0" if str(value).strip().lower() in {"0", "false", "no", "off", ""} else "1"
+        text = str(value or "").strip().lower()
+        if text in {"1", "true", "yes", "on"}:
+            return "1"
+        if text in {"0", "false", "no", "off"}:
+            return "0"
+        raise ValueError(f"{spec['key']} must be true or false")
     if field_type == "int":
         parsed = int(value)
         minimum = int(spec.get("min", -2**31))
@@ -235,6 +242,27 @@ def _as_int(value: Any, name: str, minimum: int, maximum: int) -> int:
     return parsed
 
 
+def _as_float(value: Any, name: str, minimum: float, maximum: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be a number") from exc
+    if parsed < minimum or parsed > maximum:
+        raise ValueError(f"{name} must be between {minimum} and {maximum}")
+    return parsed
+
+
+def _as_bool_strict(value: Any, name: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    text = str(value or "").strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be true or false")
+
+
 def _validate_http_url(value: str, name: str, allow_empty: bool = False) -> str:
     text = str(value or "").strip()
     if allow_empty and not text:
@@ -265,12 +293,17 @@ def update_lanzou_config(patch: dict[str, Any]) -> tuple[AppConfig, str]:
         if key in patch:
             current[key] = _as_int(patch[key], key, minimum, maximum)
     if "scan_on_start" in patch:
-        current["scan_on_start"] = bool(patch["scan_on_start"])
+        current["scan_on_start"] = _as_bool_strict(patch["scan_on_start"], "scan_on_start")
     if "provider_order" in patch:
         if not isinstance(patch["provider_order"], list):
             raise ValueError("provider_order must be a list")
         current["provider_order"] = [str(item).strip() for item in patch["provider_order"] if str(item).strip()]
-    for key in ["wer_api_method", "wer_api_url_param", "wer_api_password_param", "notification_template"]:
+    if "wer_api_method" in patch:
+        method = str(patch["wer_api_method"] or "").strip().upper()
+        if method not in {"GET", "POST"}:
+            raise ValueError("wer_api_method must be GET or POST")
+        current["wer_api_method"] = method
+    for key in ["wer_api_url_param", "wer_api_password_param", "notification_template"]:
         if key in patch:
             current[key] = str(patch[key]).strip()
     if "wer_api_endpoint" in patch:
@@ -300,8 +333,8 @@ def update_lanzou_config(patch: dict[str, Any]) -> tuple[AppConfig, str]:
                 "title": str(raw.get("title") or watcher_id).strip(),
                 "url": _validate_http_url(raw.get("url"), f"watcher {watcher_id} url"),
                 "password": str(raw.get("password") or "").strip(),
-                "enabled": raw.get("enabled") is not False,
-                "max_pages": _as_int(raw.get("max_pages") or 20, f"watcher {watcher_id} max_pages", 1, 100),
+                "enabled": _as_bool_strict(raw.get("enabled", True), f"watcher {watcher_id} enabled"),
+                "max_pages": _as_int(20 if raw.get("max_pages") is None else raw.get("max_pages"), f"watcher {watcher_id} max_pages", 1, 100),
             }
             watchers.append(item)
         current["watchers"] = watchers
@@ -326,9 +359,9 @@ def update_lanzou_config(patch: dict[str, Any]) -> tuple[AppConfig, str]:
             targets.append(
                 {
                     "name": target_name,
-                    "enabled": raw.get("enabled") is not False,
+                    "enabled": _as_bool_strict(raw.get("enabled", True), f"notify target {index} enabled"),
                     "url": _validate_http_url(raw.get("url"), f"notify target {index} url"),
-                    "timeout_seconds": float(raw.get("timeout_seconds") or 8.0),
+                    "timeout_seconds": _as_float(8.0 if raw.get("timeout_seconds") is None else raw.get("timeout_seconds"), f"notify target {index} timeout_seconds", 0.1, 120.0),
                     "headers": {str(key): str(value) for key, value in headers.items()},
                 }
             )
@@ -378,54 +411,33 @@ def read_log(name: str, lines: int = 200, search: str = "") -> dict[str, Any]:
     }
 
 
+def _service_base_url(service: str) -> tuple[str, str]:
+    if service == "main":
+        port = _as_int(os.getenv("APP_PORT") or 5001, "APP_PORT", 1, 65535)
+        token = str(os.getenv("GROUPGUARD_WRITE_TOKEN") or os.getenv("WEBUI_ADMIN_TOKEN") or "").strip()
+    elif service == "lanzou":
+        port = _as_int(os.getenv("LANZOU_MONITOR_PORT") or 6178, "LANZOU_MONITOR_PORT", 1, 65535)
+        token = str(os.getenv("WEBUI_ADMIN_TOKEN") or "").strip()
+    else:
+        raise ValueError("service must be main or lanzou")
+    return f"http://127.0.0.1:{port}", token
+
+
 def fetch_openapi(service: str) -> dict[str, Any]:
-    base_url = "http://127.0.0.1:5001" if service == "main" else "http://127.0.0.1:6178"
-    response = requests.get(f"{base_url}/openapi.json", timeout=5)
-    response.raise_for_status()
-    return response.json()
+    from .api_debugger import fetch_openapi as fetch_schema
+
+    base_url, token = _service_base_url(service)
+    return fetch_schema(base_url, admin_token=token)
 
 
 def invoke_local_api(payload: dict[str, Any]) -> dict[str, Any]:
+    from .api_debugger import invoke_api
+
     service = str(payload.get("service") or "main")
-    if service not in {"main", "lanzou"}:
-        raise ValueError("service must be main or lanzou")
-    method = str(payload.get("method") or "GET").upper()
-    if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
-        raise ValueError("unsupported HTTP method")
-    path = str(payload.get("path") or "").strip()
-    if not path.startswith("/") or "://" in path or ".." in path:
-        raise ValueError("path must be a safe relative API path")
-    if path == "/admin/invoke":
-        raise ValueError("recursive invocation is not allowed")
-    query = payload.get("query") or {}
-    body = payload.get("json")
-    if not isinstance(query, dict):
-        raise ValueError("query must be an object")
-    timeout = max(1.0, min(120.0, float(payload.get("timeout") or 30.0)))
-    base_url = "http://127.0.0.1:5001" if service == "main" else "http://127.0.0.1:6178"
-    started = time.time()
-    response = requests.request(method, f"{base_url}{path}", params=query, json=body, timeout=timeout)
-    elapsed_ms = int((time.time() - started) * 1000)
-    content_type = response.headers.get("content-type", "")
-    result: dict[str, Any] = {
-        "ok": response.ok,
-        "status_code": response.status_code,
-        "content_type": content_type,
-        "elapsed_ms": elapsed_ms,
-        "headers": {key: value for key, value in response.headers.items()},
-    }
-    if "application/json" in content_type:
-        try:
-            result["json"] = response.json()
-        except ValueError:
-            result["text"] = response.text[:1_000_000]
-    elif content_type.startswith("image/") or "image/svg+xml" in content_type:
-        if len(response.content) > 5_000_000:
-            raise ValueError("response image is larger than 5 MB")
-        result["base64"] = base64.b64encode(response.content).decode("ascii")
-    else:
-        result["text"] = response.text[:1_000_000]
-    return result
+    base_url, token = _service_base_url(service)
+    clean_payload = dict(payload)
+    clean_payload.pop("service", None)
+    return invoke_api(base_url, clean_payload, admin_token=token)
 
 
 def _tcp_check(host: str, port: int, timeout: float = 0.8) -> tuple[bool, str]:
@@ -458,11 +470,29 @@ def run_diagnostics() -> dict[str, Any]:
         config = None
         state_path = DEFAULT_STATE_PATH.resolve()
 
+    env_text, _env_source = _read_env_source()
+    file_env = _parse_env_values(env_text)
     items: list[dict[str, Any]] = []
+
+    def diagnostic_port(name: str, raw: Any, fallback: int) -> int:
+        try:
+            return _as_int(raw if raw not in {None, ""} else fallback, name, 1, 65535)
+        except (TypeError, ValueError) as exc:
+            items.append({"name": f"{name.lower()}_config", "ok": False, "detail": str(exc)})
+            return fallback
+
+    main_port = diagnostic_port("APP_PORT", os.getenv("APP_PORT") or file_env.get("APP_PORT"), 5001)
+    mysql_host = str(os.getenv("MYSQL_HOST") or file_env.get("MYSQL_HOST") or "127.0.0.1")
+    mysql_port = diagnostic_port("MYSQL_PORT", os.getenv("MYSQL_PORT") or file_env.get("MYSQL_PORT"), 3306)
+    lanzou_port = diagnostic_port(
+        "LANZOU_MONITOR_PORT",
+        config.port if config is not None else os.getenv("LANZOU_MONITOR_PORT"),
+        6178,
+    )
     for name, host, port in [
-        ("main_api_port", "127.0.0.1", 5001),
-        ("lanzou_port", "127.0.0.1", 6178),
-        ("mysql_port", "127.0.0.1", 3306),
+        ("main_api_port", "127.0.0.1", main_port),
+        ("lanzou_port", "127.0.0.1", lanzou_port),
+        ("mysql_port", mysql_host, mysql_port),
     ]:
         ok, detail = _tcp_check(host, port)
         items.append({"name": name, "ok": ok, "detail": detail})
@@ -471,14 +501,16 @@ def run_diagnostics() -> dict[str, Any]:
         ok, detail = _json_file_check(path)
         items.append({"name": name, "ok": ok, "detail": detail, "path": str(path)})
 
-    venv_python = PROJECT_ROOT / ".venv" / "Scripts" / "python.exe"
-    items.append({"name": "venv_python", "ok": venv_python.exists(), "detail": str(venv_python)})
+    venv_python = PROJECT_ROOT / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    runtime_python = venv_python if venv_python.exists() else Path(sys.executable)
+    items.append({"name": "python_runtime", "ok": runtime_python.exists(), "detail": str(runtime_python)})
     playwright_path = Path(os.getenv("PLAYWRIGHT_BROWSERS_PATH") or PROJECT_ROOT / "ms-playwright")
     items.append({"name": "playwright_path", "ok": playwright_path.exists(), "detail": str(playwright_path)})
     items.append({"name": "main_env", "ok": APP_ENV_PATH.exists(), "detail": str(APP_ENV_PATH)})
 
-    service_detail = "unsupported on this platform"
-    service_ok = False
+    service_detail = "not applicable on this platform"
+    service_ok = True
+    service_applicable = os.name == "nt"
     if os.name == "nt":
         try:
             completed = subprocess.run(
@@ -492,9 +524,9 @@ def run_diagnostics() -> dict[str, Any]:
             service_ok = "RUNNING" in completed.stdout
         except Exception as exc:
             service_detail = str(exc)
-    items.append({"name": "windows_service", "ok": service_ok, "detail": service_detail})
+    items.append({"name": "windows_service", "ok": service_ok, "applicable": service_applicable, "detail": service_detail})
 
-    return {"ok": all(item["ok"] for item in items if item["name"] != "windows_service") and service_ok, "items": items}
+    return {"ok": all(item["ok"] for item in items if item.get("applicable", True)), "items": items}
 
 
 def repair_state() -> dict[str, Any]:

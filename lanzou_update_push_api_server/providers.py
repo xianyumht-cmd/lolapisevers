@@ -15,6 +15,58 @@ import requests
 from .config import AppConfig, WatcherConfig
 
 
+_MAX_HTML_BYTES = 2 * 1024 * 1024
+_MAX_JSON_BYTES = 4 * 1024 * 1024
+
+
+def _request_with_stream(call, *args, **kwargs):
+    try:
+        return call(*args, stream=True, **kwargs)
+    except TypeError:
+        # Compatibility for small response doubles used by offline tests.
+        return call(*args, **kwargs)
+
+
+def _bounded_bytes(response: Any, limit: int) -> bytes:
+    headers = getattr(response, "headers", {}) or {}
+    declared = str(headers.get("content-length") or headers.get("Content-Length") or "").strip()
+    if declared:
+        try:
+            if int(declared) > limit:
+                raise ProviderError("response_too_large", retryable=False)
+        except ValueError:
+            pass
+    iterator = getattr(response, "iter_content", None)
+    if callable(iterator):
+        chunks: list[bytes] = []
+        total = 0
+        for chunk in iterator(chunk_size=64 * 1024):
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > limit:
+                raise ProviderError("response_too_large", retryable=False)
+            chunks.append(bytes(chunk))
+        return b"".join(chunks)
+    content = getattr(response, "content", None)
+    if content is None:
+        content = str(getattr(response, "text", "") or "").encode("utf-8")
+    raw = bytes(content)
+    if len(raw) > limit:
+        raise ProviderError("response_too_large", retryable=False)
+    return raw
+
+
+def _bounded_json(response: Any, limit: int = _MAX_JSON_BYTES) -> Any:
+    if not callable(getattr(response, "iter_content", None)) and hasattr(response, "_payload"):
+        return response.json()
+    raw = _bounded_bytes(response, limit)
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise ProviderError("invalid_json_response", retryable=False) from exc
+
+
 class ProviderError(RuntimeError):
     """Raised with a safe machine-readable code for provider failures."""
 
@@ -273,9 +325,9 @@ class LanzouWebProvider:
         for profile in self.browser_profiles:
             session = requests.Session()
             session.headers.update(profile["headers"])
-            response = session.get(watcher.url, timeout=self.timeout_seconds)
+            response = _request_with_stream(session.get, watcher.url, timeout=self.timeout_seconds)
             response.raise_for_status()
-            page_html = response.text
+            page_html = _bounded_bytes(response, _MAX_HTML_BYTES).decode("utf-8", errors="replace")
             title = _extract_title(page_html, watcher.title)
             ajax_match = re.search(r"url\s*:\s*['\"]([^'\"]*filemoreajax\.php\?file=(\d+)[^'\"]*)['\"]", page_html)
             if ajax_match:
@@ -303,17 +355,15 @@ class LanzouWebProvider:
         for page in range(1, watcher.max_pages + 1):
             payload = dict(base_payload)
             payload["pg"] = str(page)
-            ajax_response = session.post(
+            ajax_response = _request_with_stream(
+                session.post,
                 ajax_url,
                 data=payload,
                 timeout=self.timeout_seconds,
                 headers={"Referer": watcher.url, "X-Requested-With": "XMLHttpRequest"},
             )
             ajax_response.raise_for_status()
-            try:
-                data = ajax_response.json()
-            except ValueError as exc:
-                raise ProviderError("invalid_ajax_json") from exc
+            data = _bounded_json(ajax_response)
             if str(data.get("zt")) != "1":
                 if page == 1:
                     raise ProviderError("ajax_status_rejected")
@@ -377,14 +427,14 @@ class WerApiProvider:
             payload[config.wer_api_password_param] = watcher.password
         method = config.wer_api_method.upper()
         if method == "POST":
-            response = requests.post(config.wer_api_endpoint, data=payload, timeout=20)
+            response = requests.post(config.wer_api_endpoint, data=payload, timeout=20, stream=True)
         else:
-            response = requests.get(config.wer_api_endpoint, params=payload, timeout=20)
+            response = requests.get(config.wer_api_endpoint, params=payload, timeout=20, stream=True)
         response.raise_for_status()
         try:
-            body = response.json()
-        except ValueError as exc:
-            raise ProviderError("invalid_json_response") from exc
+            body = _bounded_json(response)
+        finally:
+            response.close()
         code = body.get("code")
         data = body.get("data")
         if data is None and code not in (0, 1, 200, "0", "1", "200"):

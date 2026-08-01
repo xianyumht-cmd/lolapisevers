@@ -1,5 +1,6 @@
 import logging
 import json
+import re
 from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional
@@ -9,6 +10,8 @@ from pymysql.cursors import DictCursor
 
 
 class Database:
+    _DATABASE_RE = re.compile(r"[A-Za-z0-9_]{1,64}\Z")
+    _ALLOWED_CHARSETS = frozenset({"utf8mb4", "utf8", "latin1", "ascii"})
     def __init__(
         self,
         host: str,
@@ -24,8 +27,14 @@ class Database:
         self.port = port
         self.user = user
         self.password = password
-        self.database = database
-        self.charset = charset
+        normalized_database = str(database or "").strip()
+        normalized_charset = str(charset or "").strip().lower()
+        if not self._DATABASE_RE.fullmatch(normalized_database):
+            raise ValueError("MYSQL_DATABASE 只能包含字母、数字和下划线，长度为 1-64")
+        if normalized_charset not in self._ALLOWED_CHARSETS:
+            raise ValueError("MySQL charset 不在允许列表中")
+        self.database = normalized_database
+        self.charset = normalized_charset
         self._ensure_database_and_tables()
 
     @contextmanager

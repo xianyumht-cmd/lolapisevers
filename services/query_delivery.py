@@ -2,17 +2,21 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import re
 import uuid
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 from utils.formatters import pct
+from services.groupguard_protocol import (
+    DELIVERY_PROTOCOL,
+    MAX_FORWARD_NODE_TEXT_CHARS,
+    MAX_FORWARD_NODES,
+    MAX_IMAGE_BYTES,
+    MAX_TEXT_CHARS,
+    validate_request_id,
+)
 
 
-DELIVERY_PROTOCOL = "groupguard-query-delivery.v1"
 DEFAULT_FORWARD_CHUNK_CHARS = 1200
-MAX_FORWARD_NODES = 32
-_SAFE_ID_RE = re.compile(r"[^A-Za-z0-9_.:-]+")
 
 
 def request_id() -> str:
@@ -20,8 +24,7 @@ def request_id() -> str:
 
 
 def safe_client_request_id(value: Any) -> str:
-    cleaned = _SAFE_ID_RE.sub("-", str(value or "").strip()).strip("-")
-    return cleaned[:128]
+    return validate_request_id(value)
 
 
 def normalize_capabilities(value: Any) -> Dict[str, bool]:
@@ -130,7 +133,7 @@ def format_aram_text(payload: Mapping[str, Any]) -> str:
 
 
 def split_forward_text(text: str, *, max_chars: int = DEFAULT_FORWARD_CHUNK_CHARS) -> List[str]:
-    limit = max(200, min(int(max_chars), 4000))
+    limit = max(200, min(int(max_chars), MAX_FORWARD_NODE_TEXT_CHARS))
     lines = str(text or "").splitlines() or [""]
     chunks: List[str] = []
     current = ""
@@ -148,13 +151,18 @@ def split_forward_text(text: str, *, max_chars: int = DEFAULT_FORWARD_CHUNK_CHAR
         current = remainder
     if current or not chunks:
         chunks.append(current)
-    return chunks[:MAX_FORWARD_NODES]
+    if len(chunks) > MAX_FORWARD_NODES:
+        raise ValueError(f"内容超过合并转发上限（最多 {MAX_FORWARD_NODES} 段），请缩短结果或改用文件交付")
+    return chunks
 
 
 def text_delivery(text: str) -> Dict[str, Any]:
+    normalized = str(text or "")
+    if len(normalized) > MAX_TEXT_CHARS:
+        raise ValueError(f"文本超过交付上限（最多 {MAX_TEXT_CHARS} 个字符）")
     return {
         "kind": "segments",
-        "segments": [{"type": "text", "text": str(text or "")}],
+        "segments": [{"type": "text", "text": normalized}],
     }
 
 
@@ -171,6 +179,8 @@ def forward_delivery(text: str) -> Dict[str, Any]:
 
 def image_delivery(body: bytes, *, mime_type: str = "image/png", filename: str = "query.png") -> Dict[str, Any]:
     raw = bytes(body)
+    if len(raw) > MAX_IMAGE_BYTES:
+        raise ValueError(f"图片超过交付上限（最多 {MAX_IMAGE_BYTES} 字节）")
     digest = hashlib.sha256(raw).hexdigest()
     return {
         "kind": "segments",
@@ -192,18 +202,18 @@ def choose_text_delivery(text: str, capabilities: Mapping[str, bool], preferred:
     if preferred == "forward":
         if capabilities.get("forward"):
             return forward_delivery(text)
-        if capabilities.get("text"):
+        if capabilities.get("text") and len(str(text or "")) <= MAX_TEXT_CHARS:
             return text_delivery(text)
         return None
     if preferred == "text":
-        if capabilities.get("text"):
+        if capabilities.get("text") and len(str(text or "")) <= MAX_TEXT_CHARS:
             return text_delivery(text)
         if capabilities.get("forward"):
             return forward_delivery(text)
         return None
     if len(text) > 3500 and capabilities.get("forward"):
         return forward_delivery(text)
-    if capabilities.get("text"):
+    if capabilities.get("text") and len(str(text or "")) <= MAX_TEXT_CHARS:
         return text_delivery(text)
     if capabilities.get("forward"):
         return forward_delivery(text)

@@ -15,26 +15,41 @@ def _build_info(request: Request) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else load_build_info()
 
 
-def _browser_dependency(so1_client: Any) -> dict[str, Any]:
-    browser = getattr(so1_client, "_browser", None) if so1_client is not None else None
+async def _so1_dependency(so1_client: Any) -> dict[str, Any]:
+    if so1_client is None:
+        return {
+            "required": True,
+            "status": "down",
+            "browser_status": "down",
+            "session_authenticated": False,
+            "reason": "client_unavailable",
+            "max_concurrent_pages": 0,
+        }
     try:
-        connected = bool(browser is not None and browser.is_connected())
+        probe = getattr(so1_client, "check_readiness", None)
+        if not callable(probe):
+            raise RuntimeError("session_probe_unavailable")
+        result = await asyncio.wait_for(probe(), timeout=12.0)
+        browser_up = bool(result.get("browser_up"))
+        authenticated = bool(result.get("session_authenticated"))
+        reason = str(result.get("reason") or "")
         error_class = ""
     except Exception as exc:
-        connected = False
+        browser_up = False
+        authenticated = False
+        reason = "probe_failed"
         error_class = type(exc).__name__
-    result = {
+    payload = {
         "required": True,
-        "status": "up" if connected else "down",
-        "max_concurrent_pages": (
-            getattr(so1_client, "_max_concurrent_pages", 0)
-            if so1_client is not None
-            else 0
-        ),
+        "status": "up" if browser_up and authenticated else "down",
+        "browser_status": "up" if browser_up else "down",
+        "session_authenticated": authenticated,
+        "reason": reason,
+        "max_concurrent_pages": getattr(so1_client, "_max_concurrent_pages", 0),
     }
     if error_class:
-        result["error_class"] = error_class
-    return result
+        payload["error_class"] = error_class
+    return payload
 
 
 def _lolban_dependency() -> dict[str, Any]:
@@ -126,13 +141,13 @@ async def _readiness_payload(request: Request) -> dict[str, Any]:
         or getattr(request.app.state, "so1_client", None)
     )
     mysql = await _mysql_dependency(ctx)
-    browser = _browser_dependency(so1_client)
+    so1 = await _so1_dependency(so1_client)
     dependencies = {
         "mysql": mysql,
-        "so1_browser": browser,
+        "so1_browser": so1,
         "lolban": _lolban_dependency(),
     }
-    ready = mysql["status"] == "up" and browser["status"] == "up"
+    ready = mysql["status"] == "up" and so1["status"] == "up"
     mysql_error = "" if mysql["status"] == "up" else str(
         mysql.get("error_class") or "database_unavailable"
     )
@@ -143,8 +158,9 @@ async def _readiness_payload(request: Request) -> dict[str, Any]:
         # Legacy fields are kept for existing admin and supervisor clients.
         "mysql": mysql["status"],
         "mysql_error": mysql_error,
-        "so1_browser": browser["status"],
-        "so1_max_concurrent_pages": browser["max_concurrent_pages"],
+        "so1_browser": so1["browser_status"],
+        "so1_session": "authenticated" if so1["session_authenticated"] else "down",
+        "so1_max_concurrent_pages": so1["max_concurrent_pages"],
         "dependencies": dependencies,
         "build": _build_info(request),
     }
