@@ -7,6 +7,12 @@ from core.build_info import load_build_info
 from core.config import load_config
 from core.context import create_app_context
 from core.lifespan import lifespan
+from services.parser_center_multipart import install_parser_center_multipart_support
+
+
+install_parser_center_multipart_support()
+
+
 from routers.aram_augments import router as aram_augments_router
 from routers.cross_query import router as cross_query_router
 from routers.cross_session import router as cross_session_router

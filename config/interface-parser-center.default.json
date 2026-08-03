@@ -114,7 +114,77 @@
     },
     "scammer_report": {
       "operation": "report",
-      "providers": []
+      "providers": [
+        {
+          "id": "pianzi-lol-anonymous-report",
+          "name": "骗子举报审核入口",
+          "enabled": false,
+          "request": {
+            "method": "POST",
+            "url": "https://pianzi.lol/api/anonymous/report",
+            "headers": {
+              "X-LAPI-Request-Encoding": "multipart"
+            },
+            "form": {
+              "report_identity_mode": "anonymous",
+              "scammer_qq": "$qq",
+              "scammer_name": "",
+              "scammer_wechat": "",
+              "scammer_phone": "",
+              "scammer_idcard": "",
+              "fraud_amount": "",
+              "incident_at": "",
+              "transaction_method": "",
+              "report_content": "$content",
+              "evidence_notes": ""
+            },
+            "timeout_seconds": 15
+          },
+          "parser": {
+            "success": {
+              "path": "success",
+              "op": "eq",
+              "value": true
+            },
+            "error_message_paths": [
+              "error",
+              "message"
+            ],
+            "outcomes": [
+              {
+                "name": "pending",
+                "when": {
+                  "path": "success",
+                  "op": "eq",
+                  "value": true
+                }
+              }
+            ],
+            "default_outcome": "unknown",
+            "fields": {
+              "review_status": {
+                "paths": [
+                  "review_status",
+                  "status"
+                ],
+                "default": "等待审核",
+                "string": true
+              },
+              "receipt": {
+                "paths": [
+                  "message"
+                ],
+                "default": "举报已提交，等待审核",
+                "string": true
+              }
+            },
+            "templates": {
+              "pending": "审核状态：{review_status|等待审核}\n回执说明：{receipt|举报已提交，等待审核}",
+              "unknown": "举报提交结果暂无法确认"
+            }
+          }
+        }
+      ]
     },
     "peer_report": {
       "operation": "report",
