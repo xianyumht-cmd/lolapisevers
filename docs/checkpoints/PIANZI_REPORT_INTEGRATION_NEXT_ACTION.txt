@@ -1,1 +1,0 @@
-Run pull-request CI for fix/pianzi-report-multipart-20260804. If all workflows pass, merge without changing the captured protocol, then build a Windows production-safe deployment package that preserves the existing interface-parser-center.json and enables only pianzi-lol-anonymous-report.
