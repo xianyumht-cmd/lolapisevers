@@ -1,0 +1,53 @@
+name: Validate pianzi deployment scripts v2
+
+on:
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    if: github.head_ref == 'release/pianzi-report-package-20260804'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reconstruct exact scripts
+        shell: python
+        run: |
+          import base64
+          import gzip
+          from pathlib import Path
+
+          pairs = {
+              'deploy-pianzi-report.ps1': Path('.release-validation/deploy-pianzi-report.ps1.gz.b64'),
+              'rollback-pianzi-report.ps1': Path('.release-validation/rollback-pianzi-report.ps1.gz.b64'),
+          }
+          for output, source in pairs.items():
+              Path(output).write_bytes(gzip.decompress(base64.b64decode(source.read_text(encoding='ascii').strip())))
+
+      - name: Parse scripts with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($path in @('deploy-pianzi-report.ps1', 'rollback-pianzi-report.ps1')) {
+            $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $path))
+            if (@($bytes | Where-Object { $_ -gt 127 }).Count -gt 0) {
+              throw "Script is not ASCII safe: $path"
+            }
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $path),
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors -and $errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "${path}: $($_.Message)" }
+              exit 1
+            }
+            Write-Host "PARSE_OK=$path"
+          }
