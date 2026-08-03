@@ -1,0 +1,51 @@
+name: Validate pianzi deployment scripts
+
+on:
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    if: github.head_ref == 'release/pianzi-report-package-20260804'
+    runs-on: windows-latest
+    steps:
+      - name: Reconstruct exact deployment scripts
+        shell: python
+        run: |
+          import base64
+          import gzip
+          from pathlib import Path
+
+          encoded = {
+              "deploy-pianzi-report.ps1": "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",
+              "rollback-pianzi-report.ps1": "H4sIAIH1cGoC/5VWbW/bNhD+rl9xEIRBGkqtLVZgCLAPjhN3Lpo0sNJlQFYYtHSO2cikRlH2vDb/fUdSsqWkSVp/MGzyXp977o4V13wdB0Cf69poIW8+RZnhBi+4WcHvEIZBEgTRqdZKj3IjlLzQuESNMkd7nRlVhUGGhmWknZszVSCwP1HXJArvyVBtguiC57f8BmdKGVLKqlIY5hzQN5kyEJ3tpnKjcm49pGe7sVqvuSxSKxSIJcRMkuohsgS+uJij0nkgo28phPFKlMXU4Brid0pI72LgPCywKtVuTT5ZbY2FCbCJKA3qh3fs5/RzrWToJBC+Oo/2kylt2IfFZ8wNpVibKy0MXoo1ZX6CdY6yIBzhK2RYkkgnSVY0hfrKmbE5RbIpS2D4T5cGZQVmpdUWwnMFh3DAhQNLG8WW17BUDWETwp3HoF+v1lI6IdPnfI3BXRB57RYiJY21yN5TyJqXHqKDBTbjW2CnMlcuh4+Xk98oEdLaoDYTrdbsHUFCFdXKJtVWNIxi7yWt/Plc00USBlGGeiNytKEM5Gp/Ppd0YeVGlTjm9VCGV2K+oEN7T6zbCNXUlhjivkt/Nc/dnZU+ppI31YPgFu64iy2IREFQCLMjoesM84bKuEsvqAlyUfEyvRKyUNt62kp9OjoiBMeNtoyNkyCqOknSP8dtV+fHLe0P4r3rpMfuvb10Wk/lTJUYPxHWcUO09WIU2ahYCymog7lROunaoyXTrJH0U9RQ8kbmK+I6kWigkYZElH0k8SVRqG3QAU96VU96ZG2PobJC5GYt6prYczRQsHR93sOhcn0H/vQb9g/i1jxR3dOqJXtLPmCOfgMust5EAzvEXGydfmoboqmBSfQjrsIi7EC1/580PVE6RycaPx1Fkl5xYUjcu4v3rl7AtR0nWcUl1da2HfFAyaKOf32TJFSqn+CGuoCNBwgDlTa/VQ1dsAINzwlctrTBwL3+8cm+H2WXp39NL8cfTk5dqi97kE84TZsCjAJNpVIaoeszeEuufa+lHnUKbSlu2gnUn7y92EIv9Leg+aOXPEdWcU1wMxqXdOInbWeqrffAWK+nv8+WL6hrfC8/x3+J75SUG7lGN9iVdKyqHXOLY8jGQTR2thsh3YqCfs5twe8Ayxqt18fIfdDpHM9wrTb4uOuB/SBaNHbByaV6BmsnxwQJdrjuNZ+D9oFqD0Z3N7d3Pw7l/QCGaA4T+25AB2rPY/ptLwF1n36qTYMfbWOat5Lm03NtHBXIi1JIO66cixMCOUlHRdGJvXr9Mgm2K7v344MEsJK2Rae8n/V61/5yjwLq2kpJt1Hty+oW2YxAPEOzUlS1j1rQXmyX7i+l2OB/9Mxpb8kRMBs4jRKKBN7srfZeLRT13ocdGwuN/LZ9kdwBPeRo+ny5awemw7dEpLK3qcHrduH007rBQVr79aXK0q7ubhIV7iVUv4AFjTqzQhhdTKEQBdjNsiD7VB+bkptO7m3G/lD08joYqps8RyywSGHW2fQT7ej+qAwHFjx5h4sn+B/8cfFjRAsAAA=="
+          }
+          for name, value in encoded.items():
+              Path(name).write_bytes(gzip.decompress(base64.b64decode(value)))
+
+      - name: Parse scripts with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($path in @('deploy-pianzi-report.ps1', 'rollback-pianzi-report.ps1')) {
+            $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $path))
+            if (@($bytes | Where-Object { $_ -gt 127 }).Count -gt 0) {
+              throw "Script is not ASCII safe: $path"
+            }
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $path),
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors -and $errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "$path: $($_.Message)" }
+              exit 1
+            }
+            Write-Host "PARSE_OK=$path"
+          }
