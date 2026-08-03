@@ -1,0 +1,34 @@
+{
+  "task_id": "PIANZI-REPORT-001",
+  "status": "implementation_complete_pending_ci",
+  "date": "2026-08-04",
+  "base_commit": "f3f4776e7b9b43313175a4552dcbd2d9eb59329e",
+  "branch": "fix/pianzi-report-multipart-20260804",
+  "captured_protocol": {
+    "method": "POST",
+    "url": "https://pianzi.lol/api/anonymous/report",
+    "content_type": "multipart/form-data",
+    "required_fields": [
+      "scammer_qq",
+      "report_content"
+    ],
+    "identity_mode": "anonymous",
+    "success_condition": "success=true",
+    "success_outcome": "pending"
+  },
+  "implementation": {
+    "runtime_module": "services/parser_center_multipart.py",
+    "startup_install": "app.py",
+    "default_provider": "pianzi-lol-anonymous-report",
+    "default_provider_enabled": false,
+    "tests": "tests/test_parser_center_multipart.py"
+  },
+  "unchanged_guarantees": [
+    "local_first_persistence",
+    "request_id_idempotency",
+    "persistent_retry_queue",
+    "provider_identity_hidden_from_public_output",
+    "existing_query_provider_compatibility"
+  ],
+  "next_gate": "pull_request_ci"
+}
