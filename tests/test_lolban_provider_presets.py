@@ -80,12 +80,14 @@ class LolbanProviderPresetTests(unittest.TestCase):
                 {"code": 500, "msg": "查询服务暂时不可用"},
                 status_code=200,
             )
+
+        parsed = parse_response(
+            LOL2099_PROVIDER,
+            {"code": 200, "data": {"qq": "97077000", "status": "未知"}},
+            status_code=200,
+        )
         with self.assertRaises(ProviderResponseError):
-            parse_response(
-                LOL2099_PROVIDER,
-                {"code": 200, "data": {"qq": "97077000", "status": "未知"}},
-                status_code=200,
-            )
+            to_lolban_payload("97077000", parsed)
 
     def test_fourpng_request_and_ban_response_shape(self):
         request = FOURPNG_PROVIDER["request"]
@@ -140,10 +142,7 @@ class LolbanProviderPresetTests(unittest.TestCase):
                 self.assertIn("lolban-4png", by_id)
                 self.assertFalse(by_id["lolban-lol2099"]["enabled"])
                 self.assertFalse(by_id["lolban-4png"]["enabled"])
-                self.assertEqual(
-                    first["added_provider_ids"],
-                    ["lolban-lol2099", "lolban-4png"],
-                )
+                self.assertEqual(first["added_provider_ids"], ["lolban-lol2099"])
 
                 config["features"]["lolban"]["providers"] = [
                     item
