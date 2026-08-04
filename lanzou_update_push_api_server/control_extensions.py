@@ -8,7 +8,7 @@ from fastapi.responses import HTMLResponse
 
 from services.image_asset_store import get_image_asset_sync_manager
 
-from . import parser_center_admin
+from . import management, parser_center_admin
 from .config import sanitized_config
 from .image_cache_ui import render_image_cache_page
 from .lolban_console import install_lolban_console_routes
@@ -25,7 +25,25 @@ from .security import security_status
 from .state_recovery import recover_state_file
 
 
+def _register_sensitive_lolban_fields() -> None:
+    key = "LOL_BAN_UPSTREAM_URL"
+    spec = management._FIELD_BY_KEY.get(key)
+    if spec is None:
+        spec = {
+            "key": key,
+            "label": "旧版封号上游 URL（请在封号查询配置页管理）",
+            "section": "封号查询",
+            "type": "secret",
+        }
+        management.MAIN_CONFIG_FIELDS.append(spec)
+        management._FIELD_BY_KEY[key] = spec
+        return
+    spec["type"] = "secret"
+    spec["label"] = "旧版封号上游 URL（请在封号查询配置页管理）"
+
+
 def install_control_extensions(app: FastAPI, service) -> None:
+    _register_sensitive_lolban_fields()
     parser_center_admin.render_parser_center_page = render_guarded_parser_center_page
     parser_center_admin.install_parser_center_routes(app)
     install_parser_center_retry_routes(app)
