@@ -1,0 +1,31 @@
+name: Apply WebUI runtime hotfix once
+
+on:
+  push:
+    branches:
+      - feat/query-console-lolban-20260804
+    paths:
+      - .github/workflows/apply-webui-runtime-hotfix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-hotfix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply reviewed patch and clean temporary files
+        shell: bash
+        run: |
+          set -euo pipefail
+          gzip --decompress --stdout .github/hotfix/webui-runtime-hotfix.patch.gz > webui-runtime-hotfix.patch
+          git apply --index webui-runtime-hotfix.patch
+          rm -f webui-runtime-hotfix.patch
+          git rm -f --ignore-unmatch _tmp5 _tmp6 _tmp7 _tmp8 _do_not_use tmp-placeholder
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix(webui): restore parser center and hot-load 4PNG token"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
