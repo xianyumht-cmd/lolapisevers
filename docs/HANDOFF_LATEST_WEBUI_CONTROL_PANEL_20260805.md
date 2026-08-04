@@ -5,8 +5,8 @@
 - 日期：2026-08-05
 - 工作分支：`feat/query-console-lolban-20260804`
 - PR：`#39`
-- 基线生产提交：`19edfc9c189f6b269793ed750e42548268fcc115`
-- 当前状态：代码实现与本地验证完成，等待 GitHub CI、V3 候选包和生产实机验收
+- 当前生产提交：`28e68e75ee14674bba10606587937473d37baa1e`
+- 当前状态：专业控制台候选包已在 Windows 生产机安全部署成功；基础健康、合集、ARAM 和构建一致性通过，等待页面与封号 Provider 功能验收
 
 ## 1. 用户要求
 
@@ -27,7 +27,7 @@
 - `GET /admin/parser-center/backups`：读取备份。
 - `POST /admin/parser-center/rollback`：回滚前再次备份当前版本。
 
-问题主要在页面信息架构：入口缺失、页面孤立、专业功能被工程化布局隐藏，因此用户感受像占位页。
+原问题主要在页面信息架构：入口缺失、页面孤立、专业功能被工程化布局隐藏，因此用户感受像占位页。
 
 ## 3. 本阶段实现
 
@@ -88,31 +88,53 @@
 
 ## 5. 已完成验证
 
-本地候选源码已完成：
+### 自动验证
 
-- Python 全仓编译；
-- 新增控制台导航单元测试；
-- 封号页原有安全测试；
-- 根控制台与封号页 JavaScript 提取；
-- `node --check` 页面脚本语法验证；
-- 导航幂等注入验证；
-- 解析中心真实 API 标记验证；
-- 4PNG Token 专用输入与 Secret 接口标记验证。
+- Linux 全量单元测试：通过；
+- Windows 全量单元测试：通过；
+- Parser Center 专项及全套测试：通过；
+- Python 全仓编译：通过；
+- 根控制台、封号页和导航 JavaScript 语法验证：通过；
+- 全部 PowerShell 脚本 PowerShell 5.1 解析：通过；
+- `pip-audit --strict`：通过；
+- V3 不可变离线部署包生成、清单、逐文件 SHA-256、离线依赖和自动回滚标志：通过。
 
-## 6. 待完成步骤
+### 生产实机部署
 
-1. 把本阶段变更提交到 PR #39 分支。
-2. 等待 Linux、Windows、Parser Center、依赖审计和 V3 安全打包全绿。
-3. 下载并复核 V3 离线部署包 SHA-256。
-4. 用户运行 `run-deploy.cmd`。
-5. 实机验收：
-   - 根页显示左侧折叠菜单；
-   - 主面板可进入解析中心；
-   - `/parser-center?section=backups` 能显示并保存 `LOL_BAN_4PNG_TOKEN`；
-   - 封号页能直接保存 Token；
-   - 重启后 4PNG Provider 直连和 5001 正式链路通过；
-   - LOL2099 Provider 直连和正式链路通过。
-6. 实机验收后更新本文件状态，并决定是否将 PR #39 从 Draft 转为可合并。
+- 部署提交：`28e68e75ee14674bba10606587937473d37baa1e`；
+- 部署时间：2026-08-05 01:28（UTC+8）；
+- 候选测试：308 项全部通过；
+- Windows 服务：Running；
+- `/livez`：HTTP 200；
+- `/readyz`：HTTP 200；
+- build-info 与 Git HEAD：均为目标提交；
+- 合集正式交付链路：通过；
+- ARAM 正式交付链路：通过；
+- 验证报告：`pass`；
+- 生产备份：`D:\project2\lolapisevers.deploy-backups\20260805-012835-full-bug-repair-28e68e75ee14`。
+
+`observability` 返回 `status=degraded`，但该检查本身为 `pass`；它表示至少一个可选上游处于降级状态，不影响本次控制台部署成功。
+
+## 6. 当前待验收
+
+1. 打开 `http://127.0.0.1:6178/` 并 `Ctrl + F5`：
+   - 确认固定左侧折叠菜单正常；
+   - 确认主面板可以进入封号查询、接口与解析中心、Secret 与备份；
+   - 确认桌面端和窄窗口下菜单均可用。
+2. 打开 `/parser-center?section=visual`：
+   - 确认 Provider 可视化编辑、请求测试和解析预览可用。
+3. 打开 `/query-console/lolban`：
+   - 确认页面存在 4PNG Token 专用输入；
+   - 保存真实 Token 后确认状态变为已配置；
+   - 重启服务后测试 4PNG Provider 直连与 5001 正式链路。
+4. 启用并测试 LOL2099：
+   - Provider 直连；
+   - 5001 正式链路；
+   - 群内公开消息不出现第三方域名、Provider、`by` 或广告。
+5. 页面和查询验收通过后：
+   - 更新本文件为“实机功能验收完成”；
+   - 决定是否将 PR #39 从 Draft 转为可合并；
+   - 进入合集、ARAM、骗子、同行、动态查询独立页的后续阶段。
 
 ## 7. 不应回退的设计原则
 
