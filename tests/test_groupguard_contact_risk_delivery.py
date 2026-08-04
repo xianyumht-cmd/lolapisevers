@@ -33,6 +33,13 @@ class GroupGuardContactRiskDeliveryTests(unittest.IsolatedAsyncioTestCase):
             {
                 "QUERY_SCAMMER_PROVIDERS_JSON": "",
                 "QUERY_PEER_PROVIDERS_JSON": "",
+                # Candidate deployment tests run inside the production service
+                # environment. Explicitly remove write-token requirements so
+                # these service-behaviour tests remain deterministic and do not
+                # depend on production credentials. Authentication itself is
+                # covered separately by test_control_security.py.
+                "GROUPGUARD_WRITE_TOKEN": "",
+                "WEBUI_ADMIN_TOKEN": "",
             },
         )
         self.env.start()
