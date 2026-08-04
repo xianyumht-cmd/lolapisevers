@@ -11,6 +11,7 @@ from services.image_asset_store import get_image_asset_sync_manager
 from . import parser_center_admin
 from .config import sanitized_config
 from .image_cache_ui import render_image_cache_page
+from .lolban_console import install_lolban_console_routes
 from .maintenance import (
     list_config_backups,
     read_audit,
@@ -28,6 +29,7 @@ def install_control_extensions(app: FastAPI, service) -> None:
     parser_center_admin.render_parser_center_page = render_guarded_parser_center_page
     parser_center_admin.install_parser_center_routes(app)
     install_parser_center_retry_routes(app)
+    install_lolban_console_routes(app)
 
     @app.get("/security/status")
     async def get_security_status() -> dict[str, object]:
