@@ -45,6 +45,10 @@ def _decorate_control_page(path: str, page: str) -> str:
     return apply_control_navigation(page, active=active)
 
 
+def _uses_new_overview(request: Request) -> bool:
+    return request.url.path in _NEW_CONTROL_PATHS and not request.query_params.get("tab")
+
+
 async def _read_response_body(response) -> bytes:
     body = getattr(response, "body", None)
     if isinstance(body, (bytes, bytearray)):
@@ -118,7 +122,7 @@ def install_control_extensions(app: FastAPI, service) -> None:
         if "text/html" not in content_type:
             return response
 
-        if request.url.path in _NEW_CONTROL_PATHS:
+        if _uses_new_overview(request):
             return HTMLResponse(
                 render_overview_page(),
                 status_code=response.status_code,
