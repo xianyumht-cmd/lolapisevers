@@ -17,6 +17,11 @@ class ControlUiP0Tests(unittest.TestCase):
         self.assertIn('封号 Provider', html)
         self.assertIn('最近配置变更', html)
         self.assertIn('/legacy-ui', html)
+        self.assertIn('id="adminTokenButton"', html)
+        self.assertIn('id="adminTokenDialog"', html)
+        self.assertIn('id="adminTokenInput"', html)
+        self.assertIn('保存并重新读取', html)
+        self.assertIn('skeleton-text', html)
         self.assertNotIn('class="glass"', html)
         self.assertNotIn('control-navigation-style', html)
 
@@ -28,8 +33,12 @@ class ControlUiP0Tests(unittest.TestCase):
         self.assertIn('"Microsoft YaHei UI"', css)
         self.assertIn('"Microsoft YaHei"', css)
         self.assertIn('"Cascadia Mono"', css)
+        self.assertIn('.dialog-card', css)
+        self.assertIn('.skeleton-text', css)
+        self.assertIn('.toast-error', css)
         self.assertNotIn('radial-gradient', css)
         self.assertNotIn('linear-gradient', css)
+        self.assertNotIn('backdrop-filter', css)
 
         for endpoint in (
             '/admin/overview',
@@ -40,6 +49,11 @@ class ControlUiP0Tests(unittest.TestCase):
             '/build-info',
         ):
             self.assertIn(endpoint, script)
+        self.assertIn('sessionStorage', script)
+        self.assertIn('showModal()', script)
+        self.assertIn('response.status', script)
+        self.assertIn('管理令牌验证失败', script)
+        self.assertNotIn('localStorage', script)
         self.assertNotIn('alert(', script)
         self.assertNotIn('confirm(', script)
 
@@ -50,6 +64,7 @@ class ControlUiP0Tests(unittest.TestCase):
             'icon-key',
             'icon-server',
             'icon-activity',
+            'icon-x',
         ):
             self.assertIn(symbol, icons)
 
