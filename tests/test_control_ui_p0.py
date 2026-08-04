@@ -56,6 +56,10 @@ class ControlUiP0Tests(unittest.TestCase):
         self.assertNotIn('localStorage', script)
         self.assertNotIn('alert(', script)
         self.assertNotIn('confirm(', script)
+        self.assertIn("6178 页面与状态接口可用", script)
+        self.assertIn("蓝奏监控任务存在降级", script)
+        self.assertIn("serviceStatus?.state", script)
+        self.assertNotIn("6178 监控状态异常", script)
 
         for symbol in (
             'icon-dashboard',
