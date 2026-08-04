@@ -14,7 +14,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 90
     env:
-      TARGET_COMMIT: 4a29a0a7c8bde8ef84093bc716761e2bcce483b1
+      TARGET_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
 
     steps:
       - name: Checkout V3 builder branch
