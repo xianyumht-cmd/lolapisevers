@@ -15,13 +15,24 @@ class ControlSecurityTests(unittest.TestCase):
     def make_app(self, state_path: Path):
         return create_app(AppConfig(scan_on_start=False, state_path=state_path))
 
-    def test_public_pages_remain_available_without_token(self):
+    def test_public_pages_and_read_only_assets_remain_available_without_token(self):
         with TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"WEBUI_ADMIN_TOKEN": ""}, clear=False):
             app = self.make_app(Path(temp_dir) / "state.json")
             with TestClient(app) as client:
                 self.assertEqual(client.get("/").status_code, 200)
                 self.assertEqual(client.get("/health").status_code, 200)
                 self.assertEqual(client.get("/security/status").status_code, 200)
+                self.assertEqual(client.get("/control-assets/console.css").status_code, 200)
+                self.assertEqual(client.get("/control-assets/console.js").status_code, 200)
+                self.assertEqual(client.get("/control-assets/icons.svg").status_code, 200)
+
+    def test_asset_prefix_does_not_make_neighboring_admin_paths_public(self):
+        with TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"WEBUI_ADMIN_TOKEN": ""}, clear=False):
+            app = self.make_app(Path(temp_dir) / "state.json")
+            with TestClient(app) as client:
+                denied = client.get("/control-assets-admin")
+
+        self.assertEqual(denied.status_code, 403)
 
     def test_non_loopback_control_access_is_rejected_without_token(self):
         with TemporaryDirectory() as temp_dir, patch.dict(os.environ, {"WEBUI_ADMIN_TOKEN": ""}, clear=False):
