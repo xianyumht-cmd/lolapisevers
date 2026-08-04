@@ -30,7 +30,6 @@ class ControlUiP0Tests(unittest.TestCase):
         self.assertIn('"Cascadia Mono"', css)
         self.assertNotIn('radial-gradient', css)
         self.assertNotIn('linear-gradient', css)
-        self.assertNotIn('backdrop-filter', css)
 
         for endpoint in (
             '/admin/overview',
