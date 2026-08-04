@@ -30,9 +30,11 @@
 
 ### 实机部署
 
-- 提交 `19edfc9c189f6b269793ed750e42548268fcc115` 已在 Windows 生产机安全部署成功。
-- 304 项候选测试通过；`livez`、`readyz`、build-info、合集和 ARAM 交付链路通过。
-- 部署前完整备份已保留，验证报告状态为 `pass`。
+- 提交 `19edfc9c189f6b269793ed750e42548268fcc115` 已在 Windows 生产机安全部署成功，完成 LOL2099 与 4PNG 备用 Provider 基线。
+- 提交 `28e68e75ee14674bba10606587937473d37baa1e` 已在 Windows 生产机安全部署成功，完成 6178 专业控制台、解析中心入口和 4PNG Token 专用配置入口。
+- 最新部署在停服前完成 308 项候选测试；Windows 服务、`livez`、`readyz`、build-info、Git HEAD、合集和 ARAM 正式交付链路全部通过。
+- 最新验证报告状态为 `pass`，生产备份保存在 `D:\project2\lolapisevers.deploy-backups\20260805-012835-full-bug-repair-28e68e75ee14`。
+- `observability=status=degraded` 表示某个可选上游处于降级状态，不影响本次控制台发布成功。
 
 ## 2026-08-04
 
