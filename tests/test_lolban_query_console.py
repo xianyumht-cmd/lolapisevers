@@ -7,6 +7,8 @@ from urllib.parse import parse_qsl, urlsplit
 
 from fastapi import HTTPException
 
+from lanzou_update_push_api_server import management
+from lanzou_update_push_api_server.control_extensions import _register_sensitive_lolban_fields
 from lanzou_update_push_api_server.lolban_console import (
     _merge_masked,
     _merge_masked_url,
@@ -87,6 +89,12 @@ class LolbanQueryConsoleTests(unittest.TestCase):
         merged = _merge_provider_list(submitted, previous)
         self.assertEqual(merged[0]["id"], "new-id")
         self.assertEqual(merged[0]["request"]["headers"]["Authorization"], "Bearer old")
+
+    def test_legacy_url_is_secret_in_generic_config_ui(self):
+        _register_sensitive_lolban_fields()
+        spec = management._FIELD_BY_KEY["LOL_BAN_UPSTREAM_URL"]
+        self.assertEqual(spec["type"], "secret")
+        self.assertIn("封号查询配置页", spec["label"])
 
     def test_reload_environment_is_strictly_allowlisted(self):
         with patch.dict(os.environ, {}, clear=False):
