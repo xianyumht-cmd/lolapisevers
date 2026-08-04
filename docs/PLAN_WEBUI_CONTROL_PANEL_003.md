@@ -4,7 +4,7 @@
 - 分支：`feat/webui-control-panel-003-20260805`
 - 功能基线：`d1500c17c08dad287c76b9e1763037860eccc567`
 - 依赖：PR #39 完成生产实机验收
-- 当前阶段：规划完成，准备执行 P0
+- 当前阶段：P0 已在 Draft PR #41 实现，等待 V3 候选包与 Windows 实机视觉验收
 
 ## 1. 目标
 
@@ -74,49 +74,55 @@ font-family:
 
 ## 4. 技术结构
 
-建议新增统一前端目录：
+当前已建立：
 
 ```text
 lanzou_update_push_api_server/control_ui/
+  __init__.py
+  components.py
+  pages.py
   assets/
     console.css
     console.js
     icons.svg
-  components/
-    layout.py
-    navigation.py
-    status.py
-    forms.py
-    tables.py
-    dialogs.py
-  pages/
-    overview.py
-    lolban.py
-    parser_center.py
-    secrets.py
 ```
+
+当前结构职责：
+
+- `components.py`：Icon、导航、Sidebar、Topbar、管理令牌 Dialog、Console Shell；
+- `pages.py`：总览页业务内容；
+- `console.css`：共享设计令牌和组件样式；
+- `console.js`：统一 API 请求、管理令牌、错误分类、Loading 和 Toast；
+- `icons.svg`：离线本地图标集。
 
 原则：
 
 - 页面由服务端模板/组件组合生成；
 - CSS 与 JavaScript 使用静态资源路由集中提供；
 - 不在每个页面复制整套 CSS；
-- 不在一个 Python 字符串里继续堆积整页 HTML、CSS 和 JavaScript；
+- 不在每个页面重复侧栏、顶栏、令牌 Dialog 和 Toast；
 - 后端 API 调用统一封装，管理令牌、错误处理和 Toast 统一实现。
 
 ## 5. 分阶段执行
 
 ## P0：设计系统与总览骨架
 
-### 实现
+### 当前状态
+
+已完成分支实现，包含：
 
 - 新控制台布局；
 - 设计令牌；
 - 导航、顶栏、面包屑；
-- Button、Input、Select、Badge、Alert、Card、Table、Empty、Skeleton、Toast、Dialog、Drawer；
+- Button、Input、Badge、Card、Table、Empty、Skeleton、Toast、Dialog；
 - 新总览页；
 - 旧版入口；
-- 5001/6178 状态、Provider 状态、降级项、最近修改、最近错误和快捷操作。
+- 5001/6178 状态、Provider 状态、降级项、最近修改、最近错误和快捷操作；
+- 管理令牌会话存储与 401/403 自动处理；
+- 共享 Shell 和组件拆分；
+- 静态资源鉴权边界修复。
+
+Drawer 将在 P1 Provider 编辑场景中完成实际组件落地，避免只增加没有真实使用场景的空实现。
 
 ### 验收
 
@@ -124,7 +130,9 @@ lanzou_update_push_api_server/control_ui/
 - 桌面端和窄窗口均可使用；
 - 导航和顶部栏视觉一致；
 - 所有状态数据来自现有真实 API；
-- 旧版入口仍可回退。
+- 旧版入口仍可回退；
+- 管理令牌开启后根页与静态资源正常加载；
+- 管理 API 仍保持鉴权保护。
 
 ## P1：封号查询页
 
@@ -192,22 +200,21 @@ lanzou_update_push_api_server/control_ui/
 - V3 不可变离线候选包；
 - Windows 生产机实机验收。
 
+P0 当前已覆盖页面结构、组件转义、活动菜单、真实路由、静态资源、管理令牌边界、新旧回退路径和 WebUI JavaScript 语法检查。
+
 ## 7. 发布策略
 
 1. PR #39 先完成当前运行时修复的实机验收。
-2. 本分支从 `d1500c17...` 建立，暂不把视觉重构塞回 PR #39。
-3. P0 完成后创建独立 Draft PR。
+2. 本分支从 `d1500c17...` 建立，不把视觉重构塞回 PR #39。
+3. P0 使用独立 Draft PR #41。
 4. 每个阶段提供独立候选包和回滚点。
 5. 新页面未全部验收前，保留旧版入口。
 6. 全部页面迁移完成并稳定后，再删除旧 HTML 注入实现。
 
 ## 8. 下一步
 
-开始 P0：
-
-1. 审查 6178 当前所有页面、路由和管理 API；
-2. 建立 `control_ui` 共享目录；
-3. 实现设计令牌和页面外壳；
-4. 实现新总览页；
-5. 保留 `/legacy-ui` 回退；
-6. 完成测试后生成首个 P0 候选包。
+1. 完成最新 P0 组件拆分提交的 Linux、Windows、Parser Center 和脚本检查；
+2. 更新 PR #41 与 Issue #40 的最终 P0 记录；
+3. 生成锁定提交的 V3 不可变离线预览包；
+4. 在 Windows 实机打开 6178，检查布局、字体、导航、令牌 Dialog、状态卡和窄窗口；
+5. P0 实机验收通过后进入 P1：封号查询表格与编辑 Drawer。
