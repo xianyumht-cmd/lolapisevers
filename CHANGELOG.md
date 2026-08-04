@@ -4,6 +4,17 @@
 
 ## 2026-08-05
 
+### WEBUI-CONTROL-PANEL-003 P0 实机验收修复
+
+- 提交 `5a1f6420867e289a9dc36b6ef62fa116b8b47880` 已在 Windows 生产机安全部署成功，324 项候选测试、Windows 服务、`livez`、`readyz`、build-info、Git HEAD、合集和 ARAM 正式链路全部通过。
+- 新 6178 根控制台完成实机视觉验收：固定侧栏、顶栏、面包屑、微软雅黑字体、状态卡、Provider 表格、快捷入口和本地 SVG 图标均正常加载。
+- 修复把“蓝奏监控任务降级”误判为“6178 控制台服务异常”的状态语义错误。
+- 总览状态改为三档：核心服务与业务均正常为绿色；核心服务正常但存在业务告警为黄色；5001 或 6178 实际不可用才显示红色。
+- 修复 `LOL_BAN_4PNG_TOKEN` 已写入 `app_env.local.ps1`、但 5001 重启后可能没有继承该环境变量的问题。
+- 新增 Python 启动环境兜底：只解析本地 PowerShell 环境文件中的安全字面量，不执行 PowerShell、不覆盖已有环境变量、不回显 Secret。
+- 删除测试生成的 `config/interface-parser-center.json` 和 `data/contact_risk.db`，并加入 `.gitignore` 防线，禁止运行态数据进入源码提交和部署包。
+- 当前生产仍运行 `5a1f6420867e289a9dc36b6ef62fa116b8b47880`；上述验收修复需部署新的 V3 候选包后生效。
+
 ### 6178 运行时热修复
 
 - 修复 4PNG Token 只保存到 6178、未同步加载到 5001，导致所有封号 Provider 最终统一返回 503 的问题。
@@ -13,7 +24,6 @@
 - 新增 `/parser-center/secrets` 与 `/parser-center/advanced` 独立页面路径，左侧菜单不再依赖查询参数模拟跳转。
 - Provider 直连与 5001 正式链路拆分为独立测试按钮，并增加 Secret 未加载、配置错误、超时、网络错误、业务拒绝和响应无效等安全诊断分类。
 - CI 新增最终渲染页面检查：根控制台、解析中心、Secret 页面和封号页的每段 JavaScript 均执行 `node --check`；页面脚本错误将阻断部署包。
-- 当前生产仍运行 `28e68e75ee14674bba10606587937473d37baa1e`，上述热修复需部署新的 V3 候选包后生效。
 
 ### 6178 专业控制台导航与封号配置完善
 
@@ -28,7 +38,7 @@
   - 主接口配置、日志、诊断、安全与回滚
 - `/parser-center` 继续使用真实管理 API，不再作为孤立工程页：支持 Provider 可视化编辑、测试解析、Secret 保存、配置备份和回滚。
 - `/query-console/lolban` 新增 4PNG Token 专用安全输入：真实 Token 仅写入本机 Secret，Provider 配置仍保留 `$secret:LOL_BAN_4PNG_TOKEN`。
-- 4PNG Token 保存后，本页直连测试立即可用；5001 正式链路需重启 `LOLDataSystem` 后加载。
+- 4PNG Token 保存后，本页直连测试立即可用；5001 正式链路通过安全热加载或服务启动环境兜底读取。
 - 控制台导航为服务端统一注入，不改变现有配置格式、认证策略、备份策略和查询协议。
 
 ### 封号备用 Provider
@@ -43,9 +53,9 @@
 
 - 提交 `19edfc9c189f6b269793ed750e42548268fcc115` 已在 Windows 生产机安全部署成功，完成 LOL2099 与 4PNG 备用 Provider 基线。
 - 提交 `28e68e75ee14674bba10606587937473d37baa1e` 已在 Windows 生产机安全部署成功，完成 6178 专业控制台、解析中心入口和 4PNG Token 专用配置入口。
-- 最新部署在停服前完成 308 项候选测试；Windows 服务、`livez`、`readyz`、build-info、Git HEAD、合集和 ARAM 正式交付链路全部通过。
-- 最新验证报告状态为 `pass`，生产备份保存在 `D:\project2\lolapisevers.deploy-backups\20260805-012835-full-bug-repair-28e68e75ee14`。
-- `observability=status=degraded` 表示某个可选上游处于降级状态，不影响本次控制台发布成功。
+- 提交 `5a1f6420867e289a9dc36b6ef62fa116b8b47880` 已在 Windows 生产机安全部署成功，完成独立新总览、统一设计系统、管理令牌 Dialog、Skeleton、Toast 和共享控制台组件。
+- 最新生产验证报告状态为 `pass`，备份保存在仓库外部部署备份目录。
+- `observability=status=degraded` 表示可选上游或业务任务存在降级，不等同于 5001 或 6178 核心服务故障。
 
 ## 2026-08-04
 

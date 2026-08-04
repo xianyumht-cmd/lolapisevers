@@ -140,13 +140,21 @@
     return healthy;
   }
 
-  function renderControlService(overview, serviceStatus) {
-    const health = overview?.lanzou?.health || {};
-    const serviceRunning = serviceStatus?.running === true || String(serviceStatus?.status || '').toLowerCase() === 'running';
-    const healthy = isHealthy(health) || serviceRunning;
+  function windowsServiceRunning(serviceStatus) {
+    const stateValue = String(serviceStatus?.state || serviceStatus?.status || '').toLowerCase();
+    return serviceStatus?.running === true || stateValue === 'running';
+  }
+
+  function renderControlService(serviceStatus, buildInfo, buildFailure = null) {
+    const serviceRunning = windowsServiceRunning(serviceStatus);
+    const consoleReachable = !buildFailure && Boolean(buildInfo && typeof buildInfo === 'object');
+    const healthy = consoleReachable;
     setText('controlServiceState', healthy ? '运行正常' : '需要关注');
-    setText('controlServiceDetail', healthy ? '6178 控制台可用' : healthMessage(health));
-    setText('controlServiceMessage', serviceRunning ? 'Windows 服务正在运行' : healthMessage(health));
+    setText('controlServiceDetail', healthy ? '6178 页面与状态接口可用' : '6178 构建信息读取失败');
+    setText(
+      'controlServiceMessage',
+      serviceRunning ? 'Windows 托管服务正在运行' : (healthy ? '控制台响应正常，服务状态未确认' : '控制台状态读取失败')
+    );
     setBadge('controlServiceBadge', healthy ? '正常' : '异常', healthy ? 'success' : 'danger');
     return healthy;
   }
@@ -208,7 +216,14 @@
     const mainHealth = overview?.mainApi?.health || {};
     const lanzouHealth = overview?.lanzou?.health || {};
     if (!isHealthy(mainHealth)) items.push({ title: '5001 主接口健康异常', detail: healthMessage(mainHealth), kind: 'danger' });
-    if (!isHealthy(lanzouHealth)) items.push({ title: '6178 监控状态异常', detail: healthMessage(lanzouHealth), kind: 'danger' });
+    if (lanzouHealth?.running === false) {
+      items.push({ title: '蓝奏监控后台循环未运行', detail: '6178 页面可访问，但后台扫描循环没有运行', kind: 'danger' });
+    } else if (lanzouHealth?.degraded === true || String(lanzouHealth?.status || '').toLowerCase() === 'degraded') {
+      const reasons = Array.isArray(lanzouHealth?.degraded_reasons)
+        ? lanzouHealth.degraded_reasons.join('、')
+        : healthMessage(lanzouHealth);
+      items.push({ title: '蓝奏监控任务存在降级', detail: reasons || '部分监控项需要处理', kind: 'warning' });
+    }
     if (lolban && lolban.runtime_matches_disk === false) {
       items.push({ title: '封号 Provider 配置未同步', detail: '磁盘配置与 5001 当前运行态不一致', kind: 'warning' });
     }
@@ -216,9 +231,9 @@
     if (secret?.disk_configured && !secret?.runtime_configured) {
       items.push({ title: '4PNG Token 尚未加载到 5001', detail: 'Token 已保存，但运行态未加载', kind: 'warning' });
     }
-    const serviceText = String(serviceStatus?.status || '').toLowerCase();
-    if (serviceStatus?.running === false || (serviceText && serviceText !== 'running')) {
-      items.push({ title: 'Windows 服务状态需要关注', detail: text(serviceStatus?.message || serviceStatus?.status), kind: 'warning' });
+    const serviceState = String(serviceStatus?.state || serviceStatus?.status || '').toLowerCase();
+    if (serviceStatus?.supported !== false && serviceState && serviceState !== 'running') {
+      items.push({ title: 'Windows 服务状态需要关注', detail: text(serviceStatus?.message || serviceStatus?.state || serviceStatus?.status), kind: 'warning' });
     }
 
     const authFailures = failures.filter((item) => item.error?.status === 401 || item.error?.status === 403);
@@ -308,10 +323,13 @@
   }
 
   function renderGlobalStatus(mainHealthy, controlHealthy, degradedCount) {
-    const good = mainHealthy && controlHealthy && degradedCount === 0;
+    const servicesHealthy = mainHealthy && controlHealthy;
+    const good = servicesHealthy && degradedCount === 0;
     const dot = $('globalStatusDot');
-    dot.className = `status-dot ${good ? 'status-dot-success' : 'status-dot-danger'}`;
-    $('globalStatusText').textContent = good ? '生产状态正常' : '存在需要关注的状态';
+    dot.className = `status-dot ${good ? 'status-dot-success' : (servicesHealthy ? '' : 'status-dot-danger')}`.trim();
+    $('globalStatusText').textContent = good
+      ? '生产状态正常'
+      : (servicesHealthy ? '服务正常，存在业务告警' : '存在服务异常');
   }
 
   function endpointFailure(results, index) {
@@ -378,7 +396,7 @@
 
     try {
       const mainHealthy = renderMainService(overview || {});
-      const controlHealthy = renderControlService(overview || {}, serviceStatus || {});
+      const controlHealthy = renderControlService(serviceStatus || {}, buildInfo || {}, endpointFailure(results, 5));
       renderBuild(buildInfo || {});
       renderProviders(lolban || {}, endpointFailure(results, 1));
       const degraded = collectDegraded(overview || {}, lolban || {}, serviceStatus || {}, failures);

@@ -1,5 +1,14 @@
 import logging
 
+from core.local_env import load_local_powershell_env
+
+
+# NSSM normally starts the service through ops/run_service.ps1, which dot-sources
+# app_env.local.ps1. Load missing literal assignments again inside Python so a
+# trailing or unreachable PowerShell line cannot leave provider Secrets absent.
+load_local_powershell_env()
+
+
 from fastapi import FastAPI
 import uvicorn
 
