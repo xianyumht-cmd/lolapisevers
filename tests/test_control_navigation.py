@@ -7,21 +7,29 @@ from lanzou_update_push_api_server.control_navigation import (
     apply_control_navigation,
     select_parser_center_section,
 )
+from lanzou_update_push_api_server.control_ui import render_overview_page
 from lanzou_update_push_api_server.lolban_console import render_lolban_console_page
 from lanzou_update_push_api_server.parser_center_ui_guard import render_parser_center_page
 from lanzou_update_push_api_server.server import _control_page
 
 
 class ControlNavigationTests(unittest.TestCase):
-    def test_root_dashboard_has_professional_sidebar_and_query_entries(self):
-        page = _decorate_control_page("/", _control_page())
-        self.assertIn('class="control-sidebar"', page)
+    def test_root_dashboard_uses_new_standalone_console_shell(self):
+        page = render_overview_page()
+        self.assertIn('data-console-ui="p0"', page)
+        self.assertIn('class="sidebar"', page)
+        self.assertIn('class="topbar"', page)
         self.assertIn('接口与解析中心', page)
         self.assertIn('/parser-center/secrets', page)
         self.assertIn('/query-console/lolban', page)
         self.assertIn('/?tab=mainconfig', page)
         self.assertIn('/?tab=logs', page)
-        self.assertIn('control-original-tabs', page)
+        self.assertIn('/legacy-ui', page)
+        self.assertNotIn('control-navigation-style', page)
+
+    def test_root_is_not_wrapped_by_legacy_navigation_injector(self):
+        old_page = _control_page()
+        self.assertEqual(_decorate_control_page('/', old_page), old_page)
 
     def test_parser_center_is_wrapped_without_losing_real_actions(self):
         raw = render_parser_center_page()
@@ -41,7 +49,6 @@ class ControlNavigationTests(unittest.TestCase):
         self.assertIn('/admin/query-console/lolban/4png-token', page)
         self.assertIn('安全保存 Token', page)
         self.assertIn('class="control-sidebar"', page)
-
 
     def test_parser_secret_section_is_server_selected(self):
         raw = render_parser_center_page()
