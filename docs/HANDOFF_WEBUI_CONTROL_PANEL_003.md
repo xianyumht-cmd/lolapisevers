@@ -4,7 +4,7 @@
 - Draft PR：#41
 - 分支：`feat/webui-control-panel-003-20260805`
 - 功能基线：`d1500c17c08dad287c76b9e1763037860eccc567`
-- 当前阶段：P0 设计系统与控制台总览实现中
+- 当前阶段：P0 分支实现与完整 CI 已完成，等待 V3 候选包和 Windows 实机视觉验收
 - 生产状态：本分支尚未部署；禁止仅根据 GitHub 分支状态宣称生产已更新
 
 ## 1. 项目目标
@@ -109,7 +109,7 @@ lanzou_update_push_api_server/control_ui/
 
 后续 P1、P2 页面必须复用这些组件，不再复制整套侧栏、顶栏和访问控制 Dialog。
 
-## 3. 测试覆盖
+## 3. 测试覆盖与结果
 
 当前已增加：
 
@@ -125,6 +125,15 @@ lanzou_update_push_api_server/control_ui/
 - 原封号页和解析中心最终脚本语法检查继续保留；
 - Linux、Windows 全量测试；
 - PowerShell 5.1 解析；
+- 依赖安全审计。
+
+P0 组件拆分后的候选代码已经通过：
+
+- Linux 全量测试；
+- Windows 全量测试；
+- Parser Center 专项及全套测试；
+- 新总览、封号页、解析中心 JavaScript 语法检查；
+- 全部 PowerShell 5.1 解析；
 - 依赖安全审计。
 
 ## 4. 近期更新日志
@@ -152,15 +161,15 @@ lanzou_update_push_api_server/control_ui/
 - 新增 `components.py`；
 - 拆出 Sidebar、Topbar、导航、图标、Dialog 和 Console Shell；
 - 总览页改为组合共享 Shell；
-- 增加组件转义和结构测试。
+- 增加组件转义和结构测试；
+- 完成 Linux、Windows、Parser Center、脚本和依赖审计验证。
 
 ## 5. 未完成与下一步
 
-1. 等待最新组件拆分提交完成 Linux、Windows 和 Parser Center CI；
-2. 更新 PR #41 描述与 Issue #40 进度；
-3. 生成 P0 V3 不可变离线预览候选包；
-4. 在 Windows 实机打开 6178，完成视觉和交互验收；
-5. P0 通过后进入 P1：封号 Provider 表格、编辑 Drawer、直连测试和正式链路测试重构。
+1. 更新 PR #41 描述与 Issue #40 进度；
+2. 生成 P0 V3 不可变离线预览候选包；
+3. 在 Windows 实机打开 6178，完成视觉和交互验收；
+4. P0 通过后进入 P1：封号 Provider 表格、编辑 Drawer、直连测试和正式链路测试重构。
 
 ## 6. 发布与回滚规则
 
