@@ -5,12 +5,14 @@ from typing import Any
 
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import HTMLResponse, Response
+from fastapi.staticfiles import StaticFiles
 
 from services.image_asset_store import get_image_asset_sync_manager
 
 from . import management, parser_center_admin
 from .config import sanitized_config
 from .control_navigation import apply_control_navigation, select_parser_center_section
+from .control_ui import ASSET_DIRECTORY, render_overview_page
 from .image_cache_ui import render_image_cache_page
 from .lolban_console import install_lolban_console_routes
 from .lolban_presets import ensure_lolban_provider_presets
@@ -27,9 +29,8 @@ from .security import security_status
 from .state_recovery import recover_state_file
 
 
+_NEW_CONTROL_PATHS = {"/", "/ui"}
 _CONTROL_PAGE_ACTIVE = {
-    "/": "overview",
-    "/ui": "overview",
     "/parser-center": "parser-center",
     "/parser-center/secrets": "parser-secrets",
     "/parser-center/advanced": "parser-center",
@@ -52,6 +53,14 @@ async def _read_response_body(response) -> bytes:
     async for chunk in response.body_iterator:
         chunks.append(chunk.encode("utf-8") if isinstance(chunk, str) else bytes(chunk))
     return b"".join(chunks)
+
+
+def _response_headers(response) -> dict[str, str]:
+    return {
+        key: value
+        for key, value in response.headers.items()
+        if key.lower() not in {"content-length", "content-encoding"}
+    }
 
 
 def _register_sensitive_lolban_fields() -> None:
@@ -81,6 +90,13 @@ def install_control_extensions(app: FastAPI, service) -> None:
             "changed": False,
             "error_class": type(exc).__name__,
         }
+
+    app.mount(
+        "/control-assets",
+        StaticFiles(directory=str(ASSET_DIRECTORY), check_dir=True),
+        name="control-assets",
+    )
+
     parser_center_admin.render_parser_center_page = render_guarded_parser_center_page
     parser_center_admin.install_parser_center_routes(app)
 
@@ -91,32 +107,42 @@ def install_control_extensions(app: FastAPI, service) -> None:
     @app.get("/parser-center/advanced", response_class=HTMLResponse, include_in_schema=False)
     async def parser_center_advanced_page() -> str:
         return select_parser_center_section(render_guarded_parser_center_page(), "advanced")
+
     install_parser_center_retry_routes(app)
     install_lolban_console_routes(app)
 
     @app.middleware("http")
     async def professional_control_panel(request: Request, call_next):
         response = await call_next(request)
-        active = _CONTROL_PAGE_ACTIVE.get(request.url.path)
         content_type = str(response.headers.get("content-type") or "").lower()
-        if active is None or "text/html" not in content_type:
+        if "text/html" not in content_type:
             return response
+
+        if request.url.path in _NEW_CONTROL_PATHS:
+            return HTMLResponse(
+                render_overview_page(),
+                status_code=response.status_code,
+                headers=_response_headers(response),
+            )
+
+        active = _CONTROL_PAGE_ACTIVE.get(request.url.path)
+        if active is None:
+            return response
+
         raw = await _read_response_body(response)
         try:
             page = raw.decode("utf-8")
         except UnicodeDecodeError:
-            headers = {key: value for key, value in response.headers.items() if key.lower() != "content-length"}
-            return Response(raw, status_code=response.status_code, headers=headers)
+            return Response(
+                raw,
+                status_code=response.status_code,
+                headers=_response_headers(response),
+            )
         decorated = _decorate_control_page(request.url.path, page)
-        headers = {
-            key: value
-            for key, value in response.headers.items()
-            if key.lower() not in {"content-length", "content-encoding"}
-        }
         return HTMLResponse(
             decorated,
             status_code=response.status_code,
-            headers=headers,
+            headers=_response_headers(response),
         )
 
     @app.get("/security/status")
