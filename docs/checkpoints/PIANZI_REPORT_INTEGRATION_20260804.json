@@ -1,0 +1,61 @@
+{
+  "task_id": "PIANZI-REPORT-001",
+  "status": "completed_production_verified",
+  "completed_at": "2026-08-04T04:28:00+08:00",
+  "repository": "xianyumht-cmd/lolapisevers",
+  "implementation_pr": 36,
+  "production_commit": "a10e19db060780b829e9d738017a0fdce9dc25c8",
+  "previous_production_commit": "e2f433f75937b188d95b7a2be6d426ca9e60f95c",
+  "production_backup": "D:\\project2\\lolapisevers.deploy-backups\\20260804-041937-pianzi-report-integration",
+  "deployment_started_at": "2026-08-04T04:19:37+08:00",
+  "captured_protocol": {
+    "method": "POST",
+    "url": "https://pianzi.lol/api/anonymous/report",
+    "content_type": "multipart/form-data",
+    "required_fields": [
+      "scammer_qq",
+      "report_content"
+    ],
+    "identity_mode": "anonymous",
+    "success_condition": "success=true",
+    "success_outcome": "pending"
+  },
+  "implementation": {
+    "runtime_module": "services/parser_center_multipart.py",
+    "startup_install": "app.py",
+    "provider_id": "pianzi-lol-anonymous-report",
+    "production_provider_enabled": true,
+    "tests": "tests/test_parser_center_multipart.py"
+  },
+  "deployment_verification": {
+    "targeted_tests_passed": 12,
+    "candidate_compile_passed": true,
+    "provider_count": 1,
+    "provider_enabled": true,
+    "multipart_boundary_generated": true,
+    "deployment_sent_external_report": false,
+    "runtime_source_manifest_file_count": 79,
+    "runtime_source_manifest_sha256": "24daf278cd6db64d292d844c58f0369f865d280dcb3af607e487ec1190da1890",
+    "service_health_passed": true
+  },
+  "acceptance": {
+    "qq_report_command": "passed",
+    "upstream_pending_review_visible": true,
+    "existing_scammer_query": "passed",
+    "confirmed_by_user": true
+  },
+  "preserved_guarantees": [
+    "local_first_persistence",
+    "request_id_idempotency",
+    "persistent_retry_queue",
+    "provider_identity_hidden_from_public_output",
+    "existing_query_provider_compatibility",
+    "independent_rollback"
+  ],
+  "next_action": "none",
+  "reopen_conditions": [
+    "pianzi.lol protocol changes",
+    "upstream report delivery failures",
+    "review response schema changes"
+  ]
+}

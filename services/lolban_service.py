@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import copy
 import json
@@ -11,9 +13,14 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 from urllib.parse import urlparse
 
-import requests
-
 from cache import TTLCache
+from services.api_parser_center import (
+    enabled_providers,
+    execute_request,
+    parse_response,
+    prepare_request,
+    to_lolban_payload,
+)
 from services.persistent_snapshot_store import PersistentSnapshotStore
 
 
@@ -58,10 +65,27 @@ def valid_qq(value: str) -> bool:
 
 
 def message_is_unsafe(message: str) -> bool:
-    return any(word in message for word in UNSAFE_MESSAGE_WORDS)
+    return any(word in str(message or "") for word in UNSAFE_MESSAGE_WORDS)
+
+
+def _first_text(data: Mapping[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = data.get(key)
+        if value not in (None, ""):
+            return str(value).strip()
+    return ""
 
 
 def clean_payload(qq: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize a third-party ban response without exposing its identity.
+
+    The normalized payload intentionally preserves business data such as
+    ``ban_reason`` while replacing provider branding with a generic internal
+    value. Public formatters never render ``by`` or provider metadata.
+    """
+
+    if not isinstance(payload, dict):
+        raise RuntimeError("upstream payload is not object")
     msg = str(payload.get("msg") or payload.get("message") or "").strip()
     if message_is_unsafe(msg):
         raise RuntimeError("upstream unsafe message blocked")
@@ -75,29 +99,45 @@ def clean_payload(qq: str, payload: Dict[str, Any]) -> Dict[str, Any]:
             status = "封禁"
     if status not in {"正常", "封禁"}:
         raise RuntimeError("upstream status unknown")
-    upstream_qq = str(data.get("qq") or "").strip()
+
+    upstream_qq = str(data.get("qq") or data.get("uin") or "").strip()
     if upstream_qq and upstream_qq != qq:
         raise RuntimeError("upstream qq mismatch")
 
+    ban_reason = _first_text(
+        data,
+        "ban_reason",
+        "banReason",
+        "reason",
+        "punish_reason",
+        "punishReason",
+    )
+    punish = data.get("punish") if isinstance(data.get("punish"), dict) else {}
+    if not ban_reason:
+        ban_reason = _first_text(punish, "reason", "description", "message")
+    if status == "封禁" and not ban_reason:
+        ban_reason = "第三方接口未提供封禁原因"
+
     safe_msg = "此账号状态正常" if status == "正常" else "此账号已被封禁"
-    return {
+    normalized: Dict[str, Any] = {
         "code": 200,
-        "by": str(payload.get("by") or "configured-provider"),
+        "by": "configured-provider",
         "msg": safe_msg,
         "data": {
             "qq": qq,
-            "ban_time": str(
-                data.get("ban_time") or data.get("banTime") or ""
-            ).strip(),
-            "end_time": str(
-                data.get("end_time")
-                or data.get("endTime")
-                or data.get("left_time")
-                or ("账号状态正常" if status == "正常" else "")
-            ).strip(),
+            "ban_time": _first_text(data, "ban_time", "banTime", "start_time", "startTime"),
+            "end_time": _first_text(data, "end_time", "endTime", "left_time", "leftTime")
+            or ("账号状态正常" if status == "正常" else ""),
+            "ban_reason": ban_reason,
             "status": status,
         },
     }
+    public_text = str(payload.get("public_text") or "").strip()
+    if public_text:
+        if message_is_unsafe(public_text):
+            raise RuntimeError("upstream unsafe public text blocked")
+        normalized["public_text"] = public_text
+    return normalized
 
 
 def apply_compat_payload(payload: Dict[str, Any], compat: str = "") -> Dict[str, Any]:
@@ -117,41 +157,44 @@ def apply_compat_payload(payload: Dict[str, Any], compat: str = "") -> Dict[str,
         if end_time:
             data.setdefault("left_time", f"剩余时间：{end_time}")
         data.setdefault("banmsg", "账号封禁中")
+        data.setdefault("ban_reason", "第三方接口未提供封禁原因")
     elif status == "正常":
         data.setdefault("banmsg", "账号状态正常")
     return result
 
 
 def format_lolban_text(payload: Dict[str, Any]) -> str:
+    configured_text = str(payload.get("public_text") or "").strip()
+    if configured_text:
+        return configured_text
+
     data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
     status = str(data.get("status") or "未知")
-    lines = ["账号封禁查询结果", str(payload.get("msg") or "查询完成"), ""]
-    lines.append(f"QQ号码：{data.get('qq') or '-'}")
-    lines.append(f"账号状态：{status}")
-    if status == "正常":
-        lines.append(f"解封时间：{data.get('end_time') or '账号状态正常'}")
-    elif status == "封禁":
+    lines = ["账号封禁查询结果", "", f"QQ号码：{data.get('qq') or '-'}", f"账号状态：{status}"]
+    if status == "封禁":
+        lines.append(
+            f"封禁原因：{data.get('ban_reason') or '第三方接口未提供封禁原因'}"
+        )
         if data.get("ban_time"):
             lines.append(f"封禁时间：{data.get('ban_time')}")
         if data.get("end_time"):
             lines.append(f"剩余时间：{data.get('end_time')}")
     if payload.get("source") == "stale":
-        lines.append("数据来源：最近一次成功结果（上游暂时不可用）")
+        lines.append("提示：上游暂时不可用，当前显示最近一次成功结果")
     return "\n".join(lines).strip()
 
 
 def _safe_provider_name(value: Any, fallback: str) -> str:
-    name = re.sub(
-        r"[^a-zA-Z0-9_.-]+",
-        "-",
-        str(value or "").strip(),
-    ).strip("-")
+    name = re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(value or "").strip()).strip("-")
     return name[:64] or fallback
 
 
 def _valid_http_url(value: str) -> bool:
     try:
-        parsed = urlparse(value.replace("{qq}", "10000"))
+        sample = str(value or "")
+        sample = sample.replace("{qq}", "10000").replace("$qq", "10000")
+        sample = re.sub(r"\$secret:[A-Za-z_][A-Za-z0-9_]*", "secret", sample)
+        parsed = urlparse(sample)
         return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
     except Exception:
         return False
@@ -165,10 +208,7 @@ def _safe_attempts(value: Any) -> List[Dict[str, Any]]:
         if not isinstance(item, dict):
             continue
         attempt = {
-            "provider": _safe_provider_name(
-                item.get("provider"),
-                f"provider-{index}",
-            ),
+            "provider": _safe_provider_name(item.get("provider"), f"provider-{index}"),
             "ok": bool(item.get("ok")),
             "elapsed_ms": max(0, int(item.get("elapsed_ms") or 0)),
         }
@@ -200,72 +240,97 @@ class LolBanProvider:
     method: str = "GET"
     qq_param: str = "qq"
     timeout_seconds: float = TIMEOUT
-    headers: Mapping[str, str] = field(default_factory=dict)
-    form: Mapping[str, str] = field(default_factory=dict)
+    headers: Mapping[str, Any] = field(default_factory=dict)
+    form: Mapping[str, Any] = field(default_factory=dict)
+    query_params: Mapping[str, Any] = field(default_factory=dict)
+    json_body: Any = None
+    parser: Mapping[str, Any] = field(default_factory=dict)
 
     def query(self, qq: str) -> Dict[str, Any]:
-        method = self.method.upper()
-        headers = {
-            **DEFAULT_HEADERS,
-            **{str(k): str(v) for k, v in self.headers.items()},
+        url = self.url.replace("{qq}", "$qq")
+        query = dict(self.query_params)
+        form = dict(self.form)
+        if "$qq" not in url:
+            if self.method.upper() == "GET" and self.qq_param not in query:
+                query[self.qq_param] = "$qq"
+            elif self.method.upper() != "GET" and self.qq_param not in form:
+                form[self.qq_param] = "$qq"
+        profile = {
+            "id": self.name,
+            "request": {
+                "method": self.method,
+                "url": url,
+                "headers": {**DEFAULT_HEADERS, **dict(self.headers)},
+                "query": query,
+                "form": form,
+                "json": self.json_body,
+                "timeout_seconds": self.timeout_seconds,
+            },
+            "parser": dict(self.parser),
         }
-        url = self.url.replace("{qq}", qq)
-        kwargs: Dict[str, Any] = {
-            "headers": headers,
-            "timeout": self.timeout_seconds,
-        }
-        if "{qq}" not in self.url:
-            if method == "GET":
-                kwargs["params"] = {self.qq_param: qq}
-            else:
-                kwargs["data"] = {**dict(self.form), self.qq_param: qq}
-        elif method != "GET":
-            kwargs["data"] = dict(self.form)
-        response = requests.request(method, url, **kwargs)
-        response.raise_for_status()
-        text = (
-            response.content.decode("utf-8", errors="replace")
-            .strip()
-            .lstrip("\ufeff")
-        )
-        payload = json.loads(text)
-        if not isinstance(payload, dict):
+        prepared = prepare_request(profile, {"qq": qq})
+        execution = execute_request(prepared)
+        if self.parser:
+            parsed = parse_response(profile, execution.payload, status_code=execution.status_code)
+            return to_lolban_payload(qq, parsed)
+        if not 200 <= execution.status_code < 300:
+            raise RuntimeError(f"upstream http status {execution.status_code}")
+        if not isinstance(execution.payload, dict):
             raise RuntimeError("upstream payload is not object")
-        return clean_payload(qq, payload)
+        return clean_payload(qq, execution.payload)
 
 
-def _provider_from_raw(
-    raw: Mapping[str, Any],
-    index: int,
-) -> Optional[LolBanProvider]:
-    url = str(raw.get("url") or "").strip()
+def _provider_from_raw(raw: Mapping[str, Any], index: int) -> Optional[LolBanProvider]:
+    if raw.get("enabled") is False:
+        return None
+    request_spec = raw.get("request") if isinstance(raw.get("request"), Mapping) else raw
+    url = str(request_spec.get("url") or raw.get("url") or "").strip()
     if not _valid_http_url(url):
         return None
-    method = str(raw.get("method") or "GET").strip().upper()
+    method = str(request_spec.get("method") or raw.get("method") or "GET").strip().upper()
     if method not in {"GET", "POST"}:
         return None
-    headers = raw.get("headers") if isinstance(raw.get("headers"), dict) else {}
-    form = raw.get("form") if isinstance(raw.get("form"), dict) else {}
+    headers = request_spec.get("headers") if isinstance(request_spec.get("headers"), Mapping) else {}
+    form = request_spec.get("form") if isinstance(request_spec.get("form"), Mapping) else {}
+    query = request_spec.get("query") if isinstance(request_spec.get("query"), Mapping) else {}
+    parser = raw.get("parser") if isinstance(raw.get("parser"), Mapping) else {}
+    json_body = request_spec.get("json") if "json" in request_spec else request_spec.get("json_body")
     try:
         timeout_seconds = max(
             1.0,
-            min(float(raw.get("timeout_seconds") or TIMEOUT), 60.0),
+            min(
+                float(
+                    request_spec.get("timeout_seconds")
+                    or raw.get("timeout_seconds")
+                    or TIMEOUT
+                ),
+                60.0,
+            ),
         )
     except (TypeError, ValueError):
         timeout_seconds = TIMEOUT
     return LolBanProvider(
-        name=_safe_provider_name(raw.get("name"), f"provider-{index}"),
+        name=_safe_provider_name(raw.get("id") or raw.get("name"), f"provider-{index}"),
         url=url,
         method=method,
         qq_param=str(raw.get("qq_param") or "qq").strip() or "qq",
         timeout_seconds=timeout_seconds,
-        headers={str(k): str(v) for k, v in headers.items()},
-        form={str(k): str(v) for k, v in form.items()},
+        headers={str(k): v for k, v in headers.items()},
+        form={str(k): v for k, v in form.items()},
+        query_params={str(k): v for k, v in query.items()},
+        json_body=json_body,
+        parser={str(k): v for k, v in parser.items()},
     )
 
 
 def load_providers() -> List[LolBanProvider]:
     providers: List[LolBanProvider] = []
+
+    for index, raw in enumerate(enabled_providers("lolban"), start=1):
+        provider = _provider_from_raw(raw, index)
+        if provider is not None:
+            providers.append(provider)
+
     raw_json = str(os.getenv("LOL_BAN_PROVIDERS_JSON") or "").strip()
     if raw_json:
         try:
@@ -274,9 +339,10 @@ def load_providers() -> List[LolBanProvider]:
             raise RuntimeError("LOL_BAN_PROVIDERS_JSON is invalid JSON") from exc
         if not isinstance(source, list):
             raise RuntimeError("LOL_BAN_PROVIDERS_JSON must be a JSON array")
+        offset = len(providers)
         for index, raw in enumerate(source, start=1):
             if isinstance(raw, dict):
-                provider = _provider_from_raw(raw, index)
+                provider = _provider_from_raw(raw, offset + index)
                 if provider is not None:
                     providers.append(provider)
 
@@ -290,9 +356,7 @@ def load_providers() -> List[LolBanProvider]:
                 qq_param="qq",
                 form={"action": "query_lol"},
                 headers={
-                    "content-type": (
-                        "application/x-www-form-urlencoded; charset=UTF-8"
-                    ),
+                    "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
                     "x-requested-with": "XMLHttpRequest",
                 },
             )
@@ -319,19 +383,14 @@ class LolBanService:
         max_stale_entries: int = MAX_STALE_ENTRIES,
         snapshot_store: Any = _DEFAULT_SNAPSHOT_STORE,
     ) -> None:
-        self.providers = list(
-            providers if providers is not None else load_providers()
-        )
+        self.providers = list(providers if providers is not None else load_providers())
         self.normal_cache_seconds = max(1, int(normal_cache_seconds))
         self.banned_cache_seconds = max(1, int(banned_cache_seconds))
         self.stale_cache_seconds = max(0, int(stale_cache_seconds))
         self.max_stale_entries = max(1, int(max_stale_entries))
         self._normal_cache = TTLCache(ttl_seconds=self.normal_cache_seconds)
         self._banned_cache = TTLCache(ttl_seconds=self.banned_cache_seconds)
-        self._last_known: OrderedDict[
-            str,
-            Tuple[Dict[str, Any], float],
-        ] = OrderedDict()
+        self._last_known: OrderedDict[str, Tuple[Dict[str, Any], float]] = OrderedDict()
         self._last_known_lock = threading.Lock()
         self._query_locks = [threading.Lock() for _ in range(64)]
         self._restored_from_snapshot: set[str] = set()
@@ -453,10 +512,7 @@ class LolBanService:
             self._restored_from_snapshot = set(restored.keys())
         self._snapshot_status = "restored" if restored else "empty"
 
-    def _fresh_result(
-        self,
-        qq: str,
-    ) -> Optional[Tuple[Dict[str, Any], str, int]]:
+    def _fresh_result(self, qq: str) -> Optional[Tuple[Dict[str, Any], str, int]]:
         key = f"lolban:{qq}"
         for cache in (self._normal_cache, self._banned_cache):
             cached, ttl = cache.get_with_remaining_ttl(key)
@@ -478,16 +534,9 @@ class LolBanService:
         attempts: List[Dict[str, Any]],
     ) -> Tuple[Dict[str, Any], str, int]:
         data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
-        ttl = (
-            self.banned_cache_seconds
-            if data.get("status") == "封禁"
-            else self.normal_cache_seconds
-        )
-        cache = (
-            self._banned_cache
-            if data.get("status") == "封禁"
-            else self._normal_cache
-        )
+        banned = data.get("status") == "封禁"
+        ttl = self.banned_cache_seconds if banned else self.normal_cache_seconds
+        cache = self._banned_cache if banned else self._normal_cache
         stored = _sanitize_stored_payload(qq, payload)
         stored["provider"] = _safe_provider_name(provider, "provider")
         stored["attempts"] = _safe_attempts(attempts)
@@ -509,9 +558,7 @@ class LolBanService:
         result["cache_expires_in"] = ttl
         result["stale_age_seconds"] = 0
         result["stale_origin"] = ""
-        result["fallback_reason"] = (
-            "provider_fallback" if len(attempts) > 1 else ""
-        )
+        result["fallback_reason"] = "provider_fallback" if len(attempts) > 1 else ""
         if self._snapshot_write_error_class:
             result["snapshot_write_error"] = self._snapshot_write_error_class
         return result, "live", ttl
@@ -557,9 +604,7 @@ class LolBanService:
                         {
                             "provider": provider.name,
                             "ok": True,
-                            "elapsed_ms": int(
-                                (time.monotonic() - started) * 1000
-                            ),
+                            "elapsed_ms": int((time.monotonic() - started) * 1000),
                         }
                     )
                     return self._cache_live_result(
@@ -574,9 +619,7 @@ class LolBanService:
                             "provider": provider.name,
                             "ok": False,
                             "error_class": type(exc).__name__,
-                            "elapsed_ms": int(
-                                (time.monotonic() - started) * 1000
-                            ),
+                            "elapsed_ms": int((time.monotonic() - started) * 1000),
                         }
                     )
 
@@ -590,16 +633,12 @@ class LolBanService:
             if stale is not None:
                 return stale
             summary = ",".join(
-                f"{attempt['provider']}:"
-                f"{attempt.get('error_class', 'failed')}"
+                f"{attempt['provider']}:{attempt.get('error_class', 'failed')}"
                 for attempt in attempts
             ) or "providers_not_configured"
             raise RuntimeError(f"lolban providers unavailable ({summary})")
 
-    async def get_result(
-        self,
-        qq: str,
-    ) -> Tuple[Dict[str, Any], str, int]:
+    async def get_result(self, qq: str) -> Tuple[Dict[str, Any], str, int]:
         cached = self._fresh_result(qq)
         if cached is not None:
             return cached
@@ -614,16 +653,12 @@ class LolBanService:
             "configured": bool(self.providers),
             "provider_count": len(self.providers),
             "providers": [provider.name for provider in self.providers],
-            "fresh_cache_entries": (
-                len(self._normal_cache) + len(self._banned_cache)
-            ),
+            "fresh_cache_entries": len(self._normal_cache) + len(self._banned_cache),
             "stale_cache_entries": stale_entries,
             "persistent_snapshot_enabled": self.snapshot_store is not None,
             "persistent_snapshot_status": self._snapshot_status,
             "persistent_snapshot_restored_entries": restored_entries,
-            "persistent_snapshot_write_error_class": (
-                self._snapshot_write_error_class
-            ),
+            "persistent_snapshot_write_error_class": self._snapshot_write_error_class,
             "last_success_at": self._last_success_at,
             "last_error_at": self._last_error_at,
             "last_error_class": self._last_error_class,
