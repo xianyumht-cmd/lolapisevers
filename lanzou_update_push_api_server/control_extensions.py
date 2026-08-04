@@ -12,6 +12,7 @@ from . import management, parser_center_admin
 from .config import sanitized_config
 from .image_cache_ui import render_image_cache_page
 from .lolban_console import install_lolban_console_routes
+from .lolban_presets import ensure_lolban_provider_presets
 from .maintenance import (
     list_config_backups,
     read_audit,
@@ -44,6 +45,14 @@ def _register_sensitive_lolban_fields() -> None:
 
 def install_control_extensions(app: FastAPI, service) -> None:
     _register_sensitive_lolban_fields()
+    try:
+        app.state.lolban_preset_migration = ensure_lolban_provider_presets()
+    except Exception as exc:
+        app.state.lolban_preset_migration = {
+            "ok": False,
+            "changed": False,
+            "error_class": type(exc).__name__,
+        }
     parser_center_admin.render_parser_center_page = render_guarded_parser_center_page
     parser_center_admin.install_parser_center_routes(app)
     install_parser_center_retry_routes(app)
