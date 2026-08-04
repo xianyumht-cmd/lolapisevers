@@ -54,7 +54,7 @@ required_markers = [
     "/admin/service/restart",
     "/security/status",
     "/query-console/lolban",
-    "data-query-console-lolban",
+    "dataset.queryConsoleLolban",
     "adminToken",
     "watcherRows",
     "targetRows",
