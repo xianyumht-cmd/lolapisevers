@@ -11,6 +11,7 @@ from lanzou_update_push_api_server.lolban_console import (
     _provider_identity,
     render_lolban_console_page,
 )
+from lanzou_update_push_api_server.ui_theme import apply_ios_glass_theme
 from routers.query_admin import _apply_reload_environment, _redact
 
 
@@ -80,6 +81,14 @@ class LolbanQueryConsoleTests(unittest.TestCase):
         self.assertIn("5001 正式链路", page)
         self.assertIn("/admin/query-console/lolban/save", page)
         self.assertIn("/admin/query-console/lolban/test", page)
+
+    def test_root_dashboard_theme_injects_lolban_entry(self):
+        page = apply_ios_glass_theme(
+            '<!doctype html><html><head></head><body><div class="actions"></div></body></html>'
+        )
+        self.assertIn("data-query-console-lolban", page)
+        self.assertIn("/query-console/lolban", page)
+        self.assertIn("封号查询配置", page)
 
 
 if __name__ == "__main__":
