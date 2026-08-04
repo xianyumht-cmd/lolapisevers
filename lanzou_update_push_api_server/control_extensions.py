@@ -3,13 +3,14 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from fastapi import FastAPI, Query
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Query, Request
+from fastapi.responses import HTMLResponse, Response
 
 from services.image_asset_store import get_image_asset_sync_manager
 
 from . import management, parser_center_admin
 from .config import sanitized_config
+from .control_navigation import apply_control_navigation
 from .image_cache_ui import render_image_cache_page
 from .lolban_console import install_lolban_console_routes
 from .lolban_presets import ensure_lolban_provider_presets
@@ -24,6 +25,31 @@ from .parser_center_retry_admin import install_parser_center_retry_routes
 from .parser_center_ui_guard import render_parser_center_page as render_guarded_parser_center_page
 from .security import security_status
 from .state_recovery import recover_state_file
+
+
+_CONTROL_PAGE_ACTIVE = {
+    "/": "overview",
+    "/ui": "overview",
+    "/parser-center": "parser-center",
+    "/query-console/lolban": "lolban",
+}
+
+
+def _decorate_control_page(path: str, page: str) -> str:
+    active = _CONTROL_PAGE_ACTIVE.get(path)
+    if active is None:
+        return page
+    return apply_control_navigation(page, active=active)
+
+
+async def _read_response_body(response) -> bytes:
+    body = getattr(response, "body", None)
+    if isinstance(body, (bytes, bytearray)):
+        return bytes(body)
+    chunks: list[bytes] = []
+    async for chunk in response.body_iterator:
+        chunks.append(chunk.encode("utf-8") if isinstance(chunk, str) else bytes(chunk))
+    return b"".join(chunks)
 
 
 def _register_sensitive_lolban_fields() -> None:
@@ -57,6 +83,31 @@ def install_control_extensions(app: FastAPI, service) -> None:
     parser_center_admin.install_parser_center_routes(app)
     install_parser_center_retry_routes(app)
     install_lolban_console_routes(app)
+
+    @app.middleware("http")
+    async def professional_control_panel(request: Request, call_next):
+        response = await call_next(request)
+        active = _CONTROL_PAGE_ACTIVE.get(request.url.path)
+        content_type = str(response.headers.get("content-type") or "").lower()
+        if active is None or "text/html" not in content_type:
+            return response
+        raw = await _read_response_body(response)
+        try:
+            page = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            headers = {key: value for key, value in response.headers.items() if key.lower() != "content-length"}
+            return Response(raw, status_code=response.status_code, headers=headers)
+        decorated = _decorate_control_page(request.url.path, page)
+        headers = {
+            key: value
+            for key, value in response.headers.items()
+            if key.lower() not in {"content-length", "content-encoding"}
+        }
+        return HTMLResponse(
+            decorated,
+            status_code=response.status_code,
+            headers=headers,
+        )
 
     @app.get("/security/status")
     async def get_security_status() -> dict[str, object]:
