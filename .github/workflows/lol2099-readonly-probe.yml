@@ -1,9 +1,9 @@
 name: LOL2099 read-only integration probe
 
 on:
-  push:
+  pull_request:
     branches:
-      - feat/query-console-lolban-20260804
+      - master
     paths:
       - .github/workflows/lol2099-readonly-probe.yml
       - tools/lol2099_readonly_probe.py
