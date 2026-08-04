@@ -11,6 +11,7 @@ fid/
 
 data/image-cache/
 data/upstream_snapshots/
+/data/*.db
 
 .so1_state.json
 .so1_token.txt
@@ -21,6 +22,7 @@ ops/app_env.ps1
 ops/app_env.local.ps1
 build-info.json
 
+/config/interface-parser-center.json
 lanzou_update_push_api_server/config.json
 lanzou_update_push_api_server/state.json
 lanzou_update_push_api_server/*.tmp
@@ -37,3 +39,5 @@ pip
 /artifact/
 /target/
 /ui_control.generated.js
+/ui_lolban_console.generated.js
+/ui_parser_center.generated.js
