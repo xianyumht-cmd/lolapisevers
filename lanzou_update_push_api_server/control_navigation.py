@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 
 _CONTROL_STYLE = r'''<style id="control-navigation-style">
 :root{--ctl-sidebar:#111827;--ctl-sidebar-soft:#1f2937;--ctl-sidebar-text:#e5e7eb;--ctl-sidebar-muted:#94a3b8;--ctl-accent:#2563eb;--ctl-border:rgba(148,163,184,.18)}
@@ -45,8 +47,8 @@ def _sidebar(active: str) -> str:
     <details open>
       <summary>查询服务</summary>
       {_nav_link('/query-console/lolban', '封号查询', '封号', active=active == 'lolban', note='Provider', marker='data-query-console-lolban="1"')}
-      {_nav_link('/parser-center?section=visual', '接口与解析中心', '解析', active=active == 'parser-center')}
-      {_nav_link('/parser-center?section=backups', 'Secret 与备份', '密钥')}
+      {_nav_link('/parser-center', '接口与解析中心', '解析', active=active == 'parser-center')}
+      {_nav_link('/parser-center/secrets', 'Secret 与备份', '密钥', active=active == 'parser-secrets')}
       {_nav_link('/?tab=debugger', '接口调试器', '调试')}
     </details>
     <details>
@@ -73,7 +75,7 @@ def _sidebar(active: str) -> str:
 <div class="control-mobile-bar"><button id="controlNavToggle" type="button">☰ 菜单</button><strong>LOLDataSystem 控制台</strong></div>'''
 
 
-_LOLBAN_SECRET_PANEL = r'''<section class="panel" id="fourPngSecretPanel"><div class="head"><div><h2>4PNG Token</h2><div class="hint">真实 Token 只写入本机 Secret，不进入 Provider JSON、URL、日志或浏览器回显。</div></div><span id="fourPngSecretState" class="bad">正在读取...</span></div><div class="grid two"><label><span>LOL_BAN_4PNG_TOKEN 新值</span><input id="fourPngToken" type="password" autocomplete="new-password" placeholder="输入 4PNG 提供的真实 Token"></label><div class="actions" style="justify-content:flex-start;align-self:end"><button class="primary" type="button" onclick="save4PngToken()">安全保存 Token</button><button type="button" onclick="restartLolDataSystem()">重启 LOLDataSystem</button></div></div><div class="hint" style="margin-top:8px">保存后本页 Provider 测试可立即使用；5001 正式查询需要重启服务后读取新 Token。</div></section>'''
+_LOLBAN_SECRET_PANEL = r'''<section class="panel" id="fourPngSecretPanel"><div class="head"><div><h2>4PNG Token</h2><div class="hint">真实 Token 只写入本机 Secret，不进入 Provider JSON、URL、日志或浏览器回显。</div></div><span id="fourPngSecretState" class="bad">正在读取...</span></div><div class="grid two"><label><span>LOL_BAN_4PNG_TOKEN 新值</span><input id="fourPngToken" type="password" autocomplete="new-password" placeholder="输入 4PNG 提供的真实 Token"></label><div class="actions" style="justify-content:flex-start;align-self:end"><button class="primary" type="button" onclick="save4PngToken()">安全保存 Token</button><button type="button" onclick="restartLolDataSystem()">重启 LOLDataSystem</button></div></div><div class="hint" style="margin-top:8px">保存后会立即安全热加载到 5001；仅在热加载失败时才需要手动重启服务。</div></section>'''
 
 _LOLBAN_SECRET_SCRIPT = r'''<script id="lolban-secret-control-script">
 (function(){
@@ -99,9 +101,13 @@ _LOLBAN_SECRET_SCRIPT = r'''<script id="lolban-secret-control-script">
   }
   async function refresh(){
     try{
-      var data=await requestJson('/admin/parser-center');
-      var item=(data.secrets||[]).find(function(value){return value.name==='LOL_BAN_4PNG_TOKEN'});
-      showState(!!(item&&item.configured));
+      var data=await requestJson('/admin/query-console/lolban');
+      var state=data.fourpng_secret||{};
+      var configured=!!state.disk_configured;
+      var runtime=!!state.runtime_configured;
+      showState(configured&&runtime);
+      var node=byId('fourPngSecretState');
+      if(node&&configured&&!runtime){node.textContent='已保存，5001 未加载';node.className='bad'}
     }catch(error){
       var node=byId('fourPngSecretState');
       if(node){node.textContent='读取失败';node.className='bad'}
@@ -112,10 +118,11 @@ _LOLBAN_SECRET_SCRIPT = r'''<script id="lolban-secret-control-script">
     var value=input?input.value.trim():'';
     if(!value){alert('请输入 4PNG Token');return}
     try{
-      var data=await requestJson('/admin/parser-center/secret',{method:'POST',body:{name:'LOL_BAN_4PNG_TOKEN',value:value}});
+      var data=await requestJson('/admin/query-console/lolban/4png-token',{method:'POST',body:{value:value}});
       input.value='';
       showState(true);
-      alert(data.message||'Token 已安全保存');
+      alert(data.message||'Token 已安全保存并热加载');
+      await refresh();
     }catch(error){alert(error.message)}
   };
   window.restartLolDataSystem=async function(){
@@ -140,30 +147,76 @@ def _inject_lolban_secret_controls(page: str) -> str:
     return page.replace("</body>", _LOLBAN_SECRET_SCRIPT + "</body>", 1)
 
 
+def select_parser_center_section(page: str, section: str) -> str:
+    """Select a parser-center section in server-rendered HTML."""
+
+    selected = str(section or "visual").strip().lower()
+    if selected not in {"visual", "advanced", "backups"}:
+        selected = "visual"
+
+    def button_repl(match: re.Match[str]) -> str:
+        name = match.group(1)
+        class_part = ' class="active"' if name == selected else ""
+        return f'<button{class_part} data-tab="{name}">'
+
+    def panel_repl(match: re.Match[str]) -> str:
+        name = match.group(1)
+        class_name = "tab-panel" if name == selected else "tab-panel hidden"
+        return f'<section id="tab-{name}" class="{class_name}">'
+
+    page, button_count = re.subn(
+        r'<button(?: class="active")? data-tab="(visual|advanced|backups)">',
+        button_repl,
+        page,
+    )
+    page, panel_count = re.subn(
+        r'<section id="tab-(visual|advanced|backups)" class="tab-panel(?: hidden)?">',
+        panel_repl,
+        page,
+    )
+    if button_count < 3 or panel_count < 3:
+        raise ValueError("parser center section markers are incomplete")
+    return page
+
+
 _NAV_SCRIPT = r'''<script id="control-navigation-script">
 (function(){
+  function findSidebarLink(href){
+    return Array.from(document.querySelectorAll('.control-sidebar a')).find(function(link){
+      return link.getAttribute('href')===href;
+    })||null;
+  }
   function markSidebar(href){
     document.querySelectorAll('.control-sidebar a.active').forEach(function(link){link.classList.remove('active')});
-    var link=document.querySelector('.control-sidebar a[href="'+CSS.escape(href)+'"]');
+    var link=findSidebarLink(href);
     if(link){
       link.classList.add('active');
       var group=link.closest('details');
       if(group)group.open=true;
     }
   }
-  function activateFromQuery(){
+  function activateParserSection(section,href){
+    if(typeof window.switchTab==='function')window.switchTab(section);
+    else{
+      var button=Array.from(document.querySelectorAll('nav.tabs [data-tab]')).find(function(item){return item.dataset.tab===section});
+      if(button)button.click();
+    }
+    markSidebar(href);
+  }
+  function activateFromLocation(){
     var params=new URLSearchParams(location.search);
     var tab=params.get('tab');
     if(tab&&location.pathname==='/'){
-      var target=document.querySelector('.tab[data-tab="'+CSS.escape(tab)+'"]');
+      var target=Array.from(document.querySelectorAll('.tab[data-tab]')).find(function(item){return item.dataset.tab===tab});
       if(target)target.click();
       markSidebar('/?tab='+encodeURIComponent(tab));
     }
-    var section=params.get('section');
-    if(section&&location.pathname==='/parser-center'){
-      var sectionButton=document.querySelector('[data-tab="'+CSS.escape(section)+'"]');
-      if(sectionButton)sectionButton.click();
-      markSidebar('/parser-center?section='+encodeURIComponent(section));
+    if(location.pathname==='/parser-center/secrets')activateParserSection('backups','/parser-center/secrets');
+    else if(location.pathname==='/parser-center/advanced')activateParserSection('advanced','/parser-center/advanced');
+    else if(location.pathname==='/parser-center'){
+      var section=params.get('section')||'visual';
+      var href=section==='backups'?'/parser-center/secrets':'/parser-center';
+      activateParserSection(section,href);
     }
   }
   function mount(){
@@ -172,7 +225,7 @@ _NAV_SCRIPT = r'''<script id="control-navigation-script">
     document.querySelectorAll('.control-sidebar a').forEach(function(link){link.addEventListener('click',function(){document.body.classList.remove('control-nav-open')})});
     var originalTabs=document.querySelector('main.shell > .tabs, main.shell > nav.tabs');
     if(originalTabs)originalTabs.classList.add('control-original-tabs');
-    activateFromQuery();
+    activateFromLocation();
   }
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',mount);else mount();
 })();

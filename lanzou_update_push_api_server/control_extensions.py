@@ -10,7 +10,7 @@ from services.image_asset_store import get_image_asset_sync_manager
 
 from . import management, parser_center_admin
 from .config import sanitized_config
-from .control_navigation import apply_control_navigation
+from .control_navigation import apply_control_navigation, select_parser_center_section
 from .image_cache_ui import render_image_cache_page
 from .lolban_console import install_lolban_console_routes
 from .lolban_presets import ensure_lolban_provider_presets
@@ -31,6 +31,8 @@ _CONTROL_PAGE_ACTIVE = {
     "/": "overview",
     "/ui": "overview",
     "/parser-center": "parser-center",
+    "/parser-center/secrets": "parser-secrets",
+    "/parser-center/advanced": "parser-center",
     "/query-console/lolban": "lolban",
 }
 
@@ -81,6 +83,14 @@ def install_control_extensions(app: FastAPI, service) -> None:
         }
     parser_center_admin.render_parser_center_page = render_guarded_parser_center_page
     parser_center_admin.install_parser_center_routes(app)
+
+    @app.get("/parser-center/secrets", response_class=HTMLResponse, include_in_schema=False)
+    async def parser_center_secrets_page() -> str:
+        return select_parser_center_section(render_guarded_parser_center_page(), "backups")
+
+    @app.get("/parser-center/advanced", response_class=HTMLResponse, include_in_schema=False)
+    async def parser_center_advanced_page() -> str:
+        return select_parser_center_section(render_guarded_parser_center_page(), "advanced")
     install_parser_center_retry_routes(app)
     install_lolban_console_routes(app)
 

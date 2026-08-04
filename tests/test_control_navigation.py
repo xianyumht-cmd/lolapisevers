@@ -3,7 +3,10 @@ from __future__ import annotations
 import unittest
 
 from lanzou_update_push_api_server.control_extensions import _decorate_control_page
-from lanzou_update_push_api_server.control_navigation import apply_control_navigation
+from lanzou_update_push_api_server.control_navigation import (
+    apply_control_navigation,
+    select_parser_center_section,
+)
 from lanzou_update_push_api_server.lolban_console import render_lolban_console_page
 from lanzou_update_push_api_server.parser_center_ui_guard import render_parser_center_page
 from lanzou_update_push_api_server.server import _control_page
@@ -14,7 +17,7 @@ class ControlNavigationTests(unittest.TestCase):
         page = _decorate_control_page("/", _control_page())
         self.assertIn('class="control-sidebar"', page)
         self.assertIn('接口与解析中心', page)
-        self.assertIn('/parser-center?section=backups', page)
+        self.assertIn('/parser-center/secrets', page)
         self.assertIn('/query-console/lolban', page)
         self.assertIn('/?tab=mainconfig', page)
         self.assertIn('/?tab=logs', page)
@@ -35,9 +38,25 @@ class ControlNavigationTests(unittest.TestCase):
         page = _decorate_control_page("/query-console/lolban", raw)
         self.assertIn('4PNG Token', page)
         self.assertIn('LOL_BAN_4PNG_TOKEN', page)
-        self.assertIn('/admin/parser-center/secret', page)
+        self.assertIn('/admin/query-console/lolban/4png-token', page)
         self.assertIn('安全保存 Token', page)
         self.assertIn('class="control-sidebar"', page)
+
+
+    def test_parser_secret_section_is_server_selected(self):
+        raw = render_parser_center_page()
+        page = select_parser_center_section(raw, "backups")
+        self.assertIn('<button class="active" data-tab="backups">', page)
+        self.assertIn('<section id="tab-backups" class="tab-panel">', page)
+        self.assertIn('<section id="tab-visual" class="tab-panel hidden">', page)
+
+    def test_navigation_does_not_depend_on_css_escape(self):
+        page = apply_control_navigation(
+            '<!doctype html><html><head></head><body><main class="shell"></main></body></html>',
+            active="overview",
+        )
+        self.assertIn('findSidebarLink', page)
+        self.assertNotIn('CSS.escape', page)
 
     def test_navigation_injection_is_idempotent(self):
         raw = '<!doctype html><html><head></head><body><main class="shell"></main></body></html>'

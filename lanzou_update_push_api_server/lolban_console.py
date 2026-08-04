@@ -14,7 +14,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 
 from . import management
-from .parser_center_admin import _load_effective_config, save_parser_center
+from .parser_center_admin import _load_effective_config, save_parser_center, save_parser_secret
 
 
 _MAX_MAIN_RESPONSE_BYTES = 2_000_000
@@ -40,6 +40,7 @@ _LOLBAN_RELOAD_KEYS = (
     "LOL_BAN_PROVIDERS_JSON",
     "LOL_BAN_UPSTREAM_URL",
     *_LOLBAN_SETTING_KEYS,
+    "LOL_BAN_4PNG_TOKEN",
 )
 
 
@@ -377,12 +378,23 @@ def read_lolban_console(main_base_url: str) -> dict[str, Any]:
     runtime_identity = _runtime_identity(runtime)
     disk_identity = disk.get("active_provider_identity") or []
     safe_runtime_identity = [_redact(item) for item in runtime_identity]
+    disk_secret_value = str(_file_values.get("LOL_BAN_4PNG_TOKEN") or os.getenv("LOL_BAN_4PNG_TOKEN") or "").strip()
+    disk_secret_configured = bool(disk_secret_value and disk_secret_value != "CHANGE_ME")
+    runtime_secret_configured = False
+    for secret in runtime.get("secrets") if isinstance(runtime.get("secrets"), list) else []:
+        if isinstance(secret, Mapping) and secret.get("name") == "LOL_BAN_4PNG_TOKEN":
+            runtime_secret_configured = bool(secret.get("configured"))
     return {
         "ok": True,
         "disk": disk,
         "runtime": runtime,
         "runtime_provider_identity": safe_runtime_identity,
         "runtime_matches_disk": runtime.get("ok") is True and safe_runtime_identity == disk_identity,
+        "fourpng_secret": {
+            "disk_configured": disk_secret_configured,
+            "runtime_configured": runtime_secret_configured,
+            "in_sync": disk_secret_configured == runtime_secret_configured,
+        },
     }
 
 
@@ -448,26 +460,58 @@ def save_lolban_console(main_base_url: str, payload: Mapping[str, Any]) -> dict[
     }
 
 
+def save_fourpng_token(main_base_url: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+    value = str(payload.get("value") or "").strip()
+    if not value:
+        raise ValueError("4PNG Token 不能为空")
+    saved = save_parser_secret({"name": "LOL_BAN_4PNG_TOKEN", "value": value})
+    reload_result = _main_request(
+        main_base_url,
+        "POST",
+        "/admin/query/lolban/reload",
+        payload={"environment": {"LOL_BAN_4PNG_TOKEN": value}},
+    )
+    loaded = reload_result.get("ok") is True
+    return {
+        "ok": loaded,
+        "configured": True,
+        "runtime_configured": loaded,
+        "message": (
+            "4PNG Token 已安全保存并热加载到 5001。"
+            if loaded
+            else "4PNG Token 已安全保存，但 5001 热加载失败；请手动重启 LOLDataSystem。"
+        ),
+        "save_result": _result_summary(saved),
+        "reload_result": reload_result,
+    }
+
+
 def test_lolban_console(main_base_url: str, payload: Mapping[str, Any]) -> dict[str, Any]:
     qq = str(payload.get("qq") or "").strip()
     provider_id = str(payload.get("provider_id") or "").strip()
-    provider_result = _main_request(
-        main_base_url,
-        "POST",
-        "/admin/query/lolban/provider-test",
-        payload={"qq": qq, "provider_id": provider_id},
-    )
-    formal_result = _main_request(
-        main_base_url,
-        "GET",
-        "/api/v2/lolban",
-        params={"qq": qq, "output": "json"},
-    )
-    return {
-        "ok": provider_result.get("ok") is True and formal_result.get("ok") is True,
-        "provider_test": provider_result,
-        "formal_chain": formal_result,
-    }
+    mode = str(payload.get("mode") or "both").strip().lower()
+    if mode not in {"provider", "formal", "both"}:
+        raise ValueError("mode 必须是 provider、formal 或 both")
+    result: dict[str, Any] = {"ok": True, "mode": mode}
+    if mode in {"provider", "both"}:
+        provider_result = _main_request(
+            main_base_url,
+            "POST",
+            "/admin/query/lolban/provider-test",
+            payload={"qq": qq, "provider_id": provider_id},
+        )
+        result["provider_test"] = provider_result
+        result["ok"] = result["ok"] and provider_result.get("ok") is True
+    if mode in {"formal", "both"}:
+        formal_result = _main_request(
+            main_base_url,
+            "GET",
+            "/api/v2/lolban",
+            params={"qq": qq, "output": "json"},
+        )
+        result["formal_chain"] = formal_result
+        result["ok"] = result["ok"] and formal_result.get("ok") is True
+    return result
 
 
 def render_lolban_console_page() -> str:
@@ -482,7 +526,7 @@ def render_lolban_console_page() -> str:
 <section class="panel"><div class="head"><div><h2>缓存与降级设置</h2><div class="hint">保存后写入 app_env.local.ps1，并安全热加载到 5001。</div></div></div><div class="grid"><label><span>上游超时（秒）</span><input id="sTimeout" type="number"></label><label><span>正常缓存（秒）</span><input id="sNormal" type="number"></label><label><span>封禁缓存（秒）</span><input id="sBanned" type="number"></label><label><span>最近成功降级（秒）</span><input id="sStale" type="number"></label><label><span>最大降级条数</span><input id="sMax" type="number"></label><label class="switch"><input id="sSnapshot" type="checkbox"><span>启用持久化快照</span></label><label style="grid-column:span 2"><span>旧版单上游 URL（敏感参数显示 ***）</span><input id="legacyUrl"></label></div></section>
 <section class="panel"><div class="head"><div><h2>解析中心 Provider</h2><div class="hint" id="parserPath"></div></div><button onclick="addProvider('parser')">新增 Provider</button></div><div id="parserProviders"></div></section>
 <section class="panel"><div class="head"><div><h2>旧环境变量 Provider</h2><div class="hint" id="legacyPath"></div></div><button onclick="addProvider('legacy')">新增 Provider</button></div><div id="legacyError" class="bad"></div><div id="legacyProviders"></div></section>
-<section class="panel"><div class="head"><div><h2>实时测试</h2><div class="hint">左侧直连当前已加载 Provider；右侧调用正式 /api/v2/lolban 链路。</div></div><button class="primary" onclick="runTest()">开始测试</button></div><div class="grid two"><label><span>测试 QQ</span><input id="testQQ" value="97077000"></label><label><span>运行时 Provider</span><select id="testProvider"></select></label></div><div class="grid two"><div><h3>Provider 直连</h3><pre id="providerResult">暂无</pre></div><div><h3>5001 正式链路</h3><pre id="formalResult">暂无</pre></div></div></section>
+<section class="panel"><div class="head"><div><h2>实时测试</h2><div class="hint">先单独测试所选 Provider，再测试正式降级链路；两项结果不再混在一次操作中。</div></div><div class="actions"><button class="primary" onclick="runProviderTest()">测试所选 Provider</button><button onclick="runFormalTest()">测试正式链路</button></div></div><div class="grid two"><label><span>测试 QQ</span><input id="testQQ" value="97077000"></label><label><span>运行时 Provider</span><select id="testProvider"></select></label></div><div class="grid two"><div><h3>Provider 直连</h3><pre id="providerResult">暂无</pre></div><div><h3>5001 正式链路</h3><pre id="formalResult">暂无</pre></div></div></section>
 <section class="panel"><div class="head"><h2>运行时详情</h2></div><pre id="runtimeResult">暂无</pre></section>
 </main><script>
 const S={parser:[],legacy:[],runtime:{}};const $=id=>document.getElementById(id);
@@ -498,7 +542,9 @@ function collect(kind){return [...document.querySelectorAll(`[data-kind="${kind}
 function setState(d){const disk=d.disk||{},runtime=d.runtime||{};S.parser=disk.parser_center?.providers||[];S.legacy=disk.legacy?.providers||[];S.runtime=runtime;$('parserPath').textContent=`配置文件：${disk.parser_center?.path||'-'}${disk.parser_center?.using_default?'（当前使用默认模板）':''}`;$('legacyPath').textContent=`配置文件：${disk.legacy?.path||'-'}`;$('legacyError').textContent=disk.legacy?.error||'';const st=disk.settings||{};$('sTimeout').value=st.LOL_BAN_TIMEOUT||10;$('sNormal').value=st.LOL_BAN_NORMAL_CACHE_SECONDS||60;$('sBanned').value=st.LOL_BAN_BANNED_CACHE_SECONDS||300;$('sStale').value=st.LOL_BAN_STALE_CACHE_SECONDS||86400;$('sMax').value=st.LOL_BAN_MAX_STALE_ENTRIES||1024;$('sSnapshot').checked=!['0','false','no','off',''].includes(String(st.LOL_BAN_SNAPSHOT_ENABLED??'1').toLowerCase());$('legacyUrl').value=disk.legacy?.upstream_url||'';$('diskCount').textContent=(disk.active_provider_identity||[]).length;$('runtimeCount').textContent=runtime.provider_count??'-';$('matchState').textContent=d.runtime_matches_disk?'一致':'不一致';$('matchState').className=d.runtime_matches_disk?'ok':'bad';const h=runtime.health||{};$('healthState').textContent=h.last_error_class?`失败：${h.last_error_class}`:(h.configured?'已配置':'未配置');$('healthState').className=h.last_error_class?'bad':'ok';$('runtimeResult').textContent=pretty(runtime);$('testProvider').innerHTML=(runtime.providers||[]).map(p=>`<option value="${attr(p.id||p.name)}">${esc((p.order||'')+' · '+(p.name||p.id||''))}</option>`).join('');render()}
 async function loadAll(){try{setState(await api('/admin/query-console/lolban'))}catch(e){alert(e.message)}}
 async function saveAll(){try{const body={parser_providers:collect('parser'),legacy_providers:collect('legacy'),legacy_upstream_url:$('legacyUrl').value.trim(),settings:{LOL_BAN_TIMEOUT:Number($('sTimeout').value),LOL_BAN_NORMAL_CACHE_SECONDS:Number($('sNormal').value),LOL_BAN_BANNED_CACHE_SECONDS:Number($('sBanned').value),LOL_BAN_STALE_CACHE_SECONDS:Number($('sStale').value),LOL_BAN_MAX_STALE_ENTRIES:Number($('sMax').value),LOL_BAN_SNAPSHOT_ENABLED:$('sSnapshot').checked}};const r=await api('/admin/query-console/lolban/save',{method:'POST',body});alert(r.message||'保存完成');setState(r.state)}catch(e){alert(e.message)}}
-async function runTest(){try{$('providerResult').textContent='测试中...';$('formalResult').textContent='测试中...';const r=await api('/admin/query-console/lolban/test',{method:'POST',body:{qq:$('testQQ').value.trim(),provider_id:$('testProvider').value}});$('providerResult').textContent=pretty(r.provider_test);$('formalResult').textContent=pretty(r.formal_chain)}catch(e){$('providerResult').textContent=e.message;$('formalResult').textContent=e.message}}
+async function runProviderTest(){try{$('providerResult').textContent='测试中...';const r=await api('/admin/query-console/lolban/test',{method:'POST',body:{mode:'provider',qq:$('testQQ').value.trim(),provider_id:$('testProvider').value}});$('providerResult').textContent=pretty(r.provider_test)}catch(e){$('providerResult').textContent=e.message}}
+async function runFormalTest(){try{$('formalResult').textContent='测试中...';const r=await api('/admin/query-console/lolban/test',{method:'POST',body:{mode:'formal',qq:$('testQQ').value.trim(),provider_id:$('testProvider').value}});$('formalResult').textContent=pretty(r.formal_chain)}catch(e){$('formalResult').textContent=e.message}}
+async function runTest(){await runProviderTest();await runFormalTest()}
 $('adminToken').value=token();loadAll();
 </script></body></html>'''
 
@@ -521,6 +567,18 @@ def install_lolban_console_routes(app: FastAPI) -> None:
         except OSError as exc:
             raise HTTPException(status_code=500, detail=f"封号查询配置写入失败：{exc}") from exc
 
+    @app.post("/admin/query-console/lolban/4png-token")
+    async def admin_lolban_fourpng_token(payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(save_fourpng_token, app.state.main_base_url, payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f"4PNG Token 写入失败：{exc}") from exc
+
     @app.post("/admin/query-console/lolban/test")
     async def admin_lolban_console_test(payload: dict[str, Any]) -> dict[str, Any]:
-        return await asyncio.to_thread(test_lolban_console, app.state.main_base_url, payload)
+        try:
+            return await asyncio.to_thread(test_lolban_console, app.state.main_base_url, payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc

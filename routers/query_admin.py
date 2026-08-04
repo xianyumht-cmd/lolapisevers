@@ -11,10 +11,11 @@ from datetime import datetime, timezone
 from typing import Any, Mapping
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+import requests
 from fastapi import APIRouter, HTTPException, Request
 
 from services import lolban_service
-from services.api_parser_center import prepare_request
+from services.api_parser_center import ParserConfigError, ProviderResponseError, prepare_request
 from services.main_control_security import require_control_access
 
 
@@ -35,6 +36,7 @@ _ALLOWED_RELOAD_ENV_KEYS = {
     "LOL_BAN_STALE_CACHE_SECONDS",
     "LOL_BAN_MAX_STALE_ENTRIES",
     "LOL_BAN_SNAPSHOT_ENABLED",
+    "LOL_BAN_4PNG_TOKEN",
 }
 
 
@@ -161,6 +163,9 @@ def lolban_runtime_snapshot() -> dict[str, Any]:
         "provider_count": len(providers),
         "providers": providers,
         "provider_signature": _signature(providers),
+        "secrets": [
+            {"name": "LOL_BAN_4PNG_TOKEN", "configured": _secret_configured("LOL_BAN_4PNG_TOKEN")},
+        ],
         "health": service.health(),
     }
 
@@ -205,6 +210,40 @@ def _reload_lolban_module() -> None:
     importlib.reload(lolban_service)
 
 
+def _provider_error_diagnostic(exc: Exception) -> dict[str, Any]:
+    text = str(exc or "")
+    lowered = text.lower()
+    if isinstance(exc, ParserConfigError):
+        if "secret" in lowered and "未配置" in text:
+            return {
+                "category": "secret_not_loaded",
+                "message": "Provider 引用的 Secret 尚未加载到 5001。请重新保存 Token 并确认热加载成功。",
+            }
+        return {
+            "category": "provider_config_invalid",
+            "message": "Provider 请求配置无法生成，请检查 URL、参数映射和 Secret 引用。",
+        }
+    if isinstance(exc, ProviderResponseError):
+        if any(word in lowered for word in ("unsafe", "广告", "推广", "充值", "购买")):
+            return {
+                "category": "promotion_blocked",
+                "message": "上游返回了推广或不安全内容，已拦截并判定此 Provider 失败。",
+                "status_code": int(getattr(exc, "status_code", 502) or 502),
+            }
+        return {
+            "category": "upstream_business_rejected",
+            "message": "上游业务响应未通过成功条件，可能是 Token、额度、状态码或响应结构不符合预期。",
+            "status_code": int(getattr(exc, "status_code", 502) or 502),
+        }
+    if isinstance(exc, requests.Timeout):
+        return {"category": "timeout", "message": "连接上游超时。"}
+    if isinstance(exc, requests.ConnectionError):
+        return {"category": "network_error", "message": "无法连接上游接口。"}
+    if "json" in lowered or "payload" in lowered or "response" in lowered:
+        return {"category": "response_invalid", "message": "上游响应无法按当前解析规则处理。"}
+    return {"category": "provider_failed", "message": "Provider 直连失败，未向用户公开上游原始错误。"}
+
+
 @router.get("/admin/query/lolban/runtime")
 async def admin_lolban_runtime(request: Request) -> dict[str, Any]:
     require_control_access(request)
@@ -218,20 +257,27 @@ async def admin_lolban_provider_test(request: Request, payload: dict[str, Any]) 
     if not lolban_service.valid_qq(qq):
         raise HTTPException(status_code=400, detail="请输入有效的QQ号（5-11位数字）")
     provider, index = _select_provider(str(payload.get("provider_id") or ""))
-    preview = _request_preview(provider, index, qq)
+    preview: dict[str, Any] = {}
     started = datetime.now(timezone.utc)
     try:
+        preview = _request_preview(provider, index, qq)
         result = await asyncio.to_thread(provider.query, qq)
     except Exception as exc:
         elapsed_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
-        return {
+        diagnostic = _provider_error_diagnostic(exc)
+        response = {
             "ok": False,
             "provider": _provider_snapshot(provider, index),
             "request": preview,
             "elapsed_ms": elapsed_ms,
             "error_class": type(exc).__name__,
+            "error_category": diagnostic.get("category"),
+            "diagnostic": diagnostic.get("message"),
             "error": "Provider 直连失败",
         }
+        if "status_code" in diagnostic:
+            response["upstream_status_code"] = diagnostic["status_code"]
+        return response
     elapsed_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
     return {
         "ok": True,
