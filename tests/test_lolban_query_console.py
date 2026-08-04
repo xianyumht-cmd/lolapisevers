@@ -86,7 +86,7 @@ class LolbanQueryConsoleTests(unittest.TestCase):
         page = apply_ios_glass_theme(
             '<!doctype html><html><head></head><body><div class="actions"></div></body></html>'
         )
-        self.assertIn("data-query-console-lolban", page)
+        self.assertIn("dataset.queryConsoleLolban", page)
         self.assertIn("/query-console/lolban", page)
         self.assertIn("封号查询配置", page)
 
