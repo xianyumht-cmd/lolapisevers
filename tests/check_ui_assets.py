@@ -8,9 +8,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from lanzou_update_push_api_server.control_ui import ASSET_DIRECTORY, render_overview_page
 from lanzou_update_push_api_server.lolban_console import render_lolban_console_page
 from lanzou_update_push_api_server.parser_center_ui_guard import render_parser_center_page
-from lanzou_update_push_api_server.server import _control_page
 
 
 def extract_scripts(html: str) -> list[str]:
@@ -22,7 +22,10 @@ def extract_scripts(html: str) -> list[str]:
 
 
 try:
-    html = _control_page()
+    html = render_overview_page()
+    console_script = (ASSET_DIRECTORY / "console.js").read_text(encoding="utf-8")
+    console_css = (ASSET_DIRECTORY / "console.css").read_text(encoding="utf-8")
+    icon_sprite = (ASSET_DIRECTORY / "icons.svg").read_text(encoding="utf-8")
     lolban_html = render_lolban_console_page()
     parser_center_html = render_parser_center_page()
 except Exception:
@@ -31,49 +34,50 @@ except Exception:
     print(details, file=sys.stderr)
     raise
 
-scripts = extract_scripts(html)
-script = next(
-    (
-        candidate
-        for candidate in scripts
-        if "/admin/main-config" in candidate
-        and "/admin/lanzou-config" in candidate
-        and "adminToken" in candidate
-    ),
-    "",
-)
-if not script:
-    raise SystemExit("dashboard main JavaScript block was not found")
-
-required_markers = [
-    "/admin/main-config",
-    "/admin/lanzou-config",
-    "/admin/openapi/main",
-    "/admin/logs",
-    "/admin/diagnostics",
-    "/admin/backups",
-    "/admin/audit",
-    "/admin/service/restart",
-    "/security/status",
-    "/query-console/lolban",
-    "dataset.queryConsoleLolban",
-    "adminToken",
-    "watcherRows",
-    "targetRows",
-    "backupRows",
-    "auditRows",
-    "addWatcherButton",
-    "addTargetButton",
-    "S.watchers.unshift",
-    "S.targets.unshift",
-    "scrollIntoView",
-    "addEventListener('click',addWatcher)",
-    "addEventListener('click',addTarget)",
-    "请填写后点击“保存监控项”",
+required_overview_markers = [
+    'data-console-ui="p0"',
+    "/control-assets/console.css",
+    "/control-assets/console.js",
+    "控制台总览",
+    "封号 Provider",
+    "最近配置变更",
+    "/legacy-ui",
 ]
-missing = [marker for marker in required_markers if marker not in html]
-if missing:
-    raise SystemExit(f"dashboard is missing required controls: {missing}")
+overview_missing = [marker for marker in required_overview_markers if marker not in html]
+if overview_missing:
+    raise SystemExit(f"new overview is missing required controls: {overview_missing}")
+
+required_console_endpoints = [
+    "/admin/overview",
+    "/admin/query-console/lolban",
+    "/admin/audit?limit=10",
+    "/admin/logs",
+    "/admin/service/status",
+    "/build-info",
+]
+console_missing = [marker for marker in required_console_endpoints if marker not in console_script]
+if console_missing:
+    raise SystemExit(f"new console JavaScript is missing endpoints: {console_missing}")
+
+for forbidden in ("alert(", "confirm(", "radial-gradient", "linear-gradient"):
+    source = console_script if forbidden.endswith("(") else console_css
+    if forbidden in source:
+        raise SystemExit(f"new control UI contains forbidden legacy pattern: {forbidden}")
+
+for font_marker in ('"Microsoft YaHei UI"', '"Microsoft YaHei"', '"Cascadia Mono"'):
+    if font_marker not in console_css:
+        raise SystemExit(f"new control UI is missing font marker: {font_marker}")
+
+for icon_marker in (
+    "icon-dashboard",
+    "icon-shield",
+    "icon-workflow",
+    "icon-key",
+    "icon-server",
+    "icon-activity",
+):
+    if icon_marker not in icon_sprite:
+        raise SystemExit(f"new control UI is missing SVG symbol: {icon_marker}")
 
 lolban_scripts = extract_scripts(lolban_html)
 lolban_script = next(
@@ -104,7 +108,6 @@ lolban_missing = [marker for marker in lolban_markers if marker not in lolban_ht
 if lolban_missing:
     raise SystemExit(f"lolban console is missing required controls: {lolban_missing}")
 
-
 parser_scripts = extract_scripts(parser_center_html)
 parser_script = next(
     (
@@ -132,7 +135,7 @@ parser_missing = [marker for marker in parser_markers if marker not in parser_ce
 if parser_missing:
     raise SystemExit(f"parser center is missing required controls: {parser_missing}")
 
-Path("ui_control.generated.js").write_text(script, encoding="utf-8")
+Path("ui_control.generated.js").write_text(console_script, encoding="utf-8")
 lolban_path = Path("ui_lolban_console.generated.js")
 lolban_path.write_text(lolban_script, encoding="utf-8")
 parser_path = Path("ui_parser_center.generated.js")
@@ -141,7 +144,7 @@ subprocess.run(["node", "--check", str(lolban_path)], check=True)
 subprocess.run(["node", "--check", str(parser_path)], check=True)
 print(
     "wrote "
-    f"{len(script)} dashboard JavaScript characters and "
+    f"{len(console_script)} new-console JavaScript characters and "
     f"{len(lolban_script)} lolban-console and "
     f"{len(parser_script)} parser-center JavaScript characters for syntax validation"
 )
