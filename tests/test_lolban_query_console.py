@@ -3,11 +3,14 @@ from __future__ import annotations
 import os
 import unittest
 from unittest.mock import patch
+from urllib.parse import parse_qsl, urlsplit
 
 from fastapi import HTTPException
 
 from lanzou_update_push_api_server.lolban_console import (
     _merge_masked,
+    _merge_masked_url,
+    _merge_provider_list,
     _provider_identity,
     render_lolban_console_page,
 )
@@ -19,7 +22,10 @@ class LolbanQueryConsoleTests(unittest.TestCase):
     def test_runtime_redaction_hides_literal_credentials(self):
         value = {
             "request": {
-                "url": "https://example.test/query",
+                "url": (
+                    "https://user:pass@example.test/query?qq=$qq"
+                    "&token=literal-token&api_key=$secret:LOLBAN_KEY"
+                ),
                 "headers": {
                     "Authorization": "Bearer real-secret",
                     "X-Api-Key": "$secret:LOLBAN_KEY",
@@ -32,6 +38,14 @@ class LolbanQueryConsoleTests(unittest.TestCase):
         self.assertEqual(redacted["request"]["headers"]["X-Api-Key"], "$secret:LOLBAN_KEY")
         self.assertEqual(redacted["request"]["query"]["token"], "***")
         self.assertEqual(redacted["request"]["query"]["qq"], "$qq")
+        parts = urlsplit(redacted["request"]["url"])
+        query = dict(parse_qsl(parts.query, keep_blank_values=True))
+        self.assertEqual(parts.username, "***")
+        self.assertEqual(query["token"], "***")
+        self.assertEqual(query["api_key"], "$secret:LOLBAN_KEY")
+        self.assertEqual(query["qq"], "$qq")
+        self.assertNotIn("literal-token", redacted["request"]["url"])
+        self.assertNotIn("pass", redacted["request"]["url"])
 
     def test_masked_round_trip_preserves_existing_secret(self):
         previous = {"headers": {"Authorization": "Bearer old"}, "query": {"qq": "$qq"}}
@@ -39,6 +53,40 @@ class LolbanQueryConsoleTests(unittest.TestCase):
         merged = _merge_masked(submitted, previous)
         self.assertEqual(merged["headers"]["Authorization"], "Bearer old")
         self.assertEqual(merged["query"]["qq"], "$qq")
+
+    def test_masked_url_round_trip_preserves_credentials(self):
+        previous = "https://user:pass@example.test/query?qq=$qq&token=real-token"
+        submitted = "https://***@example.test/query?qq=%24qq&token=%2A%2A%2A"
+        merged = _merge_masked_url(submitted, previous)
+        parts = urlsplit(merged)
+        query = dict(parse_qsl(parts.query, keep_blank_values=True))
+        self.assertEqual(parts.username, "user")
+        self.assertEqual(parts.password, "pass")
+        self.assertEqual(query["token"], "real-token")
+        self.assertEqual(query["qq"], "$qq")
+
+    def test_provider_rename_preserves_masked_secret_by_position(self):
+        previous = [
+            {
+                "id": "old-id",
+                "request": {
+                    "url": "https://example.test/query",
+                    "headers": {"Authorization": "Bearer old"},
+                },
+            }
+        ]
+        submitted = [
+            {
+                "id": "new-id",
+                "request": {
+                    "url": "https://example.test/query",
+                    "headers": {"Authorization": "***"},
+                },
+            }
+        ]
+        merged = _merge_provider_list(submitted, previous)
+        self.assertEqual(merged[0]["id"], "new-id")
+        self.assertEqual(merged[0]["request"]["headers"]["Authorization"], "Bearer old")
 
     def test_reload_environment_is_strictly_allowlisted(self):
         with patch.dict(os.environ, {}, clear=False):
@@ -57,7 +105,7 @@ class LolbanQueryConsoleTests(unittest.TestCase):
                 "enabled": True,
                 "request": {
                     "method": "post",
-                    "url": "https://example.test/query",
+                    "url": "https://example.test/query/{qq}",
                     "headers": {"Authorization": "secret"},
                 },
             },
@@ -70,7 +118,7 @@ class LolbanQueryConsoleTests(unittest.TestCase):
                 "id": "primary",
                 "enabled": True,
                 "method": "POST",
-                "url": "https://example.test/query",
+                "url": "https://example.test/query/$qq",
             },
         )
 
