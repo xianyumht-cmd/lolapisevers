@@ -9,6 +9,7 @@ import os
 import re
 from datetime import datetime, timezone
 from typing import Any, Mapping
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -19,6 +20,7 @@ from services.main_control_security import require_control_access
 
 router = APIRouter()
 _RUNTIME_LOADED_AT = datetime.now(timezone.utc).isoformat()
+_MASK = "***"
 _SECRET_REF_RE = re.compile(r"^\$secret:([A-Za-z_][A-Za-z0-9_]*)$")
 _SENSITIVE_KEY_RE = re.compile(
     r"(?:token|secret|password|passwd|authorization|cookie|api[_-]?key|access[_-]?key)",
@@ -56,11 +58,39 @@ def _secret_names(value: Any) -> set[str]:
     return names
 
 
+def _redact_url(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        parts = urlsplit(text)
+    except ValueError:
+        return text
+    if not parts.scheme or not parts.netloc:
+        return text
+    hostname = parts.hostname or ""
+    netloc = hostname
+    if parts.port:
+        netloc = f"{netloc}:{parts.port}"
+    if parts.username is not None or parts.password is not None:
+        netloc = f"{_MASK}@{netloc}"
+    query: list[tuple[str, str]] = []
+    for key, item in parse_qsl(parts.query, keep_blank_values=True):
+        if _SECRET_REF_RE.fullmatch(item.strip()):
+            query.append((key, item))
+        else:
+            query.append((key, _MASK if _SENSITIVE_KEY_RE.search(key) else item))
+    fragment = _MASK if _SENSITIVE_KEY_RE.search(parts.fragment) else parts.fragment
+    return urlunsplit((parts.scheme, netloc, parts.path, urlencode(query), fragment))
+
+
 def _redact(value: Any, *, key: str = "") -> Any:
     if isinstance(value, str) and _SECRET_REF_RE.fullmatch(value.strip()):
         return value
+    if str(key).lower() in {"url", "endpoint", "request_url", "provider_url"}:
+        return _redact_url(value)
     if _SENSITIVE_KEY_RE.search(str(key or "")):
-        return "***"
+        return _MASK
     if isinstance(value, Mapping):
         return {
             str(item_key): _redact(item, key=str(item_key))
@@ -85,7 +115,7 @@ def _provider_profile(provider: Any, index: int) -> dict[str, Any]:
             query[qq_param] = "$qq"
         elif method != "GET" and qq_param not in form:
             form[qq_param] = "$qq"
-    profile = {
+    return {
         "id": str(getattr(provider, "name", "") or f"provider-{index}"),
         "name": str(getattr(provider, "name", "") or f"provider-{index}"),
         "enabled": True,
@@ -100,7 +130,6 @@ def _provider_profile(provider: Any, index: int) -> dict[str, Any]:
         },
         "parser": copy.deepcopy(dict(getattr(provider, "parser", {}) or {})),
     }
-    return profile
 
 
 def _provider_snapshot(provider: Any, index: int) -> dict[str, Any]:
@@ -153,7 +182,7 @@ def _select_provider(provider_id: str) -> tuple[Any, int]:
 def _request_preview(provider: Any, index: int, qq: str) -> dict[str, Any]:
     profile = _provider_profile(provider, index)
     prepared = prepare_request(profile, {"qq": qq})
-    return prepared.redacted()
+    return _redact(prepared.redacted())
 
 
 def _apply_reload_environment(payload: Mapping[str, Any]) -> list[str]:
@@ -201,7 +230,7 @@ async def admin_lolban_provider_test(request: Request, payload: dict[str, Any]) 
             "request": preview,
             "elapsed_ms": elapsed_ms,
             "error_class": type(exc).__name__,
-            "error": str(exc)[:500],
+            "error": "Provider 直连失败",
         }
     elapsed_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
     return {
@@ -209,7 +238,7 @@ async def admin_lolban_provider_test(request: Request, payload: dict[str, Any]) 
         "provider": _provider_snapshot(provider, index),
         "request": preview,
         "elapsed_ms": elapsed_ms,
-        "result": result,
+        "result": _redact(result),
     }
 
 
@@ -223,7 +252,7 @@ async def admin_lolban_reload(request: Request, payload: dict[str, Any] | None =
     except Exception as exc:
         raise HTTPException(
             status_code=400,
-            detail=f"封号 Provider 重新加载失败：{type(exc).__name__}: {exc}",
+            detail=f"封号 Provider 重新加载失败：{type(exc).__name__}",
         ) from exc
     _RUNTIME_LOADED_AT = datetime.now(timezone.utc).isoformat()
     snapshot = lolban_runtime_snapshot()
