@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
+import importlib
 import json
 import os
 import re
@@ -171,6 +172,10 @@ def _apply_reload_environment(payload: Mapping[str, Any]) -> list[str]:
     return changed
 
 
+def _reload_lolban_module() -> None:
+    importlib.reload(lolban_service)
+
+
 @router.get("/admin/query/lolban/runtime")
 async def admin_lolban_runtime(request: Request) -> dict[str, Any]:
     require_control_access(request)
@@ -214,13 +219,12 @@ async def admin_lolban_reload(request: Request, payload: dict[str, Any] | None =
     changed_environment = _apply_reload_environment(payload or {})
     global _RUNTIME_LOADED_AT
     try:
-        next_service = await asyncio.to_thread(lolban_service.LolBanService)
+        await asyncio.to_thread(_reload_lolban_module)
     except Exception as exc:
         raise HTTPException(
             status_code=400,
             detail=f"封号 Provider 重新加载失败：{type(exc).__name__}: {exc}",
         ) from exc
-    lolban_service._default_service = next_service
     _RUNTIME_LOADED_AT = datetime.now(timezone.utc).isoformat()
     snapshot = lolban_runtime_snapshot()
     snapshot["reloaded"] = True
