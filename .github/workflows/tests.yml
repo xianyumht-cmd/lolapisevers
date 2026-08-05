@@ -212,6 +212,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           git apply $patchPath
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git add -N -- tests/test_v3_baseline_readiness.py
           $actual = @(git diff --name-only | Sort-Object)
           $expected = @(
             ".github/workflows/build-production-safe-deployment-v3.yml",
