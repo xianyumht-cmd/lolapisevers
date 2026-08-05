@@ -57,23 +57,21 @@ def _sidebar(active: str) -> str:
       {_nav_link('/?tab=watchers', '监控项目', '监控')}
       {_nav_link('/?tab=targets', '通知目标', '通知')}
     </details>
-    <details>
+    <details open>
       <summary>系统管理</summary>
       {_nav_link('/?tab=mainconfig', '主接口配置', '配置')}
-      {_nav_link('/?tab=logs', '运行日志', '日志')}
-      {_nav_link('/?tab=diagnostics', '诊断与修复', '诊断')}
-      {_nav_link('/?tab=system', '安全与回滚', '安全')}
+      {_nav_link('/logs', '运行日志', '日志')}
+      {_nav_link('/diagnostics', '诊断与修复', '诊断')}
+      {_nav_link('/system', '安全与回滚', '安全')}
     </details>
     <details>
       <summary>开发与文档</summary>
       {_nav_link('/docs', 'OpenAPI 文档', 'API')}
-      {_nav_link('/legacy-ui', '旧版控制台', '旧版')}
     </details>
   </nav>
   <div class="control-sidebar-footer">生产配置写入前会校验并备份。第三方 Provider 默认停用，完成直连与正式链路测试后再启用。</div>
 </aside>
 <div class="control-mobile-bar"><button id="controlNavToggle" type="button">☰ 菜单</button><strong>LOLDataSystem 控制台</strong></div>'''
-
 
 
 def select_parser_center_section(page: str, section: str) -> str:
