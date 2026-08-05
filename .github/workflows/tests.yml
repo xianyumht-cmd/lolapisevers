@@ -11,63 +11,7 @@ on:
     branches: [master]
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  apply-p3b:
-    if: github.event_name == 'pull_request' && github.head_ref == 'feat/webui-control-panel-003-20260805'
-    runs-on: ubuntu-latest
-    timeout-minutes: 35
-    steps:
-      - name: Checkout feature branch
-        uses: actions/checkout@v4
-        with:
-          ref: feat/webui-control-panel-003-20260805
-          fetch-depth: 0
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-
-      - name: Rebuild and verify tested patch
-        shell: bash
-        run: |
-          cat .github/p3b-patch/part* > /tmp/p3b_patch.b64
-          base64 --decode /tmp/p3b_patch.b64 | gzip --decompress > /tmp/p3b.patch
-          test "$(wc -c < /tmp/p3b.patch)" = "91523"
-          git apply --check /tmp/p3b.patch
-          git apply /tmp/p3b.patch
-          git diff --check
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-
-      - name: Validate P3B candidate
-        run: |
-          python -m compileall -q .
-          python -m unittest discover -s tests -p "test_*.py" -v
-          python tests/check_ui_assets.py
-          node --check lanzou_update_push_api_server/control_ui/assets/configuration.js
-
-      - name: Commit implementation and restore workflow
-        shell: bash
-        run: |
-          git show caa7524473066b97f9dc8a4762001059736852d5:.github/workflows/tests.yml > .github/workflows/tests.yml
-          rm -rf .github/p3b-patch
-          rm -f .github/workflows/apply-webui-p3b.yml
-          rm -f ui_control.generated.js ui_lolban_console.generated.js ui_parser_center.generated.js
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git diff --cached --check
-          git commit -m "feat(webui): migrate P3B configuration and debugger pages"
-          git push origin HEAD:feat/webui-control-panel-003-20260805
-
   linux-unittest:
     runs-on: ubuntu-latest
     timeout-minutes: 20

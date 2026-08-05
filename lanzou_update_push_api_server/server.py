@@ -178,7 +178,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     async def admin_lanzou_config() -> dict[str, Any]:
         return {
             "ok": True,
-            "config": await asyncio.to_thread(read_lanzou_config),
+            "config": sanitized_config(app.state.config),
             "environment_overrides": lanzou_environment_overrides(),
         }
 
