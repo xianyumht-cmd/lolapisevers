@@ -70,11 +70,13 @@ jobs:
           $actual = @(git diff --name-only | Sort-Object)
           $expected = @(
             ".github/workflows/build-production-safe-deployment-v3.yml",
-            "ops/Build-FullBugRepairPackageV3.ps1",
-            "tests/test_v3_baseline_readiness.py"
+            "ops/Build-FullBugRepairPackageV3.ps1"
           ) | Sort-Object
           if (@(Compare-Object $expected $actual).Count -ne 0) {
             throw "Unexpected patched files: $($actual -join ', ')"
+          }
+          if (-not (Test-Path -LiteralPath "tests/test_v3_baseline_readiness.py" -PathType Leaf)) {
+            throw "Tracked baseline-readiness regression test is missing."
           }
 
       - name: Install dependencies and audit tool
@@ -121,6 +123,7 @@ jobs:
       - name: Commit verified source and remove temporary payload
         shell: pwsh
         run: |
+          git checkout cacb56691445ed83f78656eb3b23cb413811b6ed -- .github/workflows/tests.yml
           Remove-Item -LiteralPath ".patches/p3b-baseline-readiness" -Recurse -Force
           Remove-Item -LiteralPath ".github/workflows/apply-p3b-baseline-readiness.yml" -Force
           git config user.name "github-actions[bot]"
