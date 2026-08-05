@@ -181,7 +181,228 @@ try {
     $deployText = $deployText.Substring(0, $parseMatch.Index) +
         $parseInputBlock +
         $deployText.Substring($parseMatch.Index + $parseMatch.Length)
+
+    Write-Host "Patch deployment and verification scripts for baseline-aware readiness"
+    $snapshotFunctionAnchor = 'function Assert-PackageIntegrity {'
+    if ([regex]::Matches($deployText, [regex]::Escape($snapshotFunctionAnchor)).Count -ne 1) {
+        throw "Deployment health snapshot function anchor was not unique."
+    }
+    $snapshotFunction = @'
+function Get-JsonEndpointSnapshot {
+    param(
+        [string]$Uri,
+        [int]$Attempts = 3,
+        [int]$DelaySeconds = 2
+    )
+    $lastError = $null
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        try {
+            $response = Invoke-WebRequest -Uri $Uri -Method GET -TimeoutSec 30 -UseBasicParsing -Headers @{ Accept = "application/json" }
+            if ([int]$response.StatusCode -ne 200) {
+                throw "Unexpected HTTP status $($response.StatusCode)."
+            }
+            return ($response.Content | ConvertFrom-Json)
+        } catch {
+            $lastError = $_
+            if ($attempt -lt $Attempts) {
+                Start-Sleep -Seconds $DelaySeconds
+            }
+        }
+    }
+    throw "Unable to capture endpoint snapshot: $Uri :: $($lastError.Exception.Message)"
+}
+
+'@
+    $deployText = $deployText.Replace($snapshotFunctionAnchor, $snapshotFunction + $snapshotFunctionAnchor)
+
+    $verificationPathAnchor = '$verificationPath = Join-Path $backupDirectory "verification-report.json"'
+    if ([regex]::Matches($deployText, [regex]::Escape($verificationPathAnchor)).Count -ne 1) {
+        throw "Deployment verification path anchor was not unique."
+    }
+    $deployText = $deployText.Replace(
+        $verificationPathAnchor,
+        $verificationPathAnchor + "`n" + '$baselineHealthPath = Join-Path $backupDirectory "pre-switch-health.json"'
+    )
+
+    $recordAnchor = '    verification_report = "verification-report.json"'
+    if ([regex]::Matches($deployText, [regex]::Escape($recordAnchor)).Count -ne 1) {
+        throw "Deployment record baseline anchor was not unique."
+    }
+    $deployText = $deployText.Replace(
+        $recordAnchor,
+        $recordAnchor + "`n" + '    pre_switch_health = "pre-switch-health.json"'
+    )
+
+    $preflightStatusAnchor = '    $record.status = "candidate_preflight_passed"'
+    if ([regex]::Matches($deployText, [regex]::Escape($preflightStatusAnchor)).Count -ne 1) {
+        throw "Deployment pre-switch baseline anchor was not unique."
+    }
+    $preSwitchBlock = @'
+    Write-Host "Capture pre-switch production health baseline"
+    $preSwitchHealth = Get-JsonEndpointSnapshot -Uri "$BaseUrl/health"
+    if ("$($preSwitchHealth.mysql)" -ne "up") {
+        throw "Pre-switch MySQL readiness is not up. Production was not stopped or changed."
+    }
+    if ("$($preSwitchHealth.so1_browser)" -ne "up") {
+        throw "Pre-switch SO1 browser readiness is not up. Production was not stopped or changed."
+    }
+    Write-JsonFile -Path $baselineHealthPath -Value $preSwitchHealth
+
+'@
+    $deployText = $deployText.Replace($preflightStatusAnchor, $preSwitchBlock + $preflightStatusAnchor)
+
+    $verifyCallAnchor = @'
+        -Hero $Hero `
+        -OutputPath $verificationPath
+'@
+    $verifyCallAnchorText = $verifyCallAnchor.Replace("`r`n", "`n").TrimEnd()
+    if ([regex]::Matches($deployText, [regex]::Escape($verifyCallAnchorText)).Count -ne 1) {
+        throw "Deployment verifier call anchor was not unique."
+    }
+    $verifyCallReplacement = @'
+        -Hero $Hero `
+        -BaselineHealthPath $baselineHealthPath `
+        -OutputPath $verificationPath
+'@
+    $verifyCallReplacementText = $verifyCallReplacement.Replace("`r`n", "`n").TrimEnd()
+    $deployText = $deployText.Replace($verifyCallAnchorText, $verifyCallReplacementText)
     Write-Utf8NoBom -Path $deployPath -Text $deployText
+
+    $verifyPath = Join-Path $packageRoot "Verify-FullBugRepairProduction.ps1"
+    $verifyText = (Get-Content -LiteralPath $verifyPath -Raw -Encoding UTF8).Replace("`r`n", "`n")
+
+    $verifyParamAnchor = '    [string]$OutputPath = ""'
+    if ([regex]::Matches($verifyText, [regex]::Escape($verifyParamAnchor)).Count -ne 1) {
+        throw "Verifier baseline parameter anchor was not unique."
+    }
+    $verifyText = $verifyText.Replace(
+        $verifyParamAnchor,
+        '    [string]$BaselineHealthPath = "",' + "`n" + $verifyParamAnchor
+    )
+
+    $assertFunctionAnchor = 'function Assert-True {'
+    if ([regex]::Matches($verifyText, [regex]::Escape($assertFunctionAnchor)).Count -ne 1) {
+        throw "Verifier helper function anchor was not unique."
+    }
+    $verifierHelpers = @'
+function Get-HttpStatusCode {
+    param([string]$Uri)
+    try {
+        $response = Invoke-WebRequest -Uri $Uri -Method GET -TimeoutSec 30 -UseBasicParsing -Headers @{ Accept = "application/json" }
+        return [int]$response.StatusCode
+    } catch {
+        $response = $_.Exception.Response
+        if ($response -and $response.StatusCode) {
+            return [int]$response.StatusCode
+        }
+        throw
+    }
+}
+
+function Get-So1FailureFingerprint {
+    param([object]$Payload)
+    $browserStatus = "$($Payload.so1_browser)".Trim().ToLowerInvariant()
+    $sessionStatus = "$($Payload.so1_session)".Trim().ToLowerInvariant()
+    if ($browserStatus -eq "up" -and $sessionStatus -ne "authenticated") {
+        return "browser_up|session_unavailable"
+    }
+    return "$browserStatus|$sessionStatus"
+}
+
+function Get-So1FailureDetail {
+    param([object]$Payload)
+    $dependency = $Payload.dependencies.so1_browser
+    $reason = ""
+    $errorClass = ""
+    if ($dependency -and $dependency.PSObject.Properties.Name -contains "reason") {
+        $reason = "$($dependency.reason)".Trim().ToLowerInvariant()
+    }
+    if ($dependency -and $dependency.PSObject.Properties.Name -contains "error_class") {
+        $errorClass = "$($dependency.error_class)".Trim().ToLowerInvariant()
+    }
+    return "$reason|$errorClass"
+}
+
+'@
+    $verifyText = $verifyText.Replace($assertFunctionAnchor, $verifierHelpers + $assertFunctionAnchor)
+
+    $readyBlockAnchor = @'
+$ready = Invoke-JsonRequest -Uri "$BaseUrl/readyz"
+Assert-True ($ready.StatusCode -eq 200) "readyz failed."
+Add-Check "readyz" "pass" "HTTP 200"
+'@
+    $readyBlockAnchorText = $readyBlockAnchor.Replace("`r`n", "`n").TrimEnd()
+    $readyBlockFirstIndex = $verifyText.IndexOf($readyBlockAnchorText, [System.StringComparison]::Ordinal)
+    $readyBlockLastIndex = $verifyText.LastIndexOf($readyBlockAnchorText, [System.StringComparison]::Ordinal)
+    if ($readyBlockFirstIndex -lt 0 -or $readyBlockFirstIndex -ne $readyBlockLastIndex) {
+        throw "Verifier readyz block anchor was not unique. first=$readyBlockFirstIndex last=$readyBlockLastIndex"
+    }
+    $readyBlockReplacement = @'
+Assert-True ($BaselineHealthPath -and (Test-Path -LiteralPath $BaselineHealthPath -PathType Leaf)) "Pre-switch health baseline is missing."
+$baselineHealth = Get-Content -LiteralPath $BaselineHealthPath -Raw -Encoding UTF8 | ConvertFrom-Json
+$health = Invoke-JsonRequest -Uri "$BaseUrl/health"
+Assert-True ($health.StatusCode -eq 200) "health failed."
+
+$baselineMysql = "$($baselineHealth.mysql)"
+$baselineBrowser = "$($baselineHealth.so1_browser)"
+$baselineSession = "$($baselineHealth.so1_session)"
+$postMysql = "$($health.Body.mysql)"
+$postBrowser = "$($health.Body.so1_browser)"
+$postSession = "$($health.Body.so1_session)"
+Assert-True ($baselineMysql -eq "up") "Pre-switch MySQL baseline was not healthy."
+Assert-True ($baselineBrowser -eq "up") "Pre-switch SO1 browser baseline was not healthy."
+Assert-True ($postMysql -eq "up") "Post-switch MySQL readiness regressed."
+Assert-True ($postBrowser -eq "up") "Post-switch SO1 browser readiness regressed."
+Add-Check "required_dependencies" "pass" "mysql=up; so1_browser=up"
+
+$inheritedSo1SessionDegradation = $false
+$degradedReasons = @()
+$verificationStatus = "pass"
+if ($postSession -eq "authenticated") {
+    Add-Check "so1_session" "pass" "authenticated"
+} else {
+    $baselineFingerprint = Get-So1FailureFingerprint -Payload $baselineHealth
+    $postFingerprint = Get-So1FailureFingerprint -Payload $health.Body
+    $baselineFailureDetail = Get-So1FailureDetail -Payload $baselineHealth
+    $postFailureDetail = Get-So1FailureDetail -Payload $health.Body
+    $sameInheritedFailure = (
+        $baselineSession -ne "authenticated" -and
+        $baselineFingerprint -eq "browser_up|session_unavailable" -and
+        $postFingerprint -eq $baselineFingerprint
+    )
+    Assert-True $sameInheritedFailure "Post-switch SO1 session is down and does not match the pre-switch degradation baseline."
+    $inheritedSo1SessionDegradation = $true
+    $degradedReasons = @("inherited_so1_session_degradation")
+    $verificationStatus = "pass_with_warning"
+    Add-Check "so1_session" "warning" "inherited pre-switch degradation; normalized fingerprint unchanged; detail=$baselineFailureDetail->$postFailureDetail"
+}
+
+$readyStatus = Get-HttpStatusCode -Uri "$BaseUrl/readyz"
+if ($inheritedSo1SessionDegradation) {
+    Assert-True ($readyStatus -eq 503) "readyz must remain HTTP 503 for inherited SO1 session degradation."
+    Add-Check "readyz" "warning" "HTTP 503 inherited from pre-switch SO1 session degradation"
+} else {
+    Assert-True ($readyStatus -eq 200) "readyz failed."
+    Add-Check "readyz" "pass" "HTTP 200"
+}
+'@
+    $readyBlockReplacementText = $readyBlockReplacement.Replace("`r`n", "`n").TrimEnd()
+    $verifyText = $verifyText.Substring(0, $readyBlockFirstIndex) +
+        $readyBlockReplacementText +
+        $verifyText.Substring($readyBlockFirstIndex + $readyBlockAnchorText.Length)
+
+    $resultStatusAnchor = '    status = "pass"'
+    if ([regex]::Matches($verifyText, [regex]::Escape($resultStatusAnchor)).Count -ne 1) {
+        throw "Verifier result status anchor was not unique."
+    }
+    $resultStatusReplacement = @'
+    status = $verificationStatus
+    degraded = [bool]$inheritedSo1SessionDegradation
+    degraded_reasons = $degradedReasons
+    inherited_so1_session_degradation = [bool]$inheritedSo1SessionDegradation
+'@
+    $verifyText = $verifyText.Replace($resultStatusAnchor, $resultStatusReplacement.TrimEnd())
+    Write-Utf8NoBom -Path $verifyPath -Text $verifyText
 
     $syntaxCommand = @'
 $tokens = $null
@@ -200,9 +421,11 @@ if ($errors -and $errors.Count -gt 0) {
 '@
     $oldDeployPath = $env:DEPLOY_SCRIPT_PATH
     try {
-        $env:DEPLOY_SCRIPT_PATH = $deployPath
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -Command $syntaxCommand
-        Assert-LastExitCode "Patched deployment script failed Windows PowerShell syntax validation."
+        foreach ($scriptPath in @($deployPath, $verifyPath)) {
+            $env:DEPLOY_SCRIPT_PATH = $scriptPath
+            & powershell.exe -NoProfile -ExecutionPolicy Bypass -Command $syntaxCommand
+            Assert-LastExitCode "Patched deployment script failed Windows PowerShell syntax validation: $scriptPath"
+        }
     } finally {
         $env:DEPLOY_SCRIPT_PATH = $oldDeployPath
     }
@@ -215,6 +438,7 @@ if ($errors -and $errors.Count -gt 0) {
     $manifest.deployment | Add-Member -NotePropertyName supported_python_versions -NotePropertyValue $SupportedPythonVersions -Force
     $manifest.deployment | Add-Member -NotePropertyName bootstrap_python_version_logged -NotePropertyValue $true -Force
     $manifest.deployment | Add-Member -NotePropertyName powershell_utf8_parse_input -NotePropertyValue $true -Force
+    $manifest.deployment | Add-Member -NotePropertyName baseline_aware_readiness -NotePropertyValue $true -Force
     $manifest | Add-Member -NotePropertyName package_revision -NotePropertyValue 3 -Force
 
     $entries = @(
@@ -263,6 +487,7 @@ if ($errors -and $errors.Count -gt 0) {
         supported_python_versions = $SupportedPythonVersions
         package_revision = 3
         powershell_utf8_parse_input = $true
+        baseline_aware_readiness = $true
     }
     $metadataPath = Join-Path $OutputRoot "$packageName.metadata.json"
     Write-Utf8NoBom -Path $metadataPath -Text (($metadata | ConvertTo-Json -Depth 10) + [Environment]::NewLine)

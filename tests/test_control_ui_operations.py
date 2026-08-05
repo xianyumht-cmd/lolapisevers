@@ -67,7 +67,7 @@ class ControlUiOperationsTests(unittest.TestCase):
         self.assertEqual(_migrated_tab_target(_Request("/", "logs")), "/logs")
         self.assertEqual(_migrated_tab_target(_Request("/ui", "diagnostics")), "/diagnostics")
         self.assertEqual(_migrated_tab_target(_Request("/", "system")), "/system")
-        self.assertIsNone(_migrated_tab_target(_Request("/", "watchers")))
+        self.assertEqual(_migrated_tab_target(_Request("/", "watchers")), "/lanzou/watchers")
         self.assertIsNone(_migrated_tab_target(_Request("/parser-center", "logs")))
 
 

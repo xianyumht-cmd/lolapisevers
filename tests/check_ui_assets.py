@@ -10,10 +10,15 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from lanzou_update_push_api_server.control_ui import (
     ASSET_DIRECTORY,
+    render_debugger_page,
     render_diagnostics_page,
+    render_lanzou_config_page,
     render_logs_page,
+    render_main_config_page,
     render_overview_page,
     render_system_page,
+    render_targets_page,
+    render_watchers_page,
 )
 from lanzou_update_push_api_server.lolban_console import render_lolban_console_page
 from lanzou_update_push_api_server.parser_center_ui_guard import render_parser_center_page
@@ -32,12 +37,20 @@ try:
     console_script = (ASSET_DIRECTORY / "console.js").read_text(encoding="utf-8")
     operations_script_path = ASSET_DIRECTORY / "operations.js"
     operations_script = operations_script_path.read_text(encoding="utf-8")
+    configuration_script_path = ASSET_DIRECTORY / "configuration.js"
+    configuration_script = configuration_script_path.read_text(encoding="utf-8")
     console_css = (ASSET_DIRECTORY / "console.css").read_text(encoding="utf-8")
     operations_css = (ASSET_DIRECTORY / "operations.css").read_text(encoding="utf-8")
+    configuration_css = (ASSET_DIRECTORY / "configuration.css").read_text(encoding="utf-8")
     icon_sprite = (ASSET_DIRECTORY / "icons.svg").read_text(encoding="utf-8")
     logs_html = render_logs_page()
     diagnostics_html = render_diagnostics_page()
     system_html = render_system_page()
+    main_config_html = render_main_config_page()
+    lanzou_config_html = render_lanzou_config_page()
+    watchers_html = render_watchers_page()
+    targets_html = render_targets_page()
+    debugger_html = render_debugger_page()
     lolban_html = render_lolban_console_page()
     parser_center_html = render_parser_center_page()
 except Exception:
@@ -89,6 +102,38 @@ for name, (page_html, markers) in operations_pages.items():
     if "/control-assets/console.js" in page_html:
         raise SystemExit(f"{name} page incorrectly loads overview-only JavaScript")
 
+
+configuration_pages = {
+    "main-config": (main_config_html, ["主接口配置", 'data-console-ui="main-config"', "mainConfigForm"]),
+    "lanzou-config": (lanzou_config_html, ["蓝奏全局配置", 'data-console-ui="lanzou-config"', "lzWerEndpoint"]),
+    "watchers": (watchers_html, ["监控项目", 'data-console-ui="watchers"', "watcherRows"]),
+    "targets": (targets_html, ["通知目标", 'data-console-ui="targets"', "targetRows"]),
+    "api-debugger": (debugger_html, ["接口调试器", 'data-console-ui="api-debugger"', "debuggerRouteSelect"]),
+}
+for name, (page_html, markers) in configuration_pages.items():
+    missing = [marker for marker in markers if marker not in page_html]
+    if missing:
+        raise SystemExit(f"{name} page is missing required controls: {missing}")
+    if "/control-assets/configuration.js" not in page_html or "/control-assets/configuration.css" not in page_html:
+        raise SystemExit(f"{name} page is missing configuration assets")
+    if "/control-assets/console.js" in page_html:
+        raise SystemExit(f"{name} page incorrectly loads overview-only JavaScript")
+
+required_configuration_endpoints = [
+    "/admin/main-config",
+    "/admin/lanzou-config",
+    "/admin/overview",
+    "/scan?watcher_id=",
+    "/notify/test",
+    "/files/",
+    "/admin/openapi/main",
+    "/admin/openapi/lanzou",
+    "/admin/invoke",
+]
+configuration_missing = [marker for marker in required_configuration_endpoints if marker not in configuration_script]
+if configuration_missing:
+    raise SystemExit(f"configuration JavaScript is missing endpoints: {configuration_missing}")
+
 required_operations_endpoints = [
     "/admin/logs",
     "/admin/diagnostics",
@@ -105,10 +150,10 @@ if operations_missing:
     raise SystemExit(f"operations JavaScript is missing endpoints: {operations_missing}")
 
 for forbidden in ("alert(", "confirm(", "prompt("):
-    if forbidden in console_script or forbidden in operations_script:
+    if forbidden in console_script or forbidden in operations_script or forbidden in configuration_script:
         raise SystemExit(f"new control UI contains forbidden browser interaction: {forbidden}")
 for forbidden in ("radial-gradient", "linear-gradient", "backdrop-filter"):
-    if forbidden in console_css or forbidden in operations_css:
+    if forbidden in console_css or forbidden in operations_css or forbidden in configuration_css:
         raise SystemExit(f"new control UI contains forbidden legacy visual pattern: {forbidden}")
 
 for font_marker in ('"Microsoft YaHei UI"', '"Microsoft YaHei"', '"Cascadia Mono"'):
@@ -126,6 +171,9 @@ for icon_marker in (
     "icon-check",
     "icon-tool",
     "icon-archive",
+    "icon-plus",
+    "icon-save",
+    "icon-send",
 ):
     if icon_marker not in icon_sprite:
         raise SystemExit(f"new control UI is missing SVG symbol: {icon_marker}")
@@ -192,12 +240,13 @@ lolban_path.write_text(lolban_script, encoding="utf-8")
 parser_path = Path("ui_parser_center.generated.js")
 parser_path.write_text(parser_script, encoding="utf-8")
 subprocess.run(["node", "--check", str(operations_script_path)], check=True)
+subprocess.run(["node", "--check", str(configuration_script_path)], check=True)
 subprocess.run(["node", "--check", str(lolban_path)], check=True)
 subprocess.run(["node", "--check", str(parser_path)], check=True)
 print(
     "wrote "
     f"{len(console_script)} new-console JavaScript characters, validated "
-    f"{len(operations_script)} operations JavaScript characters, and wrote "
+    f"{len(operations_script)} operations and {len(configuration_script)} configuration JavaScript characters, and wrote "
     f"{len(lolban_script)} lolban-console and "
     f"{len(parser_script)} parser-center JavaScript characters for syntax validation"
 )
