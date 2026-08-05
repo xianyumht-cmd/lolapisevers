@@ -1,10 +1,10 @@
 # WEBUI-CONTROL-PANEL-003 P3B 基线感知 readiness 交接
 
-更新时间：2026-08-06 02:15 +08:00
+更新时间：2026-08-06 02:43 +08:00
 
 ## 当前断点
 
-SO1 readiness 原始原因漂移误回滚已经修复，新 V3 不可变离线部署包已通过标准 CI、V3 构建和本地二次复核。当前下一步是 Windows 生产部署及 P3B 五个页面实机验收。
+P3B 新 V3 目标已经在 Windows 生产机部署成功，验证报告为完整 `pass`。代码、打包和生产切换均无阻塞，当前进入五个 P3B 页面与实际操作验收。
 
 继续任务时先读取：
 
@@ -12,16 +12,21 @@ SO1 readiness 原始原因漂移误回滚已经修复，新 V3 不可变离线�
 2. 本文档
 3. `docs/HANDOFF_WEBUI_CONTROL_PANEL_003_P3B_20260805.md`
 
-## 当前真实状态
+## 当前生产
 
 - 仓库：`xianyumht-cmd/lolapisevers`
 - Issue：#40，保持打开
-- Draft PR：#41，保持 Draft，禁止合并
+- Draft PR：#41，保持 Draft
 - 功能分支：`feat/webui-control-panel-003-20260805`
-- 当前生产：`7d637b90ac2b177de86bae024713ac9172bb26fa`
-- 生产仍是 P3A，P3B 尚未部署
+- 当前生产：`7524a5ea36b53a4186a1934edb69b691af56ac09`
+- 服务：`LOLDataSystem`
+- 生产验证：`pass`
+- `degraded=false`
+- `inherited_so1_session_degradation=false`
 
-P3A 已在 Windows 生产机通过实机验收：333 项测试、Windows 服务、`/livez`、`/readyz`、build-info、Git HEAD、合集和 ARAM 正式链路通过。
+备份目录：
+
+- `D:\project2\lolapisevers.deploy-backups\20260806-023757-full-bug-repair-7524a5ea36b5`
 
 ## P3B 页面
 
@@ -33,130 +38,86 @@ P3A 已在 Windows 生产机通过实机验收：333 项测试、Windows 服务�
 
 对应旧 `?tab=` 地址保留 307 兼容重定向。共享控制台 Shell、Secret 脱敏、Watcher 密码掩码往返、通知 Header 掩码往返、本机回环或 `WEBUI_ADMIN_TOKEN` 保护均已实现。
 
-## 已回滚部署记录
+## Windows 部署记录
 
-旧目标：
-
-- `292b43ef439b6102fd34b3c7b198cc7671b65eab`
-
-Windows 实机结果：
-
-- release bundle 与候选环境：PASS
-- Python 3.14 离线依赖：PASS
-- 341 项候选测试：PASS
-- WebUI JavaScript：PASS
-- 停服前健康基线采集：PASS
-- 生产切换与服务启动：PASS
-- 后置验证：FAIL
-- 自动回滚：PASS
-- 恢复提交：`7d637b90ac2b177de86bae024713ac9172bb26fa`
-
-失败原因：
-
-```text
-Post-switch SO1 session is down and does not match the pre-switch degradation baseline.
-DEPLOYMENT FAILED, AUTOMATIC ROLLBACK SUCCEEDED.
-```
-
-旧验证器使用 SO1 `reason|error_class` 原始文字作为等价指纹；浏览器在线、会话仍不可用时，原因可能在 `TimeoutError`、`session_expired_or_challenge` 等值间漂移，从而误判状态恶化。
-
-旧目标 `292b43ef...` 禁止再次部署。
-
-## 最终归一化规则
-
-- `so1_browser=up` 且 `so1_session!=authenticated` 时，归一化指纹为 `browser_up|session_unavailable`
-- 原始 `reason|error_class` 保留为前后 verification detail
-- 原始 detail 不作为同一稳定状态的唯一等价条件
-- 部署前会话已认证、部署后失效：失败并回滚
-- MySQL 回归：失败并回滚
-- SO1 Chromium 回归：失败并回滚
-- 服务、Git HEAD、build-info、正式交付链路回归：失败并回滚
-- 仅部署前后均为相同受控会话不可用状态时，允许 `pass_with_warning`
-- 继承降级时 `/readyz` 仍必须为 HTTP 503
-- 报告必须写入 `inherited_so1_session_degradation=true`
-
-这不是忽略 `/readyz`，而是用稳定服务状态判断是否发生新回归，同时保留原始原因用于审计。
-
-## 最终候选与部署目标
-
-最终候选：
-
-- `3dadd4c782c0a44a6a3c337c5216a0f211387d46`
-
-最终部署目标：
+部署目标：
 
 - `7524a5ea36b53a4186a1934edb69b691af56ac09`
-- 第一父提交：`7d637b90ac2b177de86bae024713ac9172bb26fa`
-- 第二父提交：`3dadd4c782c0a44a6a3c337c5216a0f211387d46`
-- 目标 tree：`52ecd2090beb682d8114def3b79c8ed6b85887cd`
-- 候选 tree：`52ecd2090beb682d8114def3b79c8ed6b85887cd`
-- 零文件差异：PASS
 
-## CI 与 V3 构建
+部署时间：
 
-最终候选标准验证：
+- 候选目录时间戳：`20260806-023757`
+- verification generated_at：`2026-08-05T18:39:20.1378100Z`
 
-- tests Run `31032837203`：success
-- Linux：success
-- Windows：success
-- dependency audit：success
-- Parser Center Run `31032836682`：success
+部署过程：
 
-最终目标：
+- release.bundle 验证：PASS
+- Python 3.14 离线依赖安装：PASS
+- 无破损依赖：PASS
+- 343 项候选测试：PASS
+- WebUI JavaScript：PASS
+- 停服前健康基线：PASS
+- 生产源码切换：PASS
+- build-info 写入：PASS
+- 服务启动：PASS
+- 后置生产验证：PASS
+- 自动回滚：未触发
 
-- 标准 tests：success
-- Parser Center：success
-- V3 Run：`31033170851`，success
-- V3 Job：`92398630356`
-- Artifact：`8941607500`
-- 临时 Draft PR #54 已关闭，未合并 master
+验证报告：
 
-## 制品
+- `status=pass`
+- Windows 服务：Running
+- `/livez`：HTTP 200
+- MySQL：up
+- SO1 Chromium：up
+- SO1 session：authenticated
+- `/readyz`：HTTP 200
+- build-info：目标提交
+- Git HEAD：目标提交
+- shard：`kind=segments`
+- ARAM：`kind=segments`
+- observability 检查：pass，detail 为 `status=degraded`
 
-外层 Artifact：
+`observability status=degraded` 是业务观测摘要，验证器已确认它不构成本次部署失败条件；服务、必需依赖、Git、构建信息和两条正式交付链路均通过。
 
-- SHA-256：`883cebd0e826c35729ba7db41a17672094008a9077a22c0e95d4f58b73471b18`
+## 停服前基线说明
 
-内层 ZIP：
+`pre-switch-health.json` 记录的是切换前旧生产：
 
-- 文件名：`LOLDataSystem-full-bug-repair-safe-deploy-7524a5ea36b5-py311-py314-winps51-v3.zip`
-- SHA-256：`5ca66551f54a2adaaf66c732f0703e1e1aa11bf313b489845e1e5493e574c3c0`
-- 大小：`85,842,369` 字节
-- Package content SHA-256：`c8702c381f9e5c97a10ffc0318356ccb0ed638ec4d1462200c9e895245fc9fee`
-- 支持 Python：3.11、3.12、3.13、3.14
-- Package revision：3
-- `powershell_utf8_parse_input=true`
-- `baseline_aware_readiness=true`
+- commit：`7d637b90ac2b177de86bae024713ac9172bb26fa`
+- `ready=true`
+- MySQL：up
+- SO1 Chromium：up
+- SO1 session：authenticated
 
-## 本地复核
+因此本次部署没有使用 inherited degradation 例外；新生产直接以完整健康状态通过。
 
-- 外层 Artifact digest：PASS
-- metadata 与内层 ZIP：PASS
-- manifest 51 个文件逐一哈希和大小：PASS
-- Package content digest：PASS
-- 归一化 SO1 指纹：PASS
-- 原始 detail 审计：PASS
-- MySQL、Chromium、已认证会话与 readyz 回归门禁：PASS
-- 停服前基线采集：PASS
-- 自动回滚：PASS
-- release.bundle 完整历史：PASS
-- 当前生产直接第一父提交：PASS
-- 目标与候选零差异：PASS
-- 临时补丁与临时工作流清理：PASS
+## SO1 readiness 修复结论
 
-## 下一步
+此前目标 `292b43ef...` 因原始 `reason|error_class` 文字漂移误回滚。最终版本保留以下规则：
 
-1. 解压目标 `7524a5ea...` 的内层 ZIP。
-2. 双击 `run-deploy.cmd`。
-3. 保留完整窗口输出。
-4. 提交备份目录中的 `pre-switch-health.json` 和 `verification-report.json`。
-5. 部署后 Ctrl + F5 验收五个 P3B 页面。
-6. 验收五个旧 `?tab=` 307 重定向。
-7. 检查合集和 ARAM 正式链路。
-8. 若为 `pass_with_warning`，确认唯一降级是 `inherited_so1_session_degradation`，并核对 detail 仅为会话失败原因漂移。
-9. P3B 验收前不合并 PR #41，不关闭 Issue #40。
+- 浏览器在线、会话不可用时使用稳定状态指纹
+- 原始失败原因保留在报告 detail
+- 部署前已认证、部署后失效仍强制回滚
+- MySQL、Chromium、服务、Git、build-info 和正式链路回归仍强制回滚
 
-## 禁止部署
+本次实际部署时 SO1 session 已恢复 authenticated，所以归一化 warning 路径没有被使用。
+
+## 下一步验收
+
+1. Ctrl + F5 刷新 6178 页面。
+2. 提交五个独立页面截图。
+3. 验收旧 `?tab=` 地址 307 跳转。
+4. 主接口页：读取、修改、保存、备份、重启提示。
+5. 蓝奏全局配置：环境覆盖状态、保存和热刷新。
+6. Watcher：新增、编辑、启停、删除、扫描和密码保留。
+7. 通知目标：Header 脱敏、保留、启停、删除和测试推送。
+8. 接口调试器：Path、Query、Header、JSON Body 和响应显示。
+9. 页面操作验收通过后标记 P3B 完成。
+10. 再进入旧运行面板、旧导航注入和 `/legacy-ui` 退休审查。
+11. 整体迁移完成前不合并 PR #41，不关闭 Issue #40。
+
+## 禁止再次部署
 
 - `f9e00b505dc549f3d761348dc741535f4294e352`
 - `954f7748d41da9c3264441d33d60b7c9273fd946`
