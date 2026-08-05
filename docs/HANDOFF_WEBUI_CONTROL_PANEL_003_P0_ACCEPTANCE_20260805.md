@@ -5,118 +5,34 @@
 - 分支：`feat/webui-control-panel-003-20260805`
 - 首次生产预览提交：`5a1f6420867e289a9dc36b6ef62fa116b8b47880`
 - 当前生产提交：`51a93e05fd4bd49e451e864ec7af305961d8a47a`
+- Provider Secret 就地配置候选：`420bd967ac50543b6d34b5049d90363d9591f593`
 - 日期：2026-08-05
 
-## 1. 首次生产部署结果
+## 1. 已完成的生产部署
 
-P0 首个 V3 包已在 Windows 生产机成功部署到 `5a1f6420867e289a9dc36b6ef62fa116b8b47880`。
+### 1.1 首次 P0 预览
 
-部署证据：
+提交 `5a1f6420867e289a9dc36b6ef62fa116b8b47880` 已在 Windows 生产机安全部署：
 
-- 候选环境安装与依赖检查成功；
-- 324 项测试全部通过；
-- 生产服务切换成功；
-- `/livez` HTTP 200；
-- `/readyz` HTTP 200；
-- `/build-info` 与 Git HEAD 均匹配目标提交；
-- shard 与 ARAM 正式交付链路通过；
-- verification report 状态为 `pass`；
-- 生产备份位于仓库外部部署备份目录。
+- 324 项候选测试通过；
+- Windows 服务、`/livez`、`/readyz` 正常；
+- build-info 与 Git HEAD 匹配；
+- shard 与 ARAM 正式链路通过；
+- verification report 为 `pass`。
 
-## 2. 首次页面验收结论
+### 1.2 P0 状态与运行时 Secret 修复
 
-新 6178 根控制台的结构和视觉方向达到 P0 目标：
+提交 `51a93e05fd4bd49e451e864ec7af305961d8a47a` 已在 Windows 生产机安全部署：
 
-- 固定深色侧栏；
-- 白色顶栏与面包屑；
-- 微软雅黑中文字体；
-- 状态卡、Provider 表格、快捷入口和告警面板；
-- 本地 SVG 图标；
-- 不再使用旧毛玻璃根页面；
-- 信息密度和层级明显优于旧版控制台。
-
-首次截图同时暴露两项真实问题：
-
-1. 蓝奏监控任务 `degraded` 被误标为 6178 控制台服务异常；
-2. 4PNG Token 已安全写入磁盘，但 5001 重启后可能没有继承该环境变量。
-
-## 3. 已完成修复
-
-### 3.1 状态语义修复
-
-总览现在分开判断：
-
-- 6178 控制台是否可访问：以 `/build-info` 和控制面响应为准；
-- Windows 托管服务状态：读取服务状态对象的 `state/status`；
-- 蓝奏监控业务降级：单独显示为“蓝奏监控任务存在降级”。
-
-全局状态改为三档：
-
-- 绿色：核心服务正常且没有告警；
-- 黄色：核心服务正常，但存在业务告警；
-- 红色：5001 或 6178 核心服务实际异常。
-
-### 3.2 Python 启动环境兜底
-
-新增 `core/local_env.py`：
-
-- 在导入封号路由和服务前读取 `ops/app_env.local.ps1`；
-- 只解析字面量 `$env:KEY = VALUE`；
-- 不执行 PowerShell；
-- 忽略表达式和不安全语句；
-- 不覆盖已经存在的环境变量；
-- 不记录或返回 Secret 值。
-
-这使 `LOL_BAN_4PNG_TOKEN` 在 NSSM/PowerShell 环境继承不完整时仍能由 Python 安全加载。
-
-### 3.3 生成物防线
-
-全量测试曾生成：
-
-- `config/interface-parser-center.json`；
-- `data/contact_risk.db`。
-
-两项均已从候选树删除，并加入 `.gitignore`。三套生成的 JavaScript 检查文件也已忽略，防止测试产物进入后续提交和部署包。
-
-## 4. 修复候选验证
-
-最终候选已通过：
-
-- Linux 全量测试；
-- Windows 全量测试；
-- 327 项测试；
-- Parser Center 专项及全套测试；
-- 新控制台、封号页、解析中心 JavaScript 语法检查；
-- 全部 PowerShell 5.1 解析；
-- 依赖安全审计；
-- 环境加载器不覆盖已有变量测试；
-- 环境加载器拒绝执行 PowerShell 表达式测试；
-- 应用启动顺序测试；
-- 状态语义回归测试；
-- V3 不可变目标测试、manifest 与逐文件哈希验证。
-
-## 5. 第二次生产部署结果
-
-V3 修复包已于 2026-08-05 在 Windows 生产机部署成功。
-
-生产提交：
-
-`51a93e05fd4bd49e451e864ec7af305961d8a47a`
-
-部署证据：
-
-- 使用 Python 3.14 离线候选环境；
-- 327 项测试全部通过；
+- Python 3.14 离线候选环境；
+- 327 项测试通过；
 - 全部 PowerShell 5.1 解析通过；
 - 新控制台、封号页与解析中心 JavaScript 语法检查通过；
-- 生产服务切换成功；
 - Windows 服务状态 `Running`；
-- `/livez` HTTP 200；
-- `/readyz` HTTP 200；
-- `/build-info` 与 Git HEAD 均匹配目标提交；
-- shard 正式交付链路 `kind=segments`；
-- ARAM 正式交付链路 `kind=segments`；
-- verification report 状态为 `pass`；
+- `/livez`、`/readyz` HTTP 200；
+- build-info 与 Git HEAD 匹配；
+- shard 与 ARAM 正式交付链路均为 `kind=segments`；
+- verification report 为 `pass`；
 - 没有触发回滚。
 
 生产备份：
@@ -127,18 +43,92 @@ V3 修复包已于 2026-08-05 在 Windows 生产机部署成功。
 
 `D:\project2\lolapisevers.deploy-backups\20260805-101138-full-bug-repair-51a93e05fd4b\verification-report.json`
 
-`observability=status=degraded` 仅表示某个可选业务上游或 watcher 仍处于降级状态，不代表 5001 或 6178 核心服务部署失败。
+## 2. 新控制台视觉验收
 
-## 6. 当前状态与下一步
+6178 根控制台的结构与视觉方向达到 P0 目标：
 
-当前生产已运行 `51a93e05fd4bd49e451e864ec7af305961d8a47a`。
+- 固定深色侧栏；
+- 白色顶栏和面包屑；
+- 微软雅黑中文字体；
+- 状态卡、Provider 表格、快捷入口与告警面板；
+- 本地 SVG 图标；
+- 不再使用旧毛玻璃根页面；
+- 信息密度和层级明显优于旧版控制台。
 
-部署层验收已经通过。P0 最后只剩页面与 4PNG 运行态验收：
+状态语义已经拆分：
 
-1. 浏览器对 6178 执行 `Ctrl + F5`；
-2. 确认 6178 状态卡显示“运行正常”；
-3. 若蓝奏 watcher 有问题，只显示黄色业务告警，不再显示红色 6178 服务异常；
-4. 确认 4PNG Token 的磁盘状态和 5001 运行态均为已配置；
-5. 执行 4PNG Provider 直连测试；
-6. 执行 `/api/v2/lolban` 正式链路测试；
-7. 页面与 4PNG 验收完成前 PR #41 保持 Draft，Issue #40 保持打开。
+- 6178 控制台可访问由控制面和 `/build-info` 判断；
+- Windows 托管服务读取 `state/status`；
+- 蓝奏 watcher 降级单独显示为黄色业务告警；
+- 只有 5001 或 6178 实际不可用才显示红色服务异常。
+
+## 3. 实机发现的 Provider Secret 问题
+
+当前生产页面进一步暴露两个问题。
+
+### 3.1 主接口 Token 没有专用配置入口
+
+主 Provider `lolban-primary` 的 Query JSON 引用：
+
+`$secret:LOLMAP_API_TOKEN`
+
+但旧页面只为 4PNG 提供安全输入，因此主接口测试会返回：
+
+`Secret 未配置：LOLMAP_API_TOKEN`
+
+正式链路最终会表现为“服务器繁忙”，但根因不是服务器负载，而是主 Provider 的 Secret 缺失。
+
+### 3.2 4PNG Token 信息层级错误
+
+旧设计把一个备用 Provider 的 Token 做成页面级大型标题面板，位于缓存配置和 Provider 列表之前。该控件应归属 `lolban-4png` Provider，而不是整个封号查询页面。
+
+## 4. Provider Secret 就地配置修复
+
+候选提交：
+
+`420bd967ac50543b6d34b5049d90363d9591f593`
+
+### 4.1 页面结构
+
+- 删除页面顶部大型 4PNG Token 面板；
+- `lolban-primary` Provider 卡片内显示紧凑的“主接口 Token”；
+- `lolban-4png` Provider 卡片内显示紧凑的“4PNG Token”；
+- `lolban-lol2099` 不需要 Token，因此不显示 Secret 控件；
+- Token 输入位于对应 Provider 的 API URL 附近；
+- 每项显示：未配置、磁盘已配置但 5001 未加载、已配置并加载。
+
+### 4.2 安全保存与运行态
+
+- 新增通用端点 `/admin/query-console/lolban/provider-secret`；
+- 只允许预定义的 Provider ID 与 Secret 名称映射；
+- `lolban-primary` 仅允许写入 `LOLMAP_API_TOKEN`；
+- `lolban-4png` 仅允许写入 `LOL_BAN_4PNG_TOKEN`；
+- 两个 Secret 都加入 5001 严格热加载白名单；
+- 真实 Token 不返回浏览器、不写入 Provider JSON、不进入 URL、日志或诊断输出；
+- 保留旧 4PNG 保存端点作为兼容包装，但新页面不再使用它。
+
+### 4.3 测试与清理
+
+安全补丁门已完成：
+
+- 328 项 Linux 测试仅在旧的静态 HTML 断言上发现两处测试设计错误；
+- 修正为验证 Provider 卡片就地控件、通用安全端点和旧大型面板不存在；
+- 正式提交仅包含 3 个源码文件与 2 个测试文件；
+- 一次性补丁脚本与工作流已删除；
+- 未提交配置 JSON、SQLite、日志或诊断生成物。
+
+## 5. 当前状态与下一步
+
+当前生产仍运行 `51a93e05fd4bd49e451e864ec7af305961d8a47a`，尚未包含 Provider Secret 就地配置。
+
+下一步：
+
+1. 等待候选分支最终 Linux、Windows、Parser Center、WebUI JavaScript、PowerShell 5.1 和依赖审计全部通过；
+2. 生成新的 V3 不可变离线部署包；
+3. 在 Windows 生产机部署；
+4. 确认页面顶部不再出现大型 4PNG Token 面板；
+5. 在主接口卡片内保存 `LOLMAP_API_TOKEN`；
+6. 在 4PNG 卡片内检查或更新 `LOL_BAN_4PNG_TOKEN`；
+7. 分别测试主接口、LOL2099、4PNG Provider 直连；
+8. 测试 `/api/v2/lolban` 正式降级链路；
+9. 验收完成前 PR #41 保持 Draft，Issue #40 保持打开。
