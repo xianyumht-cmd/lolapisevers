@@ -11,7 +11,69 @@ on:
     branches: [master]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
+  p3b-acceptance-patch:
+    if: github.event_name == 'pull_request' && github.head_ref == 'feat/webui-control-panel-003-20260805'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: feat/webui-control-panel-003-20260805
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Apply targeted acceptance patch
+        shell: bash
+        run: |
+          if grep -q "lanzouTemplatePreserve" lanzou_update_push_api_server/control_ui/assets/configuration.js; then
+            echo "Targeted P3B patch already applied."
+            exit 0
+          fi
+          python - <<'PY'
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/tmp-p3b-acceptance-fixes.yml').read_text(encoding='utf-8')
+          start_marker = "          python - <<'PY'\n"
+          end_marker = "\n          PY\n"
+          start = workflow.index(start_marker) + len(start_marker)
+          end = workflow.index(end_marker, start)
+          lines = workflow[start:end].splitlines()
+          code = '\n'.join(line[10:] if line.startswith('          ') else line for line in lines)
+          exec(compile(code, 'tmp-p3b-acceptance-fixes', 'exec'), {'__name__': '__main__'})
+          PY
+
+      - name: Validate targeted patch
+        shell: bash
+        run: |
+          python -m compileall -q lanzou_update_push_api_server tests
+          node --check lanzou_update_push_api_server/control_ui/assets/configuration.js
+          git diff --check
+
+      - name: Commit targeted fixes
+        shell: bash
+        run: |
+          git add \
+            lanzou_update_push_api_server/config.py \
+            lanzou_update_push_api_server/management.py \
+            lanzou_update_push_api_server/api_debugger.py \
+            lanzou_update_push_api_server/control_ui/configuration.py \
+            lanzou_update_push_api_server/control_ui/assets/configuration.js \
+            tests/test_api_debugger.py \
+            tests/test_control_ui_configuration.py
+          if git diff --cached --quiet; then
+            echo "No targeted changes to commit."
+            exit 0
+          fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m "fix(webui): close P3B acceptance gaps"
+          git push origin HEAD:feat/webui-control-panel-003-20260805
+
   linux-unittest:
     runs-on: ubuntu-latest
     timeout-minutes: 20
