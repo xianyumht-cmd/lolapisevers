@@ -394,9 +394,12 @@
     setText('repairStateResult', '正在修复状态文件...');
     const result = await safeApi('/admin/repair/state', { method: 'POST', body: {} });
     if (button) button.disabled = false;
-    if (!result.ok) {
-      setText('repairStateResult', `修复失败：${result.error.message}`);
-      showToast(`状态文件修复失败：${result.error.message}`, 'error');
+    const repairError = !result.ok
+      ? result.error.message
+      : (result.data?.ok === false ? (result.data.error || '修复接口返回失败') : '');
+    if (repairError) {
+      setText('repairStateResult', `修复失败：${repairError}`);
+      showToast(`状态文件修复失败：${repairError}`, 'error');
       return;
     }
     setText('repairStateResult', JSON.stringify(result.data, null, 2));
@@ -425,7 +428,7 @@
   }
 
   function renderSecurityStatus(data) {
-    const required = Boolean(data?.token_required || data?.admin_token_required || data?.configured);
+    const required = Boolean(data?.token_configured || data?.token_required || data?.admin_token_required || data?.configured);
     setText('securityMode', required ? '令牌保护' : '仅本机访问');
     setText('securityDetail', required ? '管理操作需要 WEBUI_ADMIN_TOKEN' : '未配置令牌时仅允许回环地址');
     setText('securityStatusContent', JSON.stringify(data || {}, null, 2));
@@ -492,8 +495,11 @@
       method: 'POST',
       body: { backup_name: name },
     });
-    if (!result.ok) {
-      showToast(`配置回滚失败：${result.error.message}`, 'error');
+    const rollbackError = !result.ok
+      ? result.error.message
+      : (result.data?.ok === false ? (result.data.error || '回滚接口返回失败') : '');
+    if (rollbackError) {
+      showToast(`配置回滚失败：${rollbackError}`, 'error');
       return;
     }
     showToast(kind === 'main' ? '主接口配置已回滚，重启服务后生效' : '蓝奏配置已回滚并刷新运行态', 'success');
@@ -505,8 +511,11 @@
       method: 'POST',
       body: { delay_seconds: 3 },
     });
-    if (!result.ok) {
-      showToast(`服务重启安排失败：${result.error.message}`, 'error');
+    const restartError = !result.ok
+      ? result.error.message
+      : (result.data?.ok === false ? (result.data.error || '重启接口返回失败') : '');
+    if (restartError) {
+      showToast(`服务重启安排失败：${restartError}`, 'error');
       return;
     }
     showToast('已安排 LOLDataSystem 重启，页面连接会短暂中断', 'success');
