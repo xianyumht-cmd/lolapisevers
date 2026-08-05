@@ -15,10 +15,10 @@ permissions:
   contents: write
 
 jobs:
-  p3b-acceptance-patch:
+  p3b-url-mask-followup:
     if: github.event_name == 'pull_request' && github.head_ref == 'feat/webui-control-panel-003-20260805'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout feature branch
         uses: actions/checkout@v4
@@ -27,151 +27,49 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
-      - name: Apply targeted acceptance patch
+      - name: Repair encoded mask detection
         shell: bash
         run: |
-          if grep -q "lanzouTemplatePreserve" lanzou_update_push_api_server/control_ui/assets/configuration.js; then
-            echo "Targeted P3B patch already applied."
-            exit 0
-          fi
           python - <<'PY'
           from pathlib import Path
 
-          workflow = Path('.github/workflows/tmp-p3b-acceptance-fixes.yml').read_text(encoding='utf-8')
-          start_marker = "          python - <<'PY'\n"
-          end_marker = "\n          PY\n"
-          start = workflow.index(start_marker) + len(start_marker)
-          end = workflow.index(end_marker, start)
-          lines = workflow[start:end].splitlines()
-          code = '\n'.join(line[10:] if line.startswith('          ') else line for line in lines)
-          exec(compile(code, 'tmp-p3b-acceptance-fixes', 'exec'), {'__name__': '__main__'})
+          path = Path('lanzou_update_push_api_server/management.py')
+          text = path.read_text(encoding='utf-8')
+          old = '''def _merge_masked_query_url(candidate: str, previous: str, name: str) -> str:\n    if "***" not in candidate:\n        return candidate\n    if not previous:\n        raise ValueError(f"{name} contains a masked value but no previous URL exists")\n    candidate_parts = urlsplit(candidate)\n    previous_parts = urlsplit(previous)'''
+          new = '''def _merge_masked_query_url(candidate: str, previous: str, name: str) -> str:\n    candidate_parts = urlsplit(candidate)\n    candidate_pairs = parse_qsl(candidate_parts.query, keep_blank_values=True)\n    if not any(value == "***" for _, value in candidate_pairs):\n        return candidate\n    if not previous:\n        raise ValueError(f"{name} contains a masked value but no previous URL exists")\n    previous_parts = urlsplit(previous)'''
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif 'candidate_pairs = parse_qsl(candidate_parts.query' not in text:
+              raise SystemExit('encoded-mask helper anchor not found')
+          text = text.replace(
+              '    for key, value in parse_qsl(candidate_parts.query, keep_blank_values=True):\n',
+              '    for key, value in candidate_pairs:\n',
+              1,
+          )
+          path.write_text(text, encoding='utf-8')
           PY
 
-      - name: Normalize API debugger regression tests
+      - name: Run focused regression tests
         shell: bash
         run: |
-          cat > tests/test_api_debugger.py <<'PYTEST'
-          import unittest
-          from unittest.mock import patch
-
-          from lanzou_update_push_api_server.api_debugger import invoke_api
-
-
-          class ApiDebuggerTests(unittest.TestCase):
-              def test_path_parameters_are_substituted_and_removed_from_query(self):
-                  class FakeResponse:
-                      ok = True
-                      status_code = 200
-                      headers = {"content-type": "application/json"}
-                      text = '{"ok":true}'
-                      content = text.encode("utf-8")
-                      url = "http://127.0.0.1:6178/files/demo%20id?limit=5"
-
-                      @staticmethod
-                      def json():
-                          return {"ok": True}
-
-                  with patch("lanzou_update_push_api_server.api_debugger.requests.request", return_value=FakeResponse()) as request_mock:
-                      result = invoke_api(
-                          "http://127.0.0.1:6178",
-                          {
-                              "method": "GET",
-                              "path": "/files/{watcher_id}",
-                              "query": {"watcher_id": "demo id", "limit": 5},
-                          },
-                      )
-
-                  self.assertTrue(result["ok"])
-                  self.assertEqual(request_mock.call_args.args[1], "http://127.0.0.1:6178/files/demo%20id")
-                  self.assertEqual(request_mock.call_args.kwargs["params"], {"limit": 5})
-
-              def test_unfilled_path_parameter_is_rejected(self):
-                  with self.assertRaisesRegex(ValueError, "path parameter is not filled"):
-                      invoke_api(
-                          "http://127.0.0.1:6178",
-                          {
-                              "method": "GET",
-                              "path": "/files/{watcher_id}",
-                              "query": {"watcher_id": "<watcher_id>"},
-                          },
-                      )
-
-              def test_custom_headers_are_forwarded_and_sensitive_output_is_redacted(self):
-                  class FakeResponse:
-                      ok = True
-                      status_code = 200
-                      headers = {
-                          "content-type": "application/json",
-                          "set-cookie": "session=secret-cookie",
-                          "x-request-id": "demo",
-                      }
-                      content = b'{"ok":true}'
-                      url = "http://127.0.0.1:6178/admin/audit?token=secret-query&limit=5"
-
-                  with patch("lanzou_update_push_api_server.api_debugger.requests.request", return_value=FakeResponse()) as request_mock:
-                      result = invoke_api(
-                          "http://127.0.0.1:6178",
-                          {
-                              "method": "GET",
-                              "path": "/admin/audit",
-                              "query": {"limit": 5},
-                              "headers": {"x-client": "webui", "authorization": "Bearer secret"},
-                          },
-                          admin_token="internal-admin-token",
-                      )
-
-                  sent_headers = request_mock.call_args.kwargs["headers"]
-                  self.assertEqual(sent_headers["x-client"], "webui")
-                  self.assertEqual(sent_headers["authorization"], "Bearer secret")
-                  self.assertEqual(sent_headers["x-admin-token"], "internal-admin-token")
-                  self.assertEqual(result["headers"]["set-cookie"], "***")
-                  self.assertEqual(result["headers"]["x-request-id"], "demo")
-                  self.assertNotIn("secret-query", result["request_url"])
-                  self.assertIn("token=%2A%2A%2A", result["request_url"])
-
-              def test_hop_by_hop_and_host_headers_are_rejected(self):
-                  for name in ("host", "content-length", "connection"):
-                      with self.subTest(name=name):
-                          with self.assertRaisesRegex(ValueError, "not allowed"):
-                              invoke_api(
-                                  "http://127.0.0.1:6178",
-                                  {
-                                      "method": "GET",
-                                      "path": "/health",
-                                      "headers": {name: "unsafe"},
-                                  },
-                              )
-
-
-          if __name__ == "__main__":
-              unittest.main()
-          PYTEST
-
-      - name: Validate targeted patch
-        shell: bash
-        run: |
-          python -m compileall -q lanzou_update_push_api_server tests
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m unittest discover -s tests -p 'test_api_debugger.py' -v
+          python -m unittest discover -s tests -p 'test_control_ui_configuration.py' -v
           node --check lanzou_update_push_api_server/control_ui/assets/configuration.js
           git diff --check
 
-      - name: Commit targeted fixes
+      - name: Commit follow-up fix
         shell: bash
         run: |
-          git add \
-            lanzou_update_push_api_server/config.py \
-            lanzou_update_push_api_server/management.py \
-            lanzou_update_push_api_server/api_debugger.py \
-            lanzou_update_push_api_server/control_ui/configuration.py \
-            lanzou_update_push_api_server/control_ui/assets/configuration.js \
-            tests/test_api_debugger.py \
-            tests/test_control_ui_configuration.py
+          git add lanzou_update_push_api_server/management.py
           if git diff --cached --quiet; then
-            echo "No targeted changes to commit."
+            echo "Encoded URL mask fix already present."
             exit 0
           fi
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git commit -m "fix(webui): close P3B acceptance gaps"
+          git commit -m "fix(webui): preserve encoded URL query masks"
           git push origin HEAD:feat/webui-control-panel-003-20260805
 
   linux-unittest:
@@ -287,8 +185,7 @@ jobs:
               [ref]$errors
             ) | Out-Null
             if ($errors.Count -gt 0) {
-              $errors | ForEach-Object { Write-Error "$($file.FullName): $($_.Message)"
-              }
+              $errors | ForEach-Object { Write-Error "$($file.FullName): $($_.Message)" }
               exit 1
             }
           }
