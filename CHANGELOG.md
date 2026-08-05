@@ -4,6 +4,18 @@
 
 ## 2026-08-05
 
+### 封号 Provider Secret 就地配置
+
+- 修复封号查询主接口引用 `$secret:LOLMAP_API_TOKEN`、但 WebUI 没有对应安全配置入口的问题；此前主接口测试会明确报“Secret 未配置”，正式链路最终表现为“服务器繁忙”。
+- `LOLMAP_API_TOKEN` 加入 5001 严格热加载白名单和运行时 Secret 状态列表。
+- 移除页面顶部占据主要视觉层级的大型“4PNG Token”面板。
+- 主接口 Token 改为显示在 `lolban-primary` Provider 卡片内部，位于对应 API URL 附近。
+- 4PNG Token 改为显示在 `lolban-4png` Provider 卡片内部；LOL2099 无需 Token，不显示 Secret 控件。
+- 每个 Provider Secret 独立显示“未配置”“磁盘已配置但 5001 未加载”“已配置并加载”。
+- 新增通用安全端点 `/admin/query-console/lolban/provider-secret`，只接受预定义 Provider ID 与 Secret 名称映射，不能通过请求任意写入环境变量。
+- 真实 Token 不回显、不进入 Provider JSON、URL、日志或诊断结果；旧 4PNG 保存端点仅作为兼容包装保留。
+- 候选已通过 Linux、Windows、328 项测试、Parser Center、三个最终 WebUI JavaScript、全部 PowerShell 5.1 和依赖审计。
+
 ### WEBUI-CONTROL-PANEL-003 P0 实机验收修复
 
 - 提交 `5a1f6420867e289a9dc36b6ef62fa116b8b47880` 已在 Windows 生产机安全部署成功，324 项候选测试、Windows 服务、`livez`、`readyz`、build-info、Git HEAD、合集和 ARAM 正式链路全部通过。
@@ -13,7 +25,8 @@
 - 修复 `LOL_BAN_4PNG_TOKEN` 已写入 `app_env.local.ps1`、但 5001 重启后可能没有继承该环境变量的问题。
 - 新增 Python 启动环境兜底：只解析本地 PowerShell 环境文件中的安全字面量，不执行 PowerShell、不覆盖已有环境变量、不回显 Secret。
 - 删除测试生成的 `config/interface-parser-center.json` 和 `data/contact_risk.db`，并加入 `.gitignore` 防线，禁止运行态数据进入源码提交和部署包。
-- 当前生产仍运行 `5a1f6420867e289a9dc36b6ef62fa116b8b47880`；上述验收修复需部署新的 V3 候选包后生效。
+- 提交 `51a93e05fd4bd49e451e864ec7af305961d8a47a` 已在 Windows 生产机安全部署成功：327 项测试、全部 PowerShell 5.1 解析、新控制台/封号页/解析中心 JavaScript 语法检查、Windows 服务、`livez`、`readyz`、build-info、Git HEAD、shard 与 ARAM 正式链路全部通过。
+- 第二次生产验证报告状态为 `pass`，备份位于 `D:\project2\lolapisevers.deploy-backups\20260805-101138-full-bug-repair-51a93e05fd4b`。
 
 ### 6178 运行时热修复
 
@@ -54,6 +67,7 @@
 - 提交 `19edfc9c189f6b269793ed750e42548268fcc115` 已在 Windows 生产机安全部署成功，完成 LOL2099 与 4PNG 备用 Provider 基线。
 - 提交 `28e68e75ee14674bba10606587937473d37baa1e` 已在 Windows 生产机安全部署成功，完成 6178 专业控制台、解析中心入口和 4PNG Token 专用配置入口。
 - 提交 `5a1f6420867e289a9dc36b6ef62fa116b8b47880` 已在 Windows 生产机安全部署成功，完成独立新总览、统一设计系统、管理令牌 Dialog、Skeleton、Toast 和共享控制台组件。
+- 提交 `51a93e05fd4bd49e451e864ec7af305961d8a47a` 已在 Windows 生产机安全部署成功，完成 P0 状态语义和 4PNG Token 启动加载修复。
 - 最新生产验证报告状态为 `pass`，备份保存在仓库外部部署备份目录。
 - `observability=status=degraded` 表示可选上游或业务任务存在降级，不等同于 5001 或 6178 核心服务故障。
 

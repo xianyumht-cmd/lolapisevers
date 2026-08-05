@@ -40,8 +40,19 @@ _LOLBAN_RELOAD_KEYS = (
     "LOL_BAN_PROVIDERS_JSON",
     "LOL_BAN_UPSTREAM_URL",
     *_LOLBAN_SETTING_KEYS,
+    "LOLMAP_API_TOKEN",
     "LOL_BAN_4PNG_TOKEN",
 )
+_LOLBAN_PROVIDER_SECRET_SPECS: dict[str, dict[str, str]] = {
+    "lolban-primary": {
+        "name": "LOLMAP_API_TOKEN",
+        "label": "主接口 Token",
+    },
+    "lolban-4png": {
+        "name": "LOL_BAN_4PNG_TOKEN",
+        "label": "4PNG Token",
+    },
+}
 
 
 def _ensure_fields() -> None:
@@ -378,23 +389,36 @@ def read_lolban_console(main_base_url: str) -> dict[str, Any]:
     runtime_identity = _runtime_identity(runtime)
     disk_identity = disk.get("active_provider_identity") or []
     safe_runtime_identity = [_redact(item) for item in runtime_identity]
-    disk_secret_value = str(_file_values.get("LOL_BAN_4PNG_TOKEN") or os.getenv("LOL_BAN_4PNG_TOKEN") or "").strip()
-    disk_secret_configured = bool(disk_secret_value and disk_secret_value != "CHANGE_ME")
-    runtime_secret_configured = False
+    runtime_secret_states: dict[str, bool] = {}
     for secret in runtime.get("secrets") if isinstance(runtime.get("secrets"), list) else []:
-        if isinstance(secret, Mapping) and secret.get("name") == "LOL_BAN_4PNG_TOKEN":
-            runtime_secret_configured = bool(secret.get("configured"))
+        if not isinstance(secret, Mapping):
+            continue
+        name = str(secret.get("name") or "").strip()
+        if name:
+            runtime_secret_states[name] = bool(secret.get("configured"))
+
+    provider_secrets: dict[str, dict[str, Any]] = {}
+    for provider_id, spec in _LOLBAN_PROVIDER_SECRET_SPECS.items():
+        name = spec["name"]
+        disk_value = str(_file_values.get(name) or os.getenv(name) or "").strip()
+        disk_configured = bool(disk_value and disk_value != "CHANGE_ME")
+        runtime_configured = bool(runtime_secret_states.get(name))
+        provider_secrets[provider_id] = {
+            "label": spec["label"],
+            "secret_name": name,
+            "disk_configured": disk_configured,
+            "runtime_configured": runtime_configured,
+            "in_sync": disk_configured == runtime_configured,
+        }
+
     return {
         "ok": True,
         "disk": disk,
         "runtime": runtime,
         "runtime_provider_identity": safe_runtime_identity,
         "runtime_matches_disk": runtime.get("ok") is True and safe_runtime_identity == disk_identity,
-        "fourpng_secret": {
-            "disk_configured": disk_secret_configured,
-            "runtime_configured": runtime_secret_configured,
-            "in_sync": disk_secret_configured == runtime_secret_configured,
-        },
+        "provider_secrets": provider_secrets,
+        "fourpng_secret": provider_secrets["lolban-4png"],
     }
 
 
@@ -460,30 +484,44 @@ def save_lolban_console(main_base_url: str, payload: Mapping[str, Any]) -> dict[
     }
 
 
-def save_fourpng_token(main_base_url: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+def save_provider_secret(main_base_url: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+    provider_id = str(payload.get("provider_id") or "").strip()
+    spec = _LOLBAN_PROVIDER_SECRET_SPECS.get(provider_id)
+    if spec is None:
+        raise ValueError("该 Provider 没有可配置的专用 Secret")
     value = str(payload.get("value") or "").strip()
     if not value:
-        raise ValueError("4PNG Token 不能为空")
-    saved = save_parser_secret({"name": "LOL_BAN_4PNG_TOKEN", "value": value})
+        raise ValueError(f"{spec['label']} 不能为空")
+
+    secret_name = spec["name"]
+    saved = save_parser_secret({"name": secret_name, "value": value})
     reload_result = _main_request(
         main_base_url,
         "POST",
         "/admin/query/lolban/reload",
-        payload={"environment": {"LOL_BAN_4PNG_TOKEN": value}},
+        payload={"environment": {secret_name: value}},
     )
     loaded = reload_result.get("ok") is True
     return {
         "ok": loaded,
+        "provider_id": provider_id,
         "configured": True,
         "runtime_configured": loaded,
         "message": (
-            "4PNG Token 已安全保存并热加载到 5001。"
+            f"{spec['label']} 已安全保存并热加载到 5001。"
             if loaded
-            else "4PNG Token 已安全保存，但 5001 热加载失败；请手动重启 LOLDataSystem。"
+            else f"{spec['label']} 已安全保存，但 5001 热加载失败；请重启 LOLDataSystem。"
         ),
         "save_result": _result_summary(saved),
         "reload_result": reload_result,
     }
+
+
+def save_fourpng_token(main_base_url: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+    return save_provider_secret(
+        main_base_url,
+        {"provider_id": "lolban-4png", "value": payload.get("value")},
+    )
 
 
 def test_lolban_console(main_base_url: str, payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -519,7 +557,7 @@ def render_lolban_console_page() -> str:
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>封号查询配置与诊断</title>
 <style>
-:root{--bg:#f2f5fa;--panel:#fff;--line:#d8e0eb;--text:#172033;--muted:#66758b;--blue:#2459d3;--green:#14865b;--red:#bd3e39;--dark:#111827}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",sans-serif}.shell{max-width:1500px;margin:auto;padding:18px}.top,.head,.actions{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}.top h1{margin:0;font-size:25px}.hint{color:var(--muted);font-size:12px}.panel,.provider,.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin:12px 0}.grid,.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.two{grid-template-columns:repeat(2,minmax(0,1fr))}label span{display:block;color:var(--muted);font-size:12px;margin-bottom:5px}input,select,textarea,button{font:inherit}input,select,textarea{width:100%;border:1px solid var(--line);border-radius:8px;padding:8px;background:#fff}textarea{min-height:86px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px}button{border:1px solid var(--line);background:#fff;border-radius:8px;padding:8px 11px;font-weight:700;cursor:pointer}.primary{background:var(--blue);border-color:var(--blue);color:#fff}.danger,.bad{color:var(--red)}.ok{color:var(--green)}pre{white-space:pre-wrap;word-break:break-word;background:var(--dark);color:#e5e7eb;border-radius:9px;padding:12px;max-height:520px;overflow:auto;font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace}.provider .head h3{margin:0;font-size:15px}.switch{display:flex;gap:8px;align-items:center}.switch input{width:auto}.card{margin:0}.card b{display:block;font-size:20px;margin-top:5px}@media(max-width:900px){.grid,.two,.cards{grid-template-columns:1fr}}
+:root{--bg:#f2f5fa;--panel:#fff;--line:#d8e0eb;--text:#172033;--muted:#66758b;--blue:#2459d3;--green:#14865b;--red:#bd3e39;--dark:#111827}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",sans-serif}.shell{max-width:1500px;margin:auto;padding:18px}.top,.head,.actions{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}.top h1{margin:0;font-size:25px}.hint{color:var(--muted);font-size:12px}.panel,.provider,.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin:12px 0}.grid,.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.two{grid-template-columns:repeat(2,minmax(0,1fr))}label span{display:block;color:var(--muted);font-size:12px;margin-bottom:5px}input,select,textarea,button{font:inherit}input,select,textarea{width:100%;border:1px solid var(--line);border-radius:8px;padding:8px;background:#fff}textarea{min-height:86px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px}button{border:1px solid var(--line);background:#fff;border-radius:8px;padding:8px 11px;font-weight:700;cursor:pointer}.primary{background:var(--blue);border-color:var(--blue);color:#fff}.danger,.bad{color:var(--red)}.ok{color:var(--green)}pre{white-space:pre-wrap;word-break:break-word;background:var(--dark);color:#e5e7eb;border-radius:9px;padding:12px;max-height:520px;overflow:auto;font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace}.provider .head h3{margin:0;font-size:15px}.switch{display:flex;gap:8px;align-items:center}.switch input{width:auto}.provider-secret{display:grid;grid-template-columns:minmax(190px,1fr) minmax(230px,1.3fr) auto;gap:10px;align-items:end;margin:10px 0;padding:10px 12px;border:1px solid #dbe6f5;border-radius:9px;background:#f8fbff}.provider-secret-title{font-weight:800;font-size:13px}.provider-secret-meta{margin-top:3px;color:var(--muted);font:11px ui-monospace,SFMono-Regular,Consolas,monospace}.provider-secret-state{display:inline-block;margin-top:5px;font-size:12px;font-weight:700}.provider-secret button{white-space:nowrap}.card{margin:0}.card b{display:block;font-size:20px;margin-top:5px}@media(max-width:900px){.grid,.two,.cards{grid-template-columns:1fr}.provider-secret{grid-template-columns:1fr}}
 </style></head><body><main class="shell">
 <header class="top"><div><h1>封号查询配置与实时诊断</h1><div class="hint">同时查看磁盘配置、5001 当前运行配置、Provider 直连结果和正式查询结果。</div></div><div class="actions"><button onclick="location.href='/'">返回总控台</button><input id="adminToken" type="password" placeholder="管理令牌（本机可留空）" style="width:230px"><button onclick="saveToken()">应用令牌</button><button onclick="loadAll()">刷新</button><button class="primary" onclick="saveAll()">保存并热加载</button></div></header>
 <section class="cards"><div class="card">磁盘 Provider<b id="diskCount">-</b></div><div class="card">运行时 Provider<b id="runtimeCount">-</b></div><div class="card">配置一致性<b id="matchState">-</b></div><div class="card">最近运行状态<b id="healthState">-</b></div></section>
@@ -529,19 +567,21 @@ def render_lolban_console_page() -> str:
 <section class="panel"><div class="head"><div><h2>实时测试</h2><div class="hint">先单独测试所选 Provider，再测试正式降级链路；两项结果不再混在一次操作中。</div></div><div class="actions"><button class="primary" onclick="runProviderTest()">测试所选 Provider</button><button onclick="runFormalTest()">测试正式链路</button></div></div><div class="grid two"><label><span>测试 QQ</span><input id="testQQ" value="97077000"></label><label><span>运行时 Provider</span><select id="testProvider"></select></label></div><div class="grid two"><div><h3>Provider 直连</h3><pre id="providerResult">暂无</pre></div><div><h3>5001 正式链路</h3><pre id="formalResult">暂无</pre></div></div></section>
 <section class="panel"><div class="head"><h2>运行时详情</h2></div><pre id="runtimeResult">暂无</pre></section>
 </main><script>
-const S={parser:[],legacy:[],runtime:{}};const $=id=>document.getElementById(id);
+const S={parser:[],legacy:[],runtime:{},providerSecrets:{}};const $=id=>document.getElementById(id);
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}function attr(v){return esc(v)}function pretty(v){return JSON.stringify(v??{},null,2)}function obj(v,f={}){return v&&typeof v==='object'&&!Array.isArray(v)?v:f}
 function token(){return sessionStorage.getItem('lolapisevers_admin_token')||''}function saveToken(){const v=$('adminToken').value.trim();if(v)sessionStorage.setItem('lolapisevers_admin_token',v);else sessionStorage.removeItem('lolapisevers_admin_token');loadAll()}
 async function api(path,opt={}){const headers={'content-type':'application/json'};if(token())headers['x-admin-token']=token();const r=await fetch(path,{method:opt.method||'GET',headers,body:opt.body===undefined?undefined:JSON.stringify(opt.body)});const t=await r.text();let d;try{d=JSON.parse(t)}catch(_e){d={ok:false,error:t}}if(!r.ok)throw new Error(d.detail||d.error||t||r.statusText);return d}
 function parseJson(text,label,fallback){try{return JSON.parse(text||JSON.stringify(fallback))}catch(e){throw new Error(label+' JSON 无效：'+e.message)}}
 function normalize(p,i){p=obj(p);const req=obj(p.request,p);return {id:p.id||p.name||`provider-${i+1}`,name:p.name||p.id||`Provider ${i+1}`,enabled:p.enabled!==false,request:{method:(req.method||'GET').toUpperCase(),url:req.url||p.url||'',timeout_seconds:req.timeout_seconds||p.timeout_seconds||10,headers:obj(req.headers),query:obj(req.query),form:obj(req.form),json:req.json??req.json_body??null},parser:obj(p.parser)}}
-function card(kind,p,index){p=normalize(p,index);return `<div class="provider" data-kind="${kind}" data-index="${index}"><div class="head"><h3>${esc(p.name||p.id)}</h3><div class="actions"><label class="switch"><input data-f="enabled" type="checkbox" ${p.enabled?'checked':''}><span>启用</span></label><button class="danger" onclick="removeProvider('${kind}',${index})">删除</button></div></div><div class="grid"><label><span>ID</span><input data-f="id" value="${attr(p.id)}"></label><label><span>名称</span><input data-f="name" value="${attr(p.name)}"></label><label><span>方法</span><select data-f="method"><option ${p.request.method==='GET'?'selected':''}>GET</option><option ${p.request.method==='POST'?'selected':''}>POST</option></select></label><label><span>超时秒数</span><input data-f="timeout" type="number" value="${attr(p.request.timeout_seconds)}"></label></div><label><span>API URL（敏感参数显示 ***）</span><input data-f="url" value="${attr(p.request.url)}"></label><div class="grid two"><label><span>Query JSON</span><textarea data-f="query">${esc(pretty(p.request.query))}</textarea></label><label><span>Form JSON</span><textarea data-f="form">${esc(pretty(p.request.form))}</textarea></label><label><span>Headers JSON（敏感值显示 ***）</span><textarea data-f="headers">${esc(pretty(p.request.headers))}</textarea></label><label><span>JSON Body</span><textarea data-f="json">${esc(pretty(p.request.json))}</textarea></label></div><label><span>响应解析规则 JSON</span><textarea data-f="parser">${esc(pretty(p.parser))}</textarea></label></div>`}
+function providerSecretControl(p){const state=S.providerSecrets[p.id];if(!state)return '';const ready=state.disk_configured&&state.runtime_configured;const partial=state.disk_configured&&!state.runtime_configured;const status=ready?'已配置并加载':(partial?'磁盘已配置，5001 未加载':'未配置');const statusClass=ready?'ok':'bad';return `<div class="provider-secret"><div><div class="provider-secret-title">${esc(state.label||'Provider Token')}</div><div class="provider-secret-meta">${esc(state.secret_name||'')}</div><span class="provider-secret-state ${statusClass}">${esc(status)}</span></div><label><span>输入新 Token（留空不修改）</span><input type="password" autocomplete="new-password" data-secret-provider="${attr(p.id)}" placeholder="仅安全写入本机 Secret"></label><button type="button" onclick="saveProviderSecret('${attr(p.id)}')">保存 Token</button></div>`}
+function card(kind,p,index){p=normalize(p,index);return `<div class="provider" data-kind="${kind}" data-index="${index}"><div class="head"><h3>${esc(p.name||p.id)}</h3><div class="actions"><label class="switch"><input data-f="enabled" type="checkbox" ${p.enabled?'checked':''}><span>启用</span></label><button class="danger" onclick="removeProvider('${kind}',${index})">删除</button></div></div><div class="grid"><label><span>ID</span><input data-f="id" value="${attr(p.id)}"></label><label><span>名称</span><input data-f="name" value="${attr(p.name)}"></label><label><span>方法</span><select data-f="method"><option ${p.request.method==='GET'?'selected':''}>GET</option><option ${p.request.method==='POST'?'selected':''}>POST</option></select></label><label><span>超时秒数</span><input data-f="timeout" type="number" value="${attr(p.request.timeout_seconds)}"></label></div><label><span>API URL（敏感参数显示 ***）</span><input data-f="url" value="${attr(p.request.url)}"></label>${providerSecretControl(p)}<div class="grid two"><label><span>Query JSON</span><textarea data-f="query">${esc(pretty(p.request.query))}</textarea></label><label><span>Form JSON</span><textarea data-f="form">${esc(pretty(p.request.form))}</textarea></label><label><span>Headers JSON（敏感值显示 ***）</span><textarea data-f="headers">${esc(pretty(p.request.headers))}</textarea></label><label><span>JSON Body</span><textarea data-f="json">${esc(pretty(p.request.json))}</textarea></label></div><label><span>响应解析规则 JSON</span><textarea data-f="parser">${esc(pretty(p.parser))}</textarea></label></div>`}
 function render(){ $('parserProviders').innerHTML=S.parser.map((p,i)=>card('parser',p,i)).join('')||'<div class="hint">暂无解析中心 Provider</div>';$('legacyProviders').innerHTML=S.legacy.map((p,i)=>card('legacy',p,i)).join('')||'<div class="hint">暂无旧环境变量 Provider</div>'}
 function addProvider(kind){S[kind].push({id:`lolban-${kind}-${Date.now()}`,name:'新封号 Provider',enabled:false,request:{method:'GET',url:'https://',timeout_seconds:10,headers:{},query:{qq:'$qq'},form:{},json:null},parser:{}});render()}function removeProvider(kind,index){S[kind].splice(index,1);render()}
 function collect(kind){return [...document.querySelectorAll(`[data-kind="${kind}"]`)].map((el,i)=>({id:el.querySelector('[data-f="id"]').value.trim(),name:el.querySelector('[data-f="name"]').value.trim(),enabled:el.querySelector('[data-f="enabled"]').checked,request:{method:el.querySelector('[data-f="method"]').value,url:el.querySelector('[data-f="url"]').value.trim(),timeout_seconds:Number(el.querySelector('[data-f="timeout"]').value||10),headers:parseJson(el.querySelector('[data-f="headers"]').value,`Provider ${i+1} Headers`,{}),query:parseJson(el.querySelector('[data-f="query"]').value,`Provider ${i+1} Query`,{}),form:parseJson(el.querySelector('[data-f="form"]').value,`Provider ${i+1} Form`,{}),json:parseJson(el.querySelector('[data-f="json"]').value,`Provider ${i+1} JSON Body`,null)},parser:parseJson(el.querySelector('[data-f="parser"]').value,`Provider ${i+1} Parser`,{})}))}
-function setState(d){const disk=d.disk||{},runtime=d.runtime||{};S.parser=disk.parser_center?.providers||[];S.legacy=disk.legacy?.providers||[];S.runtime=runtime;$('parserPath').textContent=`配置文件：${disk.parser_center?.path||'-'}${disk.parser_center?.using_default?'（当前使用默认模板）':''}`;$('legacyPath').textContent=`配置文件：${disk.legacy?.path||'-'}`;$('legacyError').textContent=disk.legacy?.error||'';const st=disk.settings||{};$('sTimeout').value=st.LOL_BAN_TIMEOUT||10;$('sNormal').value=st.LOL_BAN_NORMAL_CACHE_SECONDS||60;$('sBanned').value=st.LOL_BAN_BANNED_CACHE_SECONDS||300;$('sStale').value=st.LOL_BAN_STALE_CACHE_SECONDS||86400;$('sMax').value=st.LOL_BAN_MAX_STALE_ENTRIES||1024;$('sSnapshot').checked=!['0','false','no','off',''].includes(String(st.LOL_BAN_SNAPSHOT_ENABLED??'1').toLowerCase());$('legacyUrl').value=disk.legacy?.upstream_url||'';$('diskCount').textContent=(disk.active_provider_identity||[]).length;$('runtimeCount').textContent=runtime.provider_count??'-';$('matchState').textContent=d.runtime_matches_disk?'一致':'不一致';$('matchState').className=d.runtime_matches_disk?'ok':'bad';const h=runtime.health||{};$('healthState').textContent=h.last_error_class?`失败：${h.last_error_class}`:(h.configured?'已配置':'未配置');$('healthState').className=h.last_error_class?'bad':'ok';$('runtimeResult').textContent=pretty(runtime);$('testProvider').innerHTML=(runtime.providers||[]).map(p=>`<option value="${attr(p.id||p.name)}">${esc((p.order||'')+' · '+(p.name||p.id||''))}</option>`).join('');render()}
+function setState(d){const disk=d.disk||{},runtime=d.runtime||{};S.parser=disk.parser_center?.providers||[];S.legacy=disk.legacy?.providers||[];S.runtime=runtime;S.providerSecrets=d.provider_secrets||{};$('parserPath').textContent=`配置文件：${disk.parser_center?.path||'-'}${disk.parser_center?.using_default?'（当前使用默认模板）':''}`;$('legacyPath').textContent=`配置文件：${disk.legacy?.path||'-'}`;$('legacyError').textContent=disk.legacy?.error||'';const st=disk.settings||{};$('sTimeout').value=st.LOL_BAN_TIMEOUT||10;$('sNormal').value=st.LOL_BAN_NORMAL_CACHE_SECONDS||60;$('sBanned').value=st.LOL_BAN_BANNED_CACHE_SECONDS||300;$('sStale').value=st.LOL_BAN_STALE_CACHE_SECONDS||86400;$('sMax').value=st.LOL_BAN_MAX_STALE_ENTRIES||1024;$('sSnapshot').checked=!['0','false','no','off',''].includes(String(st.LOL_BAN_SNAPSHOT_ENABLED??'1').toLowerCase());$('legacyUrl').value=disk.legacy?.upstream_url||'';$('diskCount').textContent=(disk.active_provider_identity||[]).length;$('runtimeCount').textContent=runtime.provider_count??'-';$('matchState').textContent=d.runtime_matches_disk?'一致':'不一致';$('matchState').className=d.runtime_matches_disk?'ok':'bad';const h=runtime.health||{};$('healthState').textContent=h.last_error_class?`失败：${h.last_error_class}`:(h.configured?'已配置':'未配置');$('healthState').className=h.last_error_class?'bad':'ok';$('runtimeResult').textContent=pretty(runtime);$('testProvider').innerHTML=(runtime.providers||[]).map(p=>`<option value="${attr(p.id||p.name)}">${esc((p.order||'')+' · '+(p.name||p.id||''))}</option>`).join('');render()}
 async function loadAll(){try{setState(await api('/admin/query-console/lolban'))}catch(e){alert(e.message)}}
 async function saveAll(){try{const body={parser_providers:collect('parser'),legacy_providers:collect('legacy'),legacy_upstream_url:$('legacyUrl').value.trim(),settings:{LOL_BAN_TIMEOUT:Number($('sTimeout').value),LOL_BAN_NORMAL_CACHE_SECONDS:Number($('sNormal').value),LOL_BAN_BANNED_CACHE_SECONDS:Number($('sBanned').value),LOL_BAN_STALE_CACHE_SECONDS:Number($('sStale').value),LOL_BAN_MAX_STALE_ENTRIES:Number($('sMax').value),LOL_BAN_SNAPSHOT_ENABLED:$('sSnapshot').checked}};const r=await api('/admin/query-console/lolban/save',{method:'POST',body});alert(r.message||'保存完成');setState(r.state)}catch(e){alert(e.message)}}
+async function saveProviderSecret(providerId){const input=Array.from(document.querySelectorAll('[data-secret-provider]')).find(item=>item.dataset.secretProvider===providerId);const value=input?input.value.trim():'';if(!value){alert('请输入新的 Token');return}try{const r=await api('/admin/query-console/lolban/provider-secret',{method:'POST',body:{provider_id:providerId,value}});input.value='';alert(r.message||'Token 已安全保存');await loadAll()}catch(e){alert(e.message)}}
 async function runProviderTest(){try{$('providerResult').textContent='测试中...';const r=await api('/admin/query-console/lolban/test',{method:'POST',body:{mode:'provider',qq:$('testQQ').value.trim(),provider_id:$('testProvider').value}});$('providerResult').textContent=pretty(r.provider_test)}catch(e){$('providerResult').textContent=e.message}}
 async function runFormalTest(){try{$('formalResult').textContent='测试中...';const r=await api('/admin/query-console/lolban/test',{method:'POST',body:{mode:'formal',qq:$('testQQ').value.trim(),provider_id:$('testProvider').value}});$('formalResult').textContent=pretty(r.formal_chain)}catch(e){$('formalResult').textContent=e.message}}
 async function runTest(){await runProviderTest();await runFormalTest()}
@@ -566,6 +606,15 @@ def install_lolban_console_routes(app: FastAPI) -> None:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except OSError as exc:
             raise HTTPException(status_code=500, detail=f"封号查询配置写入失败：{exc}") from exc
+
+    @app.post("/admin/query-console/lolban/provider-secret")
+    async def admin_lolban_provider_secret(payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(save_provider_secret, app.state.main_base_url, payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(status_code=500, detail=f"Provider Token 写入失败：{exc}") from exc
 
     @app.post("/admin/query-console/lolban/4png-token")
     async def admin_lolban_fourpng_token(payload: dict[str, Any]) -> dict[str, Any]:

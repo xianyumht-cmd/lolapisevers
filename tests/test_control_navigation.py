@@ -41,13 +41,14 @@ class ControlNavigationTests(unittest.TestCase):
         self.assertIn('Secret 配置', page)
         self.assertIn('请求并解析', page)
 
-    def test_lolban_page_has_direct_secure_4png_secret_control(self):
+    def test_lolban_page_keeps_provider_tokens_inside_provider_cards(self):
         raw = render_lolban_console_page()
         page = _decorate_control_page("/query-console/lolban", raw)
-        self.assertIn('4PNG Token', page)
-        self.assertIn('LOL_BAN_4PNG_TOKEN', page)
-        self.assertIn('/admin/query-console/lolban/4png-token', page)
-        self.assertIn('安全保存 Token', page)
+        self.assertIn('data-secret-provider', page)
+        self.assertIn('providerSecrets', page)
+        self.assertIn('/admin/query-console/lolban/provider-secret', page)
+        self.assertIn('providerSecretControl', page)
+        self.assertNotIn('id="fourPngSecretPanel"', page)
         self.assertIn('class="control-sidebar"', page)
 
     def test_parser_secret_section_is_server_selected(self):
