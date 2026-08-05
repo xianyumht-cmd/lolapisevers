@@ -75,77 +75,6 @@ def _sidebar(active: str) -> str:
 <div class="control-mobile-bar"><button id="controlNavToggle" type="button">☰ 菜单</button><strong>LOLDataSystem 控制台</strong></div>'''
 
 
-_LOLBAN_SECRET_PANEL = r'''<section class="panel" id="fourPngSecretPanel"><div class="head"><div><h2>4PNG Token</h2><div class="hint">真实 Token 只写入本机 Secret，不进入 Provider JSON、URL、日志或浏览器回显。</div></div><span id="fourPngSecretState" class="bad">正在读取...</span></div><div class="grid two"><label><span>LOL_BAN_4PNG_TOKEN 新值</span><input id="fourPngToken" type="password" autocomplete="new-password" placeholder="输入 4PNG 提供的真实 Token"></label><div class="actions" style="justify-content:flex-start;align-self:end"><button class="primary" type="button" onclick="save4PngToken()">安全保存 Token</button><button type="button" onclick="restartLolDataSystem()">重启 LOLDataSystem</button></div></div><div class="hint" style="margin-top:8px">保存后会立即安全热加载到 5001；仅在热加载失败时才需要手动重启服务。</div></section>'''
-
-_LOLBAN_SECRET_SCRIPT = r'''<script id="lolban-secret-control-script">
-(function(){
-  function byId(id){return document.getElementById(id)}
-  function adminToken(){try{return sessionStorage.getItem('lolapisevers_admin_token')||''}catch(_error){return ''}}
-  async function requestJson(path,opt){
-    opt=opt||{};
-    var headers={'content-type':'application/json'};
-    var token=adminToken();
-    if(token)headers['x-admin-token']=token;
-    var response=await fetch(path,{method:opt.method||'GET',headers:headers,body:opt.body===undefined?undefined:JSON.stringify(opt.body)});
-    var text=await response.text();
-    var data;
-    try{data=JSON.parse(text)}catch(_error){data={detail:text}}
-    if(!response.ok)throw new Error(data.detail||data.error||text||response.statusText);
-    return data;
-  }
-  function showState(configured){
-    var node=byId('fourPngSecretState');
-    if(!node)return;
-    node.textContent=configured?'已配置':'未配置';
-    node.className=configured?'ok':'bad';
-  }
-  async function refresh(){
-    try{
-      var data=await requestJson('/admin/query-console/lolban');
-      var state=data.fourpng_secret||{};
-      var configured=!!state.disk_configured;
-      var runtime=!!state.runtime_configured;
-      showState(configured&&runtime);
-      var node=byId('fourPngSecretState');
-      if(node&&configured&&!runtime){node.textContent='已保存，5001 未加载';node.className='bad'}
-    }catch(error){
-      var node=byId('fourPngSecretState');
-      if(node){node.textContent='读取失败';node.className='bad'}
-    }
-  }
-  window.save4PngToken=async function(){
-    var input=byId('fourPngToken');
-    var value=input?input.value.trim():'';
-    if(!value){alert('请输入 4PNG Token');return}
-    try{
-      var data=await requestJson('/admin/query-console/lolban/4png-token',{method:'POST',body:{value:value}});
-      input.value='';
-      showState(true);
-      alert(data.message||'Token 已安全保存并热加载');
-      await refresh();
-    }catch(error){alert(error.message)}
-  };
-  window.restartLolDataSystem=async function(){
-    if(!confirm('确认重启 LOLDataSystem？5001 和 6178 会短暂断开。'))return;
-    try{
-      var data=await requestJson('/admin/service/restart',{method:'POST',body:{delay_seconds:3}});
-      alert(data.message||'已安排服务重启');
-    }catch(error){alert(error.message)}
-  };
-  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',refresh);else refresh();
-})();
-</script>'''
-
-
-def _inject_lolban_secret_controls(page: str) -> str:
-    if 'id="fourPngSecretPanel"' in page:
-        return page
-    marker = '<section class="panel"><div class="head"><div><h2>缓存与降级设置</h2>'
-    if marker not in page:
-        raise ValueError("lolban console cache panel marker is missing")
-    page = page.replace(marker, _LOLBAN_SECRET_PANEL + marker, 1)
-    return page.replace("</body>", _LOLBAN_SECRET_SCRIPT + "</body>", 1)
-
 
 def select_parser_center_section(page: str, section: str) -> str:
     """Select a parser-center section in server-rendered HTML."""
@@ -233,8 +162,6 @@ _NAV_SCRIPT = r'''<script id="control-navigation-script">
 
 
 def apply_control_navigation(page: str, *, active: str) -> str:
-    if active == "lolban":
-        page = _inject_lolban_secret_controls(page)
     if 'id="control-navigation-style"' in page:
         return page
     if "</head>" not in page or "</body>" not in page:

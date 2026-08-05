@@ -36,6 +36,7 @@ _ALLOWED_RELOAD_ENV_KEYS = {
     "LOL_BAN_STALE_CACHE_SECONDS",
     "LOL_BAN_MAX_STALE_ENTRIES",
     "LOL_BAN_SNAPSHOT_ENABLED",
+    "LOLMAP_API_TOKEN",
     "LOL_BAN_4PNG_TOKEN",
 }
 
@@ -164,6 +165,7 @@ def lolban_runtime_snapshot() -> dict[str, Any]:
         "providers": providers,
         "provider_signature": _signature(providers),
         "secrets": [
+            {"name": "LOLMAP_API_TOKEN", "configured": _secret_configured("LOLMAP_API_TOKEN")},
             {"name": "LOL_BAN_4PNG_TOKEN", "configured": _secret_configured("LOL_BAN_4PNG_TOKEN")},
         ],
         "health": service.health(),
