@@ -244,10 +244,23 @@ def sanitized_config(config: AppConfig) -> dict[str, Any]:
         "provider_order": config.provider_order,
         "wer_api_endpoint": config.wer_api_endpoint,
         "wer_api_method": config.wer_api_method,
+        "wer_api_url_param": config.wer_api_url_param,
+        "wer_api_password_param": config.wer_api_password_param,
         "wer_api_key_configured": bool(config.wer_api_key),
         "notification_template": config.notification_template,
         "state_path": str(config.state_path),
-        "watchers": [watcher.__dict__ for watcher in config.watchers],
+        "watchers": [
+            {
+                "id": watcher.id,
+                "title": watcher.title,
+                "url": watcher.url,
+                "password": "",
+                "password_configured": bool(watcher.password),
+                "enabled": watcher.enabled,
+                "max_pages": watcher.max_pages,
+            }
+            for watcher in config.watchers
+        ],
         "notify_targets": [
             {
                 "name": target.name,
