@@ -322,8 +322,10 @@ Assert-True ($ready.StatusCode -eq 200) "readyz failed."
 Add-Check "readyz" "pass" "HTTP 200"
 '@
     $readyBlockAnchorText = $readyBlockAnchor.Replace("`r`n", "`n").TrimEnd()
-    if ([regex]::Matches($verifyText, [regex]::Escape($readyBlockAnchorText)).Count -ne 1) {
-        throw "Verifier readyz block anchor was not unique."
+    $readyBlockFirstIndex = $verifyText.IndexOf($readyBlockAnchorText, [System.StringComparison]::Ordinal)
+    $readyBlockLastIndex = $verifyText.LastIndexOf($readyBlockAnchorText, [System.StringComparison]::Ordinal)
+    if ($readyBlockFirstIndex -lt 0 -or $readyBlockFirstIndex -ne $readyBlockLastIndex) {
+        throw "Verifier readyz block anchor was not unique. first=$readyBlockFirstIndex last=$readyBlockLastIndex"
     }
     $readyBlockReplacement = @'
 Assert-True ($BaselineHealthPath -and (Test-Path -LiteralPath $BaselineHealthPath -PathType Leaf)) "Pre-switch health baseline is missing."
@@ -373,7 +375,9 @@ if ($inheritedSo1SessionDegradation) {
 }
 '@
     $readyBlockReplacementText = $readyBlockReplacement.Replace("`r`n", "`n").TrimEnd()
-    $verifyText = $verifyText.Replace($readyBlockAnchorText, $readyBlockReplacementText)
+    $verifyText = $verifyText.Substring(0, $readyBlockFirstIndex) +
+        $readyBlockReplacementText +
+        $verifyText.Substring($readyBlockFirstIndex + $readyBlockAnchorText.Length)
 
     $resultStatusAnchor = '    status = "pass"'
     if ([regex]::Matches($verifyText, [regex]::Escape($resultStatusAnchor)).Count -ne 1) {
