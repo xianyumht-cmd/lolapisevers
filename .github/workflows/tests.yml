@@ -11,67 +11,7 @@ on:
     branches: [master]
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  p3b-url-mask-followup:
-    if: github.event_name == 'pull_request' && github.head_ref == 'feat/webui-control-panel-003-20260805'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Checkout feature branch
-        uses: actions/checkout@v4
-        with:
-          ref: feat/webui-control-panel-003-20260805
-          fetch-depth: 0
-          persist-credentials: true
-
-      - name: Repair encoded mask detection
-        shell: bash
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          path = Path('lanzou_update_push_api_server/management.py')
-          text = path.read_text(encoding='utf-8')
-          old = '''def _merge_masked_query_url(candidate: str, previous: str, name: str) -> str:\n    if "***" not in candidate:\n        return candidate\n    if not previous:\n        raise ValueError(f"{name} contains a masked value but no previous URL exists")\n    candidate_parts = urlsplit(candidate)\n    previous_parts = urlsplit(previous)'''
-          new = '''def _merge_masked_query_url(candidate: str, previous: str, name: str) -> str:\n    candidate_parts = urlsplit(candidate)\n    candidate_pairs = parse_qsl(candidate_parts.query, keep_blank_values=True)\n    if not any(value == "***" for _, value in candidate_pairs):\n        return candidate\n    if not previous:\n        raise ValueError(f"{name} contains a masked value but no previous URL exists")\n    previous_parts = urlsplit(previous)'''
-          if old in text:
-              text = text.replace(old, new, 1)
-          elif 'candidate_pairs = parse_qsl(candidate_parts.query' not in text:
-              raise SystemExit('encoded-mask helper anchor not found')
-          text = text.replace(
-              '    for key, value in parse_qsl(candidate_parts.query, keep_blank_values=True):\n',
-              '    for key, value in candidate_pairs:\n',
-              1,
-          )
-          path.write_text(text, encoding='utf-8')
-          PY
-
-      - name: Run focused regression tests
-        shell: bash
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-          python -m unittest discover -s tests -p 'test_api_debugger.py' -v
-          python -m unittest discover -s tests -p 'test_control_ui_configuration.py' -v
-          node --check lanzou_update_push_api_server/control_ui/assets/configuration.js
-          git diff --check
-
-      - name: Commit follow-up fix
-        shell: bash
-        run: |
-          git add lanzou_update_push_api_server/management.py
-          if git diff --cached --quiet; then
-            echo "Encoded URL mask fix already present."
-            exit 0
-          fi
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git commit -m "fix(webui): preserve encoded URL query masks"
-          git push origin HEAD:feat/webui-control-panel-003-20260805
-
   linux-unittest:
     runs-on: ubuntu-latest
     timeout-minutes: 20
