@@ -1,5 +1,7 @@
 # Latest handoff
 
+更新时间：2026-08-06 01:18 +08:00
+
 当前任务请按顺序读取：
 
 - `docs/HANDOFF_WEBUI_CONTROL_PANEL_003_P3B_BASELINE_READINESS_20260806.md`
@@ -19,6 +21,7 @@
 - P3B 尚未部署生产
 - Issue #40 保持打开
 - Draft PR #41 保持 Draft，禁止合并
+- 用户已在 2026-08-06 01:18 +08:00 要求标记进度，并在新聊天继续
 
 P3B 五个页面已完成：
 
@@ -44,6 +47,7 @@ P3B 五个页面已完成：
 - 临时 Draft PR #50，禁止合并
 - V3 Run `31020489861`
 - Job `92355626999`
+- Run 已结束：`completed / failure`
 
 不可变测试、PowerShell 5.1 和依赖审计均通过，但 ZIP 构建失败：
 
