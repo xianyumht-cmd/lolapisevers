@@ -301,6 +301,16 @@ function Get-HttpStatusCode {
 
 function Get-So1FailureFingerprint {
     param([object]$Payload)
+    $browserStatus = "$($Payload.so1_browser)".Trim().ToLowerInvariant()
+    $sessionStatus = "$($Payload.so1_session)".Trim().ToLowerInvariant()
+    if ($browserStatus -eq "up" -and $sessionStatus -ne "authenticated") {
+        return "browser_up|session_unavailable"
+    }
+    return "$browserStatus|$sessionStatus"
+}
+
+function Get-So1FailureDetail {
+    param([object]$Payload)
     $dependency = $Payload.dependencies.so1_browser
     $reason = ""
     $errorClass = ""
@@ -353,16 +363,18 @@ if ($postSession -eq "authenticated") {
 } else {
     $baselineFingerprint = Get-So1FailureFingerprint -Payload $baselineHealth
     $postFingerprint = Get-So1FailureFingerprint -Payload $health.Body
+    $baselineFailureDetail = Get-So1FailureDetail -Payload $baselineHealth
+    $postFailureDetail = Get-So1FailureDetail -Payload $health.Body
     $sameInheritedFailure = (
         $baselineSession -ne "authenticated" -and
-        $baselineFingerprint -ne "|" -and
-        $baselineFingerprint -eq $postFingerprint
+        $baselineFingerprint -eq "browser_up|session_unavailable" -and
+        $postFingerprint -eq $baselineFingerprint
     )
     Assert-True $sameInheritedFailure "Post-switch SO1 session is down and does not match the pre-switch degradation baseline."
     $inheritedSo1SessionDegradation = $true
     $degradedReasons = @("inherited_so1_session_degradation")
     $verificationStatus = "pass_with_warning"
-    Add-Check "so1_session" "warning" "inherited pre-switch degradation; fingerprint unchanged"
+    Add-Check "so1_session" "warning" "inherited pre-switch degradation; normalized fingerprint unchanged; detail=$baselineFailureDetail->$postFailureDetail"
 }
 
 $readyStatus = Get-HttpStatusCode -Uri "$BaseUrl/readyz"

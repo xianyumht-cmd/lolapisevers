@@ -61,13 +61,16 @@ class V3BaselineReadinessTests(unittest.TestCase):
         self.assertEqual(1, verifier.count(READYZ_ANCHOR))
         self.assertEqual(1, verifier.count('$BaseUrl/readyz'))
 
-    def test_verifier_allows_only_unchanged_inherited_so1_session_degradation(self) -> None:
+    def test_verifier_allows_only_normalized_inherited_so1_session_degradation(self) -> None:
         text = BUILDER.read_text(encoding="utf-8")
         for marker in (
             "Post-switch MySQL readiness regressed",
             "Post-switch SO1 browser readiness regressed",
             "does not match the pre-switch degradation baseline",
-            "$baselineFingerprint -eq $postFingerprint",
+            'browser_up|session_unavailable',
+            'Get-So1FailureDetail',
+            '$postFingerprint -eq $baselineFingerprint',
+            'normalized fingerprint unchanged',
             'status = $verificationStatus',
             'pass_with_warning',
             'inherited_so1_session_degradation',
@@ -76,6 +79,16 @@ class V3BaselineReadinessTests(unittest.TestCase):
             self.assertIn(marker, text)
         self.assertNotIn("ignore all readyz failures", text.lower())
         self.assertNotIn("skip post-switch verification", text.lower())
+
+    def test_verifier_normalizes_reason_drift_without_ignoring_real_regressions(self) -> None:
+        text = BUILDER.read_text(encoding="utf-8")
+        self.assertIn('$browserStatus -eq "up" -and $sessionStatus -ne "authenticated"', text)
+        self.assertIn('return "browser_up|session_unavailable"', text)
+        self.assertIn('$baselineSession -ne "authenticated"', text)
+        self.assertIn('$baselineFingerprint -eq "browser_up|session_unavailable"', text)
+        self.assertIn('$postFingerprint -eq $baselineFingerprint', text)
+        self.assertIn('detail=$baselineFailureDetail->$postFailureDetail', text)
+        self.assertNotIn('$baselineFailureDetail -eq $postFailureDetail', text)
 
     def test_v3_workflow_requires_baseline_aware_artifact_markers(self) -> None:
         text = WORKFLOW.read_text(encoding="utf-8")
