@@ -22,6 +22,8 @@ class V3BaselineReadinessTests(unittest.TestCase):
             "BaselineHealthPath",
             '$verifyCallAnchor.Replace("`r`n", "`n").TrimEnd()',
             '$verifyCallReplacement.Replace("`r`n", "`n").TrimEnd()',
+            '$readyBlockAnchor.Replace("`r`n", "`n").TrimEnd()',
+            '$readyBlockReplacement.Replace("`r`n", "`n").TrimEnd()',
         ):
             self.assertIn(marker, text)
         self.assertIn(
