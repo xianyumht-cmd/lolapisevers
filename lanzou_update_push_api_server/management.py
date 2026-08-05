@@ -274,11 +274,12 @@ def _validate_http_url(value: str, name: str, allow_empty: bool = False) -> str:
 
 
 def _merge_masked_query_url(candidate: str, previous: str, name: str) -> str:
-    if "***" not in candidate:
+    candidate_parts = urlsplit(candidate)
+    candidate_pairs = parse_qsl(candidate_parts.query, keep_blank_values=True)
+    if not any(value == "***" for _, value in candidate_pairs):
         return candidate
     if not previous:
         raise ValueError(f"{name} contains a masked value but no previous URL exists")
-    candidate_parts = urlsplit(candidate)
     previous_parts = urlsplit(previous)
     if (
         candidate_parts.scheme.lower(),
@@ -295,7 +296,7 @@ def _merge_masked_query_url(candidate: str, previous: str, name: str) -> str:
         previous_values.setdefault(key, []).append(value)
     merged: list[tuple[str, str]] = []
     used: dict[str, int] = {}
-    for key, value in parse_qsl(candidate_parts.query, keep_blank_values=True):
+    for key, value in candidate_pairs:
         if value == "***":
             position = used.get(key, 0)
             available = previous_values.get(key, [])
