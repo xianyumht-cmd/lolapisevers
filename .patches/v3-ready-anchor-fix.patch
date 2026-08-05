@@ -1,0 +1,31 @@
+--- a/ops/Build-FullBugRepairPackageV3.ps1
++++ b/ops/Build-FullBugRepairPackageV3.ps1
+@@ -321,7 +321,8 @@
+ Assert-True ($ready.StatusCode -eq 200) "readyz failed."
+ Add-Check "readyz" "pass" "HTTP 200"
+ '@
+-    if ([regex]::Matches($verifyText, [regex]::Escape($readyBlockAnchor.TrimEnd())).Count -ne 1) {
++    $readyBlockAnchorText = $readyBlockAnchor.Replace("`r`n", "`n").TrimEnd()
++    if ([regex]::Matches($verifyText, [regex]::Escape($readyBlockAnchorText)).Count -ne 1) {
+         throw "Verifier readyz block anchor was not unique."
+     }
+     $readyBlockReplacement = @'
+@@ -349,7 +350,7 @@
+     Add-Check "so1_session" "pass" "authenticated"
+ } else {
+     $baselineFingerprint = Get-So1FailureFingerprint -Payload $baselineHealth
+-    $postFingerprint = Get-S/1FailureFingerprint -Payload $health.Body
++    $postFingerprint = Get-So1FailureFingerprint -Payload $health.Body
+     $sameInheritedFailure = (
+         $baselineSession -ne "authenticated" -and
+         $baselineFingerprint -ne "|" -and
+@@ -371,7 +372,8 @@
+     Add-Check "readyz" "pass" "HTTP 200"
+ }
+ '@
+-    $verifyText = $verifyText.Replace($readyBlockAnchor.TrimEnd(), $readyBlockReplacement.TrimEnd())
++    $readyBlockReplacementText = $readyBlockReplacement.Replace("`r`n", "`n").TrimEnd()
++    $verifyText = $verifyText.Replace($readyBlockAnchorText, $readyBlockReplacementText)
+ 
+     $resultStatusAnchor = '    status = "pass"'
+     if ([regex]::Matches($verifyText, [regex]::Escape($resultStatusAnchor)).Count -ne 1) {
