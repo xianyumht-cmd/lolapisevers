@@ -2,6 +2,19 @@
 
 本文件记录 `lolapisevers` 面向生产使用的重要变更。时间采用中国标准时间（UTC+8）。
 
+## 2026-08-06
+
+### WEBUI-CONTROL-PANEL-003 P3B 完成与实机验收
+
+- 最终目标 `dda1c27453eb3b4cf0b79a53ff043369f7662736` 已在 Windows 生产机安全部署成功，345 项候选测试、Windows 服务、`livez`、`readyz`、MySQL、SO1 Chromium、SO1 session、build-info、Git HEAD、shard 与 ARAM 正式链路全部通过，verification report 为 `pass`。
+- `/main-config`、`/lanzou/config`、`/lanzou/watchers`、`/lanzou/targets`、`/api-debugger` 五个页面完成实机截图和实际操作验收。
+- 主接口配置保存、自动备份和重启提示正常；蓝奏配置保存与热更新正常；Watcher 密码掩码往返正常。
+- 历史 WebUI 编码损坏的通知模板改为保护显示，留空保存不会改写机器人实际使用的正常模板。
+- 通知目标 URL 查询 Secret 与 Header Secret 均脱敏，未修改掩码直接保存可安全保留真实值。
+- 测试推送正常，机器人收到的中文通知正常。
+- 接口调试器新增 Headers JSON，`GET /admin/audit?limit=100` 实机返回 HTTP 200，Query、Header 和响应展示正常。
+- 用户最终确认剩余测试正常，P3B 阶段任务正式关闭；Issue #40 和 Draft PR #41 继续用于跟踪整体 WebUI 迁移与旧界面退休。
+
 ## 2026-08-05
 
 ### WEBUI-CONTROL-PANEL-003 P3B：配置与调试页面独立迁移
@@ -16,8 +29,8 @@
 - GET `/admin/lanzou-config` 返回脱敏配置；Watcher 密码与通知 Header 支持 `***` 掩码往返保留，只有显式清除动作才删除密码。
 - 页面壳和静态资源保持公开可加载，管理 API 继续受本机回环或 `WEBUI_ADMIN_TOKEN` 保护；令牌仅保存当前标签页。
 - 不使用浏览器原生 `alert`、`confirm` 或 `prompt`，保存和危险操作统一使用自定义 Dialog。
-- P3B 功能提交 `3c7a8868020eecee9cffbfca70d96e2766ba8f5c` 与文档候选 `c99ab0ed7fd5b78b77d5a55a9a5bedfc528ad636` 已通过 Linux、Windows、338 项测试、Parser Center、最终 WebUI JavaScript、全部 PowerShell 5.1 和依赖审计。
-- 当前生产为 `7d637b90ac2b177de86bae024713ac9172bb26fa`；P3B 尚未部署。
+- 最终运行候选 `1aa90eb3c9519e4c0cbe8c9a8cd97c9a5e66bdaa` 已通过 Linux、Windows、345 项测试、Parser Center、最终 WebUI JavaScript、全部 PowerShell 5.1 和依赖审计。
+- 最终生产目标为 `dda1c27453eb3b4cf0b79a53ff043369f7662736`，已于 2026-08-06 完成部署和实机验收。
 
 ### WEBUI-CONTROL-PANEL-003 P3A：日志、诊断、安全与回滚独立页面
 
@@ -89,6 +102,7 @@
 - 提交 `51a93e05fd4bd49e451e864ec7af305961d8a47a` 已在 Windows 生产机安全部署成功，完成 P0 状态语义和 4PNG Token 启动加载修复。
 - 提交 `3d0ddd7e76123660409ddaaf74b641641d282ee4` 已在 Windows 生产机安全部署成功，完成主接口与 4PNG Provider Secret 就地配置及正确祖先链部署。
 - 提交 `7d637b90ac2b177de86bae024713ac9172bb26fa` 已在 Windows 生产机安全部署成功，完成 P3A 日志、诊断、安全与回滚独立页面。
+- 提交 `dda1c27453eb3b4cf0b79a53ff043369f7662736` 已在 Windows 生产机安全部署成功，完成 P3B 配置、Watcher、通知目标和接口调试器独立页面及最终验收修复。
 - 最新生产验证报告状态为 `pass`，备份保存在仓库外部部署备份目录。
 - `observability=status=degraded` 表示可选上游或业务任务存在降级，不等同于 5001 或 6178 核心服务故障。
 
