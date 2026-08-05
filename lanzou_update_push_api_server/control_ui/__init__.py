@@ -2,6 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .configuration import (
+    render_debugger_page,
+    render_lanzou_config_page,
+    render_main_config_page,
+    render_targets_page,
+    render_watchers_page,
+)
 from .operations import render_diagnostics_page, render_logs_page, render_system_page
 from .pages import render_overview_page as _render_overview_page
 
@@ -20,8 +27,13 @@ def render_overview_page() -> str:
 
 __all__ = [
     "ASSET_DIRECTORY",
+    "render_debugger_page",
     "render_diagnostics_page",
+    "render_lanzou_config_page",
     "render_logs_page",
+    "render_main_config_page",
     "render_overview_page",
     "render_system_page",
+    "render_targets_page",
+    "render_watchers_page",
 ]

@@ -4,21 +4,34 @@
 
 ## 2026-08-05
 
+### WEBUI-CONTROL-PANEL-003 P3B：配置与调试页面独立迁移
+
+- 新增 `/main-config` 独立主接口配置页，复用现有字段元数据、校验、备份与保存 API；Secret 不回显，留空保留原值。
+- 新增 `/lanzou/config` 独立蓝奏全局配置页，继续显示环境变量覆盖项并复用运行态刷新语义。
+- 新增 `/lanzou/watchers` 独立监控项目页，支持新增、编辑、启停、删除、文件快照和单项扫描。
+- 新增 `/lanzou/targets` 独立通知目标页，支持新增、编辑、启停、删除和测试推送。
+- 新增 `/api-debugger` 独立接口调试器，复用 `/admin/openapi/*` 与 `/admin/invoke`，支持 Path、Query、Header 和 JSON Body。
+- `/?tab=mainconfig`、`lanzouconfig`、`watchers`、`targets`、`debugger` 全部改为 307 兼容重定向到新页面。
+- P3B 页面统一使用共享控制台 Shell、`configuration.css`、`configuration.js` 和本地 SVG 图标，不再由旧全功能运行面板承载。
+- GET `/admin/lanzou-config` 返回脱敏配置；Watcher 密码与通知 Header 支持 `***` 掩码往返保留，只有显式清除动作才删除密码。
+- 页面壳和静态资源保持公开可加载，管理 API 继续受本机回环或 `WEBUI_ADMIN_TOKEN` 保护；令牌仅保存当前标签页。
+- 不使用浏览器原生 `alert`、`confirm` 或 `prompt`，保存和危险操作统一使用自定义 Dialog。
+- P3B 功能提交 `3c7a8868020eecee9cffbfca70d96e2766ba8f5c` 与文档候选 `c99ab0ed7fd5b78b77d5a55a9a5bedfc528ad636` 已通过 Linux、Windows、338 项测试、Parser Center、最终 WebUI JavaScript、全部 PowerShell 5.1 和依赖审计。
+- 当前生产为 `7d637b90ac2b177de86bae024713ac9172bb26fa`；P3B 尚未部署。
+
 ### WEBUI-CONTROL-PANEL-003 P3A：日志、诊断、安全与回滚独立页面
 
 - 完成 6178 前端依赖审查，确认当前并存三套页面：新总览、旧 `?tab=` 全功能运行面板和更早的 `/legacy-ui`；停止用“隐藏旧入口”代替功能迁移。
 - 新增 `/logs` 独立日志中心，复用 `/admin/logs` 与 `/admin/logs/{name}`，支持日志目录、存在状态、大小、尾部行数和关键词过滤。
 - 新增 `/diagnostics` 独立诊断页，复用 `/admin/diagnostics` 与 `/admin/repair/state`，显示端口、配置、状态、Python、Playwright 和 Windows 服务检查。
 - 新增 `/system` 独立安全与回滚页，复用安全状态、Windows 服务、配置备份、回滚和管理审计接口。
-- `/?tab=logs`、`/?tab=diagnostics`、`/?tab=system` 改为 307 兼容重定向；尚未迁移的主接口配置、蓝奏配置、监控项、通知目标和接口调试器继续保留旧页面。
+- `/?tab=logs`、`/?tab=diagnostics`、`/?tab=system` 改为 307 兼容重定向。
 - 新页面使用共享 Sidebar、Topbar、管理令牌 Dialog、Toast、设计令牌和本地 SVG 图标，不加载总览专用 `console.js`。
 - 新增 `operations.js` 与 `operations.css`，日志正文和 JSON 状态使用等宽字体，危险操作使用自定义确认 Dialog。
 - 页面壳在启用 `WEBUI_ADMIN_TOKEN` 时仍可打开，管理 API 继续要求令牌；401/403 会提示填写当前标签页令牌。
 - 修复安全页没有读取 `token_configured` 的问题。
 - 修复重启、回滚和状态修复接口在 HTTP 200 但返回 `ok:false` 时可能误报成功的问题。
-- 新增独立页面、路由、鉴权边界、兼容重定向、操作结果语义和 JavaScript 语法回归测试。
-- P3A 初始实现提交 `9ce588d3b3b9d4cf96352b4bc5465c8814bf69ef` 已通过 Linux、Windows、Parser Center、WebUI JavaScript、PowerShell 5.1 和依赖审计。
-- 当前生产仍为 `3d0ddd7e76123660409ddaaf74b641641d282ee4`；P3A 尚未部署，需生成以当前生产为直接祖先的 V3 候选包。
+- 提交 `7d637b90ac2b177de86bae024713ac9172bb26fa` 已在 Windows 生产机安全部署成功：333 项测试、Windows 服务、`livez`、`readyz`、build-info、Git HEAD、合集与 ARAM 正式链路全部通过，verification report 为 `pass`。
 
 ### 封号 Provider Secret 就地配置
 
@@ -30,7 +43,6 @@
 - 每个 Provider Secret 独立显示“未配置”“磁盘已配置但 5001 未加载”“已配置并加载”。
 - 新增通用安全端点 `/admin/query-console/lolban/provider-secret`，只接受预定义 Provider ID 与 Secret 名称映射，不能通过请求任意写入环境变量。
 - 真实 Token 不回显、不进入 Provider JSON、URL、日志或诊断结果；旧 4PNG 保存端点仅作为兼容包装保留。
-- 候选已通过 Linux、Windows、328 项测试、Parser Center、三个最终 WebUI JavaScript、全部 PowerShell 5.1 和依赖审计。
 
 ### WEBUI-CONTROL-PANEL-003 P0 实机验收修复
 
@@ -42,7 +54,6 @@
 - 新增 Python 启动环境兜底：只解析本地 PowerShell 环境文件中的安全字面量，不执行 PowerShell、不覆盖已有环境变量、不回显 Secret。
 - 删除测试生成的 `config/interface-parser-center.json` 和 `data/contact_risk.db`，并加入 `.gitignore` 防线，禁止运行态数据进入源码提交和部署包。
 - 提交 `51a93e05fd4bd49e451e864ec7af305961d8a47a` 已在 Windows 生产机安全部署成功：327 项测试、全部 PowerShell 5.1 解析、新控制台/封号页/解析中心 JavaScript 语法检查、Windows 服务、`livez`、`readyz`、build-info、Git HEAD、shard 与 ARAM 正式链路全部通过。
-- 第二次生产验证报告状态为 `pass`，备份位于 `D:\project2\lolapisevers.deploy-backups\20260805-101138-full-bug-repair-51a93e05fd4b`。
 
 ### 6178 运行时热修复
 
@@ -57,23 +68,15 @@
 ### 6178 专业控制台导航与封号配置完善
 
 - 将 6178 从横向按钮堆叠改为正式控制台结构：固定左侧导航、折叠菜单、移动端菜单和内容工作区。
-- 主面板新增并固定展示以下入口：
-  - 控制台总览
-  - 封号查询
-  - 接口与解析中心
-  - Secret 与备份
-  - 接口调试器
-  - 蓝奏配置、监控项、通知目标
-  - 主接口配置、日志、诊断、安全与回滚
-- `/parser-center` 继续使用真实管理 API，不再作为孤立工程页：支持 Provider 可视化编辑、测试解析、Secret 保存、配置备份和回滚。
-- `/query-console/lolban` 新增 4PNG Token 专用安全输入：真实 Token 仅写入本机 Secret，Provider 配置仍保留 `$secret:LOL_BAN_4PNG_TOKEN`。
-- 4PNG Token 保存后，本页直连测试立即可用；5001 正式链路通过安全热加载或服务启动环境兜底读取。
-- 控制台导航为服务端统一注入，不改变现有配置格式、认证策略、备份策略和查询协议。
+- 主面板固定展示控制台总览、封号查询、接口与解析中心、Secret 与备份、接口调试器、蓝奏管理和系统管理入口。
+- `/parser-center` 继续使用真实管理 API：支持 Provider 可视化编辑、测试解析、Secret 保存、配置备份和回滚。
+- `/query-console/lolban` 支持 Provider 内部就地配置 Secret，真实值只写入本机环境文件。
+- 控制台导航不改变现有配置格式、认证策略、备份策略和查询协议。
 
 ### 封号备用 Provider
 
-- 新增 `LOL2099 免费备用接口`：按本机浏览器真实请求捕获结果接入，使用 `POST https://lol2099.top/`、`action=query_lol` 和 `qq` 表单参数。
-- 新增 `4PNG 收费备用接口`：使用 `GET https://yun.4png.com/api/query.html`、`qq` 与 Secret Token。
+- 新增 `LOL2099 免费备用接口`：使用 `POST`、`action=query_lol` 和 `qq` 表单参数。
+- 新增 `4PNG 收费备用接口`：使用 `GET`、`qq` 与 Secret Token。
 - 两个备用 Provider 均默认关闭，不会自动消耗收费次数。
 - 推荐顺序：现有主接口 → LOL2099 → 4PNG。
 - 业务码异常、未知状态、次数上限和典型推广提示不会作为成功查询结果发送给用户。
@@ -85,6 +88,7 @@
 - 提交 `5a1f6420867e289a9dc36b6ef62fa116b8b47880` 已在 Windows 生产机安全部署成功，完成独立新总览、统一设计系统、管理令牌 Dialog、Skeleton、Toast 和共享控制台组件。
 - 提交 `51a93e05fd4bd49e451e864ec7af305961d8a47a` 已在 Windows 生产机安全部署成功，完成 P0 状态语义和 4PNG Token 启动加载修复。
 - 提交 `3d0ddd7e76123660409ddaaf74b641641d282ee4` 已在 Windows 生产机安全部署成功，完成主接口与 4PNG Provider Secret 就地配置及正确祖先链部署。
+- 提交 `7d637b90ac2b177de86bae024713ac9172bb26fa` 已在 Windows 生产机安全部署成功，完成 P3A 日志、诊断、安全与回滚独立页面。
 - 最新生产验证报告状态为 `pass`，备份保存在仓库外部部署备份目录。
 - `observability=status=degraded` 表示可选上游或业务任务存在降级，不等同于 5001 或 6178 核心服务故障。
 
