@@ -13,7 +13,8 @@
 - 修复 `LOL_BAN_4PNG_TOKEN` 已写入 `app_env.local.ps1`、但 5001 重启后可能没有继承该环境变量的问题。
 - 新增 Python 启动环境兜底：只解析本地 PowerShell 环境文件中的安全字面量，不执行 PowerShell、不覆盖已有环境变量、不回显 Secret。
 - 删除测试生成的 `config/interface-parser-center.json` 和 `data/contact_risk.db`，并加入 `.gitignore` 防线，禁止运行态数据进入源码提交和部署包。
-- 当前生产仍运行 `5a1f6420867e289a9dc36b6ef62fa116b8b47880`；上述验收修复需部署新的 V3 候选包后生效。
+- 提交 `51a93e05fd4bd49e451e864ec7af305961d8a47a` 已在 Windows 生产机安全部署成功：327 项测试、全部 PowerShell 5.1 解析、新控制台/封号页/解析中心 JavaScript 语法检查、Windows 服务、`livez`、`readyz`、build-info、Git HEAD、shard 与 ARAM 正式链路全部通过。
+- 第二次生产验证报告状态为 `pass`，备份位于 `D:\project2\lolapisevers.deploy-backups\20260805-101138-full-bug-repair-51a93e05fd4b`。
 
 ### 6178 运行时热修复
 
@@ -54,6 +55,7 @@
 - 提交 `19edfc9c189f6b269793ed750e42548268fcc115` 已在 Windows 生产机安全部署成功，完成 LOL2099 与 4PNG 备用 Provider 基线。
 - 提交 `28e68e75ee14674bba10606587937473d37baa1e` 已在 Windows 生产机安全部署成功，完成 6178 专业控制台、解析中心入口和 4PNG Token 专用配置入口。
 - 提交 `5a1f6420867e289a9dc36b6ef62fa116b8b47880` 已在 Windows 生产机安全部署成功，完成独立新总览、统一设计系统、管理令牌 Dialog、Skeleton、Toast 和共享控制台组件。
+- 提交 `51a93e05fd4bd49e451e864ec7af305961d8a47a` 已在 Windows 生产机安全部署成功，完成 P0 状态语义和 4PNG Token 启动加载修复。
 - 最新生产验证报告状态为 `pass`，备份保存在仓库外部部署备份目录。
 - `observability=status=degraded` 表示可选上游或业务任务存在降级，不等同于 5001 或 6178 核心服务故障。
 
