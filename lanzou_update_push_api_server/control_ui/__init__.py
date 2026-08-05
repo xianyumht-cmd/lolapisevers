@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .operations import render_diagnostics_page, render_logs_page, render_system_page
 from .pages import render_overview_page as _render_overview_page
 
 ASSET_DIRECTORY = Path(__file__).resolve().parent / "assets"
@@ -17,4 +18,10 @@ def render_overview_page() -> str:
     )
 
 
-__all__ = ["ASSET_DIRECTORY", "render_overview_page"]
+__all__ = [
+    "ASSET_DIRECTORY",
+    "render_diagnostics_page",
+    "render_logs_page",
+    "render_overview_page",
+    "render_system_page",
+]
