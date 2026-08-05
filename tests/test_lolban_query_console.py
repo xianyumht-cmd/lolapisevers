@@ -16,6 +16,7 @@ from lanzou_update_push_api_server.lolban_console import (
     _provider_identity,
     render_lolban_console_page,
     save_fourpng_token,
+    save_provider_secret,
     test_lolban_console,
 )
 from lanzou_update_push_api_server.ui_theme import apply_ios_glass_theme
@@ -106,11 +107,12 @@ class LolbanQueryConsoleTests(unittest.TestCase):
     def test_reload_environment_is_strictly_allowlisted(self):
         with patch.dict(os.environ, {}, clear=False):
             changed = _apply_reload_environment(
-                {"environment": {"LOL_BAN_TIMEOUT": "12", "LOL_BAN_SNAPSHOT_ENABLED": "1", "LOL_BAN_4PNG_TOKEN": "secret"}}
+                {"environment": {"LOL_BAN_TIMEOUT": "12", "LOL_BAN_SNAPSHOT_ENABLED": "1", "LOLMAP_API_TOKEN": "primary-secret", "LOL_BAN_4PNG_TOKEN": "backup-secret"}}
             )
-            self.assertEqual(changed, ["LOL_BAN_TIMEOUT", "LOL_BAN_SNAPSHOT_ENABLED", "LOL_BAN_4PNG_TOKEN"])
+            self.assertEqual(changed, ["LOL_BAN_TIMEOUT", "LOL_BAN_SNAPSHOT_ENABLED", "LOLMAP_API_TOKEN", "LOL_BAN_4PNG_TOKEN"])
             self.assertEqual(os.environ["LOL_BAN_TIMEOUT"], "12")
-            self.assertEqual(os.environ["LOL_BAN_4PNG_TOKEN"], "secret")
+            self.assertEqual(os.environ["LOLMAP_API_TOKEN"], "primary-secret")
+            self.assertEqual(os.environ["LOL_BAN_4PNG_TOKEN"], "backup-secret")
         with self.assertRaises(HTTPException):
             _apply_reload_environment({"environment": {"PATH": "unsafe"}})
 
@@ -139,24 +141,43 @@ class LolbanQueryConsoleTests(unittest.TestCase):
         )
 
 
-    def test_fourpng_token_save_hot_reloads_without_returning_value(self):
+    def test_provider_tokens_save_hot_reload_without_returning_values(self):
+        for provider_id, secret_name in (
+            ("lolban-primary", "LOLMAP_API_TOKEN"),
+            ("lolban-4png", "LOL_BAN_4PNG_TOKEN"),
+        ):
+            with self.subTest(provider_id=provider_id), patch(
+                "lanzou_update_push_api_server.lolban_console.save_parser_secret",
+                return_value={"ok": True, "message": "saved", "backup_path": "backup"},
+            ) as save_secret, patch(
+                "lanzou_update_push_api_server.lolban_console._main_request",
+                return_value={"ok": True, "changed_environment": [secret_name]},
+            ) as main_request:
+                result = save_provider_secret(
+                    "http://127.0.0.1:5001",
+                    {"provider_id": provider_id, "value": "real-token"},
+                )
+            save_secret.assert_called_once_with(
+                {"name": secret_name, "value": "real-token"}
+            )
+            self.assertEqual(
+                main_request.call_args.kwargs["payload"],
+                {"environment": {secret_name: "real-token"}},
+            )
+            self.assertTrue(result["ok"])
+            self.assertNotIn("real-token", str(result))
+
+    def test_fourpng_compatibility_endpoint_uses_provider_secret_path(self):
         with patch(
-            "lanzou_update_push_api_server.lolban_console.save_parser_secret",
-            return_value={"ok": True, "message": "saved", "backup_path": "backup"},
-        ) as save_secret, patch(
-            "lanzou_update_push_api_server.lolban_console._main_request",
-            return_value={"ok": True, "changed_environment": ["LOL_BAN_4PNG_TOKEN"]},
-        ) as main_request:
-            result = save_fourpng_token("http://127.0.0.1:5001", {"value": "real-token"})
-        save_secret.assert_called_once_with(
-            {"name": "LOL_BAN_4PNG_TOKEN", "value": "real-token"}
-        )
-        self.assertEqual(
-            main_request.call_args.kwargs["payload"],
-            {"environment": {"LOL_BAN_4PNG_TOKEN": "real-token"}},
-        )
+            "lanzou_update_push_api_server.lolban_console.save_provider_secret",
+            return_value={"ok": True},
+        ) as save_secret:
+            result = save_fourpng_token("http://127.0.0.1:5001", {"value": "legacy-token"})
         self.assertTrue(result["ok"])
-        self.assertNotIn("real-token", str(result))
+        save_secret.assert_called_once_with(
+            "http://127.0.0.1:5001",
+            {"provider_id": "lolban-4png", "value": "legacy-token"},
+        )
 
     def test_test_modes_do_not_mix_provider_and_formal_results(self):
         with patch(
@@ -188,6 +209,10 @@ class LolbanQueryConsoleTests(unittest.TestCase):
         self.assertIn("/admin/query-console/lolban/test", page)
         self.assertIn("测试所选 Provider", page)
         self.assertIn("测试正式链路", page)
+        self.assertIn("data-secret-provider", page)
+        self.assertIn("providerSecrets", page)
+        self.assertIn("/admin/query-console/lolban/provider-secret", page)
+        self.assertIn("providerSecretControl", page)
 
     def test_root_dashboard_theme_injects_lolban_entry(self):
         page = apply_ios_glass_theme(
