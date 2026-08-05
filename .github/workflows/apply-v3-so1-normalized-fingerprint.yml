@@ -1,0 +1,120 @@
+name: Apply V3 SO1 normalized fingerprint fix
+
+on:
+  push:
+    branches:
+      - feat/webui-control-panel-003-20260805
+    paths:
+      - .patches/v3-so1-normalized-fingerprint.patch
+      - .github/workflows/apply-v3-so1-normalized-fingerprint.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-test-commit:
+    runs-on: windows-latest
+    timeout-minutes: 75
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: feat/webui-control-panel-003-20260805
+
+      - name: Verify and apply patch
+        shell: pwsh
+        run: |
+          $patch = ".patches/v3-so1-normalized-fingerprint.patch"
+          $expectedHash = "41fcbbd117ad3fe015668fc300690415ba64e06fe2c21a4df5b49e73986213b0"
+          $expectedBytes = 3990
+          $actualHash = (Get-FileHash -LiteralPath $patch -Algorithm SHA256).Hash.ToLowerInvariant()
+          $actualBytes = [int64](Get-Item -LiteralPath $patch).Length
+          if ($actualHash -ne $expectedHash) {
+            throw "Patch SHA-256 mismatch: $actualHash"
+          }
+          if ($actualBytes -ne $expectedBytes) {
+            throw "Patch byte length mismatch: $actualBytes"
+          }
+          git apply --check --whitespace=error-all $patch
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git apply --whitespace=error-all $patch
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $changed = @(git diff --name-only)
+          $expected = @(
+            "ops/Build-FullBugRepairPackageV3.ps1",
+            "tests/test_v3_baseline_readiness.py"
+          )
+          if (($changed -join "`n") -ne ($expected -join "`n")) {
+            throw "Unexpected patched files: $($changed -join ', ')"
+          }
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies and audit tool
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pip-audit
+
+      - name: Run complete safety gate
+        shell: pwsh
+        run: |
+          python -m compileall -q .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest discover -s tests -p "test_*.py" -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/check_ui_assets.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($file in @(
+            "ui_control.generated.js",
+            "ui_lolban_console.generated.js",
+            "ui_parser_center.generated.js",
+            "lanzou_update_push_api_server/control_ui/assets/console.js",
+            "lanzou_update_push_api_server/control_ui/assets/operations.js",
+            "lanzou_update_push_api_server/control_ui/assets/configuration.js"
+          )) {
+            node --check $file
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          python -m pip_audit -r requirements.txt --strict
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Parse all PowerShell with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $files = @(Get-ChildItem -Filter *.ps1 -File -Recurse | Where-Object { $_.FullName -notmatch '[\\/]\.venv[\\/]' })
+          if ($files.Count -eq 0) {
+            throw "No PowerShell scripts found."
+          }
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            $text = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8
+            [System.Management.Automation.Language.Parser]::ParseInput($text, $file.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors -and $errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "$($file.FullName): $($_.Message)" }
+              exit 1
+            }
+          }
+          Write-Host "Parsed $($files.Count) PowerShell scripts successfully."
+
+      - name: Commit verified source and remove temporary runner
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- ops/Build-FullBugRepairPackageV3.ps1 tests/test_v3_baseline_readiness.py
+          git rm -- .patches/v3-so1-normalized-fingerprint.patch .github/workflows/apply-v3-so1-normalized-fingerprint.yml
+          git diff --cached --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git commit -m "fix(deploy): normalize inherited SO1 readiness state"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git push origin HEAD:feat/webui-control-panel-003-20260805
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
