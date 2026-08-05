@@ -1,10 +1,10 @@
-# WEBUI-CONTROL-PANEL-003 P3B 基线感知 readiness 交接
+# WEBUI-CONTROL-PANEL-003 P3B 基线感知 readiness 与页面验收交接
 
-更新时间：2026-08-06 02:43 +08:00
+更新时间：2026-08-06 03:25 +08:00
 
 ## 当前断点
 
-P3B 新 V3 目标已经在 Windows 生产机部署成功，验证报告为完整 `pass`。代码、打包和生产切换均无阻塞，当前进入五个 P3B 页面与实际操作验收。
+P3B 首轮 V3 已在 Windows 生产机完整 `pass`，五个新页面也已提交实机截图。截图确认路由和共享控制台正常，但暴露三个页面验收缺口。缺口已完成修复、标准 CI 和 V3 打包；当前等待部署增量目标 `dda1c274...` 后复验。
 
 继续任务时先读取：
 
@@ -20,7 +20,7 @@ P3B 新 V3 目标已经在 Windows 生产机部署成功，验证报告为完整
 - 功能分支：`feat/webui-control-panel-003-20260805`
 - 当前生产：`7524a5ea36b53a4186a1934edb69b691af56ac09`
 - 服务：`LOLDataSystem`
-- 生产验证：`pass`
+- 当前生产验证：`pass`
 - `degraded=false`
 - `inherited_so1_session_degradation=false`
 
@@ -28,7 +28,34 @@ P3B 新 V3 目标已经在 Windows 生产机部署成功，验证报告为完整
 
 - `D:\project2\lolapisevers.deploy-backups\20260806-023757-full-bug-repair-7524a5ea36b5`
 
-## P3B 页面
+## 首轮部署记录
+
+部署目标：
+
+- `7524a5ea36b53a4186a1934edb69b691af56ac09`
+
+结果：
+
+- release.bundle：PASS
+- Python 3.14 离线依赖：PASS
+- 343 项候选测试：PASS
+- WebUI JavaScript：PASS
+- 停服前健康基线：PASS
+- 服务切换与启动：PASS
+- 后置生产验证：`pass`
+- 自动回滚：未触发
+- MySQL：up
+- SO1 Chromium：up
+- SO1 session：authenticated
+- `/readyz`：HTTP 200
+- build-info 与 Git HEAD：目标提交
+- shard 与 ARAM：`kind=segments`
+
+SO1 基线感知规则已在实机部署中保留，但本次会话已认证，因此没有使用 `pass_with_warning` 路径。
+
+## 五个页面截图验收
+
+截图已覆盖：
 
 - `/main-config`
 - `/lanzou/config`
@@ -36,85 +63,134 @@ P3B 新 V3 目标已经在 Windows 生产机部署成功，验证报告为完整
 - `/lanzou/targets`
 - `/api-debugger`
 
-对应旧 `?tab=` 地址保留 307 兼容重定向。共享控制台 Shell、Secret 脱敏、Watcher 密码掩码往返、通知 Header 掩码往返、本机回环或 `WEBUI_ADMIN_TOKEN` 保护均已实现。
+通过项：
 
-## Windows 部署记录
+- 五个新 URL 均正常打开
+- 统一侧栏、顶部状态、面包屑与激活态正常
+- 主接口配置读取正常
+- 蓝奏全局配置读取正常
+- 53 个 Watcher 正常加载
+- 通知目标正常加载
+- 调试器加载 69 个接口
 
-部署目标：
+未通过项：
 
-- `7524a5ea36b53a4186a1934edb69b691af56ac09`
+1. `/lanzou/config` 的通知模板显示为连续问号；
+2. `/lanzou/targets` 的回调 URL 明文显示敏感查询令牌；
+3. `/api-debugger` 没有 Header JSON 输入。
 
-部署时间：
+用户明确说明：机器人实际收到的蓝奏监控通知没有乱码，乱码一直只存在于 WebUI。因此该问题属于历史 WebUI 显示缺陷，不是发送链路故障，也不是确认过的真实模板数据损坏。修复不得主动改写现有通知模板。
 
-- 候选目录时间戳：`20260806-023757`
-- verification generated_at：`2026-08-05T18:39:20.1378100Z`
+## 页面验收修复
 
-部署过程：
+### 1. 历史模板显示保护
 
-- release.bundle 验证：PASS
-- Python 3.14 离线依赖安装：PASS
-- 无破损依赖：PASS
-- 343 项候选测试：PASS
+- 识别连续 `???` 且包含 `{title}`、`{url}` 的历史异常显示值
+- 不把异常值直接填入 textarea
+- 显示保护提示
+- 未输入新模板时不提交 `notification_template`
+- 现有运行模板和机器人实际通知保持原样
+- 用户明确输入时才执行替换
+
+### 2. URL 查询 Secret 脱敏与安全往返
+
+- 敏感参数名及 `_token`、`_secret`、`_password`、`_key` 后缀均掩码
+- WebUI 返回 `%2A%2A%2A`
+- 后端解析后识别为 `***` 并恢复旧值
+- 仅 scheme、host、path 相同才允许恢复
+- 目标地址改变时要求明确填写新 Secret
+- Header `***` 掩码保留原有安全往返
+
+### 3. 调试器 Header JSON
+
+- 前端新增 Header JSON 编辑区
+- `/admin/invoke` 接收并验证 Header
+- 限制 Header 数量和值长度
+- 禁止 Host、Content-Length、Connection 等 hop-by-hop Header
+- 内部自动注入令牌优先，不能被 WebUI 覆盖
+- 响应 Header 和 request URL 中的敏感值脱敏
+
+## 修复提交与验证
+
+最终运行候选：
+
+- `1aa90eb3c9519e4c0cbe8c9a8cd97c9a5e66bdaa`
+
+标准 CI：
+
+- tests Run `31038403674`：success
+- Linux：success
+- Windows：success
+- dependency audit：success
+- Parser Center Run `31038403744`：success
+
+修复新增回归覆盖：
+
+- 自定义 Header 转发
+- 敏感响应 Header 脱敏
+- 请求 URL 查询 Secret 脱敏
+- Host/hop-by-hop Header 拒绝
+- 通知目标 URL 掩码
+- `%2A%2A%2A` 往返恢复真实 Secret
+- 历史模板保护和调试器 Header UI 标记
+
+临时补丁工作流与临时 CI 修改已清理，标准 `.github/workflows/tests.yml` 已恢复。
+
+## 新 V3 增量目标
+
+- 目标：`dda1c27453eb3b4cf0b79a53ff043369f7662736`
+- 第一父提交：当前生产 `7524a5ea36b53a4186a1934edb69b691af56ac09`
+- 第二父提交：最终运行候选 `1aa90eb3c9519e4c0cbe8c9a8cd97c9a5e66bdaa`
+- 目标 tree：`909fc8e0292559c96ff9cff7b886ca9bed89a5d3`
+- 候选 tree：`909fc8e0292559c96ff9cff7b886ca9bed89a5d3`
+- 零文件差异：PASS
+
+构建记录：
+
+- 构造 PR #55 已合并到临时 build 分支，不涉及 master
+- V3 Draft PR #56 只用于构建，禁止合并
+- V3 Run：`31038652544`
+- V3 Job：`92417180981`
+- Artifact：`8943693600`
+- 345 项测试：PASS
 - WebUI JavaScript：PASS
-- 停服前健康基线：PASS
-- 生产源码切换：PASS
-- build-info 写入：PASS
-- 服务启动：PASS
-- 后置生产验证：PASS
-- 自动回滚：未触发
+- Windows PowerShell 5.1：17 个脚本 PASS
+- pip audit：无已知漏洞
 
-验证报告：
+制品：
 
-- `status=pass`
-- Windows 服务：Running
-- `/livez`：HTTP 200
-- MySQL：up
-- SO1 Chromium：up
-- SO1 session：authenticated
-- `/readyz`：HTTP 200
-- build-info：目标提交
-- Git HEAD：目标提交
-- shard：`kind=segments`
-- ARAM：`kind=segments`
-- observability 检查：pass，detail 为 `status=degraded`
+- 文件：`LOLDataSystem-full-bug-repair-safe-deploy-dda1c27453eb-py311-py314-winps51-v3.zip`
+- SHA-256：`0f28a8f1bb0135f2feb6aa61f6ec844a5a1696736673895c8b3dcaca49502dca`
+- 大小：`85,905,966` 字节
+- Package content SHA-256：`40d24b8068f2147d2cbb99b9e10eaaff0ffe70cef944e438d9dcc652b762b8a5`
+- Package revision：3
+- Python：3.11、3.12、3.13、3.14
+- `powershell_utf8_parse_input=true`
+- `baseline_aware_readiness=true`
 
-`observability status=degraded` 是业务观测摘要，验证器已确认它不构成本次部署失败条件；服务、必需依赖、Git、构建信息和两条正式交付链路均通过。
+制品复核：
 
-## 停服前基线说明
-
-`pre-switch-health.json` 记录的是切换前旧生产：
-
-- commit：`7d637b90ac2b177de86bae024713ac9172bb26fa`
-- `ready=true`
-- MySQL：up
-- SO1 Chromium：up
-- SO1 session：authenticated
-
-因此本次部署没有使用 inherited degradation 例外；新生产直接以完整健康状态通过。
-
-## SO1 readiness 修复结论
-
-此前目标 `292b43ef...` 因原始 `reason|error_class` 文字漂移误回滚。最终版本保留以下规则：
-
-- 浏览器在线、会话不可用时使用稳定状态指纹
-- 原始失败原因保留在报告 detail
-- 部署前已认证、部署后失效仍强制回滚
-- MySQL、Chromium、服务、Git、build-info 和正式链路回归仍强制回滚
-
-本次实际部署时 SO1 session 已恢复 authenticated，所以归一化 warning 路径没有被使用。
+- 外层 Artifact digest 与 Actions：PASS
+- metadata 与内层 ZIP SHA/大小：PASS
+- manifest 51 个文件大小和 SHA：PASS
+- Package content SHA：PASS
+- release.bundle 完整历史：PASS
+- 当前生产是目标第一父提交：PASS
+- 目标与候选零差异：PASS
+- baseline readiness 与自动回滚标记：PASS
 
 ## 下一步验收
 
-1. Ctrl + F5 刷新 6178 页面。
-2. 提交五个独立页面截图。
-3. 验收旧 `?tab=` 地址 307 跳转。
-4. 主接口页：读取、修改、保存、备份、重启提示。
-5. 蓝奏全局配置：环境覆盖状态、保存和热刷新。
-6. Watcher：新增、编辑、启停、删除、扫描和密码保留。
-7. 通知目标：Header 脱敏、保留、启停、删除和测试推送。
-8. 接口调试器：Path、Query、Header、JSON Body 和响应显示。
-9. 页面操作验收通过后标记 P3B 完成。
-10. 再进入旧运行面板、旧导航注入和 `/legacy-ui` 退休审查。
+1. 解压新目标 `dda1c274...` 的 ZIP。
+2. 双击 `run-deploy.cmd`。
+3. 提交完整控制台输出、`pre-switch-health.json`、`verification-report.json`。
+4. 部署成功后 Ctrl + F5。
+5. `/lanzou/config`：确认不再直接显示问号模板；保护提示存在；留空保存不得改写实际通知。
+6. `/lanzou/targets`：确认 URL 查询令牌只显示掩码；Header 仍显示 `***`。
+7. `/api-debugger`：确认 Header JSON 存在，并用只读接口发起一次请求。
+8. 验收五个旧 `?tab=` 地址的 307 跳转。
+9. 验收主接口保存与备份、Watcher 密码保留、通知目标保存与测试推送。
+10. P3B 全部通过后再进入旧 `ui_control.py`、`ui_runtime.py`、旧导航注入和 `/legacy-ui` 退休审查。
 11. 整体迁移完成前不合并 PR #41，不关闭 Issue #40。
 
 ## 禁止再次部署
@@ -122,3 +198,5 @@ P3B 新 V3 目标已经在 Windows 生产机部署成功，验证报告为完整
 - `f9e00b505dc549f3d761348dc741535f4294e352`
 - `954f7748d41da9c3264441d33d60b7c9273fd946`
 - `292b43ef439b6102fd34b3c7b198cc7671b65eab`
+
+当前 `7524a5ea...` 是稳定生产，但不包含本轮三个验收修复；后续只使用目标 `dda1c274...` 的新 V3 包。
