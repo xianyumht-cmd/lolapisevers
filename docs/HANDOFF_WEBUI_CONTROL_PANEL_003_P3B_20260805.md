@@ -1,19 +1,16 @@
 # WEBUI-CONTROL-PANEL-003 P3B 交接
 
+更新时间：2026-08-06 03:52 +08:00
+
 ## 当前状态
 
-- Issue：#40
-- Draft PR：#41
-- 分支：`feat/webui-control-panel-003-20260805`
-- 当前生产：`7d637b90ac2b177de86bae024713ac9172bb26fa`
-- P3B 功能提交：`3c7a8868020eecee9cffbfca70d96e2766ba8f5c`
-- PR 与 Issue 在整体 WebUI 迁移完成前保持打开；PR 保持 Draft。
+- Issue：#40，保持打开以继续跟踪整体 WebUI 迁移；
+- Draft PR：#41，整体迁移完成前保持 Draft；
+- 分支：`feat/webui-control-panel-003-20260805`；
+- 当前生产：`dda1c27453eb3b4cf0b79a53ff043369f7662736`；
+- P3B 状态：**已完成并关闭阶段任务**。
 
-P3A 已于 2026-08-05 在 Windows 生产机部署并通过实机验收：333 项测试、Windows 服务、`livez`、`readyz`、build-info、Git HEAD、合集和 ARAM 正式交付链路均通过，verification report 为 `pass`。
-
-P3B 已完成分支实现，尚未部署生产。
-
-## P3B 已迁移页面
+## 已迁移页面
 
 - `/main-config`：主接口配置；
 - `/lanzou/config`：蓝奏全局配置；
@@ -21,7 +18,7 @@ P3B 已完成分支实现，尚未部署生产。
 - `/lanzou/targets`：通知目标；
 - `/api-debugger`：接口调试器。
 
-对应旧地址保留 307 兼容重定向：
+兼容重定向：
 
 - `/?tab=mainconfig` → `/main-config`；
 - `/?tab=lanzouconfig` → `/lanzou/config`；
@@ -29,97 +26,62 @@ P3B 已完成分支实现，尚未部署生产。
 - `/?tab=targets` → `/lanzou/targets`；
 - `/?tab=debugger` → `/api-debugger`。
 
-P3A 的日志、诊断、安全与回滚重定向继续保留。
+## 生产部署与验证
 
-## 页面与交互
+最终生产目标：
 
-P3B 页面统一使用现有共享控制台 Shell：
+- `dda1c27453eb3b4cf0b79a53ff043369f7662736`
 
-- Sidebar、Topbar、面包屑；
-- 管理令牌 Dialog；
-- Toast、Loading、Empty、Badge、Table、Form；
-- 本地 SVG 图标；
-- `configuration.css` 与 `configuration.js`；
-- 不依赖外部 CDN；
-- 不使用浏览器原生 `alert`、`confirm` 或 `prompt`。
+实机结果：
 
-### 主接口配置
+- 345 项候选测试：PASS；
+- Windows 服务：Running；
+- `/livez`：HTTP 200；
+- `/readyz`：HTTP 200；
+- MySQL：up；
+- SO1 Chromium：up；
+- SO1 session：authenticated；
+- build-info 与 Git HEAD：目标提交；
+- shard 与 ARAM：`kind=segments`；
+- verification：`pass`；
+- `degraded=false`；
+- `inherited_so1_session_degradation=false`；
+- 自动回滚：未触发。
 
-- 按后端字段元数据分组渲染；
-- 支持文本、数字、布尔和 Secret 字段；
-- Secret 不回显，留空表示保留原值；
-- 保存继续调用 `/admin/main-config`；
-- 后端继续校验、备份，并明确提示需要重启服务生效。
+## 最终验收
 
-### 蓝奏全局配置
+- 五个新页面均可正常打开；
+- 统一 Sidebar、Topbar、面包屑、状态提示和管理令牌组件正常；
+- 主接口配置保存、自动备份和重启提示正常；
+- 蓝奏配置保存和热更新正常；
+- 历史 WebUI 乱码模板已采用保护显示，留空保存不会覆盖机器人实际模板；
+- Watcher 密码掩码往返正常；
+- 通知目标 URL 查询 Secret 和 Header Secret 脱敏正常；
+- 通知目标未修改掩码直接保存可保留真实值；
+- 测试推送正常，机器人收到中文正常的测试通知；
+- 接口调试器支持 Query、Path、Headers JSON、JSON Body；
+- `GET /admin/audit?limit=100` 实机调用返回 HTTP 200；
+- 用户最终确认剩余测试正常。
 
-- 继续调用 `/admin/lanzou-config`；
-- 保存后刷新运行态；
-- 监听地址或端口变化仍明确提示需要重启；
-- 环境变量覆盖项单独显示，不能被页面误认为普通配置值。
+## 安全边界
 
-### 监控项目
+- Secret 不回显；
+- 空白或 `***` 表示保留原值；
+- URL 查询参数掩码保存时仅在 scheme、host、path 不变的条件下恢复旧值；
+- 目标地址变化时不静默复用旧 Secret；
+- 调试器禁止 Host、Content-Length 和 hop-by-hop Header；
+- 内部管理令牌由服务端安全注入，不能由页面覆盖；
+- 请求与响应中的敏感 URL/Header 值会脱敏；
+- 管理 API 继续受本机回环或 `WEBUI_ADMIN_TOKEN` 保护。
 
-- 支持新增、编辑、启停和删除 watcher；
-- 密码字段只显示配置状态；
-- 空白或 `***` 表示保留原密码；
-- 只有显式 `clear_password` 才清除密码；
-- 支持读取文件快照和执行单项扫描；
-- 保存继续走现有蓝奏配置校验、备份和热刷新流程。
+## 阶段关闭结论
 
-### 通知目标
+P3B 的实现、CI、部署、截图和操作验收均已完成。此阶段不再继续修改或重复部署。
 
-- 支持新增、编辑、启停和删除目标；
-- Header 中 Token、Authorization、Cookie、API Key 等敏感值脱敏；
-- `***` 保存时保留原值；
-- 支持测试推送；
-- 真实凭据不进入页面源码、公开状态或普通日志。
+下一阶段：
 
-### 接口调试器
-
-- 继续复用 `/admin/openapi/main`、`/admin/openapi/lanzou` 和 `/admin/invoke`；
-- 支持服务、接口、方法、Path、Query、Header 和 JSON Body；
-- 调用结果以等宽只读结果展示；
-- 5001 写入令牌由服务端按现有规则注入，不回传浏览器。
-
-## 安全与兼容
-
-- 页面壳和静态资源公开可加载；
-- 管理 API 继续受本机回环或 `WEBUI_ADMIN_TOKEN` 保护；
-- 令牌只进入当前标签页 `sessionStorage`；
-- 401/403 自动打开管理令牌 Dialog；
-- GET `/admin/lanzou-config` 返回脱敏配置；
-- Watcher 密码和通知 Header 支持掩码往返保留；
-- 现有后端 API 路径、配置 Schema、Provider 协议和插件协议不变。
-
-## 已完成验证
-
-P3B 补丁经过以下门禁后才形成正式功能提交：
-
-- gzip/Base64 载荷完整性；
-- 补丁精确大小 91,523 字节；
-- `git apply --check`；
-- Python 编译；
-- 338 项单元测试；
-- `tests/check_ui_assets.py`；
-- `configuration.js` 执行 `node --check`；
-- 临时补丁载荷和临时工作流已自动删除；
-- 原正式 `tests.yml` 已恢复。
-
-功能提交后还需要完成标准 GitHub CI：
-
-- Linux 全量测试；
-- Windows 全量测试；
-- Parser Center 专项及全套测试；
-- 所有最终 WebUI JavaScript；
-- 全部 PowerShell 5.1；
-- 依赖安全审计。
-
-## 下一步
-
-1. 等待 P3B 文档提交触发的最终标准 CI 全绿；
-2. 更新 PR #41、Issue #40 与 CHANGELOG；
-3. 以当前生产 `7d637b90...` 为第一父提交，构造文件树等于 P3B 候选的部署提交；
-4. 构建 V3 不可变离线一键部署包；
-5. Windows 实机验收五个 P3B 页面及旧 `?tab=` 重定向；
-6. P3B 验收完成后再审查并退休 `ui_control.py`、`ui_runtime.py`、旧导航注入和 `/legacy-ui` 应急页。
+1. 审查 `ui_control.py`、`ui_runtime.py`；
+2. 盘点旧导航注入仍承载的入口；
+3. 审查 `/legacy-ui` 是否仍有生产依赖；
+4. 迁移遗漏功能后，分批退休旧代码和旧入口；
+5. 整体 WebUI 迁移完成后再决定 PR #41 合并和 Issue #40 关闭。
