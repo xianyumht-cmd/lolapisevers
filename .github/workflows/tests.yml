@@ -3,131 +3,157 @@ name: tests
 on:
   pull_request:
     branches:
+      - master
+      - codex/production-integration-audit-20260726
+      - docs/intranet-query-boundary-20260728
       - "feat/**"
+  push:
+    branches: [master]
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  apply-baseline-readiness:
-    runs-on: windows-latest
-    timeout-minutes: 60
+  linux-unittest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - name: Checkout feature branch
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          ref: feat/webui-control-panel-003-20260805
 
-      - name: Set up Python 3.12
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: requirements.txt
 
-      - name: Reconstruct and apply immutable patch
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Compile Python source
+        run: python -m compileall -q .
+
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+
+  windows-unittest:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
         shell: pwsh
         run: |
-          $partNames = @(
-            "part00.txt",
-            "part01.txt",
-            "part02.txt",
-            "part03.txt",
-            "part04a.txt",
-            "part04b.txt",
-            "part05.txt"
-          )
-          $encoded = ""
-          foreach ($name in $partNames) {
-            $path = Join-Path ".patches/p3b-baseline-readiness" $name
-            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-              throw "Missing patch part: $name"
-            }
-            $encoded += (Get-Content -LiteralPath $path -Raw -Encoding ASCII).Trim()
-          }
-          $bytes = [Convert]::FromBase64String($encoded)
-          if ($bytes.Length -ne 13895) {
-            throw "Patch byte length mismatch: $($bytes.Length)"
-          }
-          $patchPath = Join-Path $env:RUNNER_TEMP "p3b-baseline-readiness.patch"
-          [IO.File]::WriteAllBytes($patchPath, $bytes)
-          $hash = (Get-FileHash -LiteralPath $patchPath -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($hash -ne "8e223c18994b16ef4b2c6b5db2c4e9906b9b22906aab067b4c44db63ed24aa4e") {
-            throw "Patch SHA-256 mismatch: $hash"
-          }
-          git apply --check $patchPath
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          git apply $patchPath
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $actual = @(git diff --name-only | Sort-Object)
-          $expected = @(
-            ".github/workflows/build-production-safe-deployment-v3.yml",
-            "ops/Build-FullBugRepairPackageV3.ps1"
-          ) | Sort-Object
-          if (@(Compare-Object $expected $actual).Count -ne 0) {
-            throw "Unexpected patched files: $($actual -join ', ')"
-          }
-          if (-not (Test-Path -LiteralPath "tests/test_v3_baseline_readiness.py" -PathType Leaf)) {
-            throw "Tracked baseline-readiness regression test is missing."
-          }
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
 
-      - name: Install dependencies and audit tool
+      - name: Compile Python source
         shell: pwsh
+        run: python -m compileall -q .
+
+      - name: Run unit tests
+        shell: pwsh
+        run: python -m unittest discover -s tests -v
+
+      - name: Generate WebUI JavaScript
+        id: generate_ui
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          python tests/check_ui_assets.py 2>&1 | Tee-Object -FilePath ui-generation-output.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Validate WebUI JavaScript
+        id: node_check
+        if: steps.generate_ui.outcome == 'success'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          node --check ui_control.generated.js 2>&1 | Tee-Object -FilePath node-check.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload WebUI syntax diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: webui-syntax-diagnostics
+          path: |
+            ui_control.generated.js
+            node-check.txt
+            ui-generation-error.txt
+            ui-generation-output.txt
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Fail on WebUI generation error
+        if: steps.generate_ui.outcome == 'failure'
+        shell: pwsh
+        run: |
+          Get-Content ui-generation-output.txt -Raw | Write-Error
+          exit 1
+
+      - name: Fail on WebUI syntax error
+        if: steps.node_check.outcome == 'failure'
+        shell: pwsh
+        run: |
+          Get-Content node-check.txt -Raw | Write-Error
+          exit 1
+
+      - name: Validate every PowerShell script
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem -Path . -Filter *.ps1 -File -Recurse |
+            Where-Object { $_.FullName -notmatch '[\\/]\.venv[\\/]' }
+          if ($files.Count -eq 0) {
+            Write-Error "No PowerShell scripts found"
+            exit 1
+          }
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              $file.FullName,
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "$($file.FullName): $($_.Message)" }
+              exit 1
+            }
+          }
+          Write-Host "Parsed $($files.Count) PowerShell scripts successfully."
+
+      - name: Remove generated diagnostics
+        if: always()
+        shell: pwsh
+        run: Remove-Item ui_control.generated.js,node-check.txt,ui-generation-error.txt,ui-generation-output.txt -Force -ErrorAction SilentlyContinue
+
+  dependency-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install audit tool and project dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           python -m pip install pip-audit
 
-      - name: Run complete safety gate
-        shell: pwsh
-        run: |
-          python -m compileall -q .
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -m unittest discover -s tests -p "test_*.py" -v
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python tests/check_ui_assets.py
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node --check ui_control.generated.js
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -m pip_audit -r requirements.txt --strict
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Parse every PowerShell script with Windows PowerShell 5.1
-        shell: powershell
-        run: |
-          $files = @(Get-ChildItem -Filter *.ps1 -File -Recurse)
-          foreach ($file in $files) {
-            $tokens = $null
-            $errors = $null
-            $text = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8
-            [System.Management.Automation.Language.Parser]::ParseInput(
-              $text,
-              $file.FullName,
-              [ref]$tokens,
-              [ref]$errors
-            ) | Out-Null
-            if ($errors -and $errors.Count -gt 0) {
-              $errors | ForEach-Object { Write-Error "$($file.FullName): $($_.Message)" }
-              exit 1
-            }
-          }
-
-      - name: Commit only the verified builder source
-        shell: pwsh
-        run: |
-          git checkout -- .github/workflows/build-production-safe-deployment-v3.yml
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- ops/Build-FullBugRepairPackageV3.ps1
-          $staged = @(git diff --cached --name-only)
-          if ($staged.Count -ne 1 -or $staged[0] -ne "ops/Build-FullBugRepairPackageV3.ps1") {
-            throw "Only the verified builder source may be committed: $($staged -join ', ')"
-          }
-          git diff --cached --check
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          git commit -m "fix(deploy): compare readiness against pre-switch baseline"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          git push origin HEAD:feat/webui-control-panel-003-20260805
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Audit dependency set
+        run: python -m pip_audit --strict
