@@ -2,6 +2,7 @@
 
 当前任务请按顺序读取：
 
+- `docs/HANDOFF_WEBUI_CONTROL_PANEL_003_P3B_BASELINE_READINESS_20260806.md`
 - `docs/HANDOFF_WEBUI_CONTROL_PANEL_003_P3B_20260805.md`
 - `docs/HANDOFF_WEBUI_CONTROL_PANEL_003_P3A_20260805.md`
 - `docs/HANDOFF_WEBUI_CONTROL_PANEL_003_P0_ACCEPTANCE_20260805.md`
@@ -9,34 +10,54 @@
 - `docs/PLAN_WEBUI_CONTROL_PANEL_003.md`
 - `CHANGELOG.md`
 
-当前主题：继续 `WEBUI-CONTROL-PANEL-003`，完成 P3B 主接口配置、蓝奏配置、监控项目、通知目标和接口调试器的最终 CI、部署包和 Windows 实机验收。
+当前主题：继续 `WEBUI-CONTROL-PANEL-003` P3B，修复 V3 构建器中 `Verify-FullBugRepairDeployment.ps1` readyz 区块的 CRLF/LF 多行锚点匹配问题，重新构建基线感知 readiness 的 Windows 离线一键部署包。
 
-当前生产：`7d637b90ac2b177de86bae024713ac9172bb26fa`。
+## 当前真实状态
 
-P3A 已在 Windows 生产机安全部署并通过实机验收：333 项测试、Windows 服务、`livez`、`readyz`、build-info、Git HEAD、合集和 ARAM 正式交付链路均通过，verification report 为 `pass`。
+- 当前生产：`7d637b90ac2b177de86bae024713ac9172bb26fa`
+- 生产仍是已通过实机验收的 P3A
+- P3B 尚未部署生产
+- Issue #40 保持打开
+- Draft PR #41 保持 Draft，禁止合并
 
-P3B 功能提交：`3c7a8868020eecee9cffbfca70d96e2766ba8f5c`，已完成分支实现但尚未部署生产：
+P3B 五个页面已完成：
 
-- `/main-config`：主接口配置；
-- `/lanzou/config`：蓝奏全局配置；
-- `/lanzou/watchers`：监控项目；
-- `/lanzou/targets`：通知目标；
-- `/api-debugger`：接口调试器；
-- 对应旧 `?tab=` 地址全部改为 307 兼容重定向；
-- 新页面使用共享控制台 Shell、`configuration.css/js` 和本地 SVG 图标；
-- Secret、Watcher 密码和通知 Header 均支持脱敏与掩码往返保留；
-- 页面壳公开，管理 API 继续受本机回环或 `WEBUI_ADMIN_TOKEN` 保护；
-- 不使用浏览器原生 `alert`、`confirm` 或 `prompt`。
+- `/main-config`
+- `/lanzou/config`
+- `/lanzou/watchers`
+- `/lanzou/targets`
+- `/api-debugger`
 
-P3B 功能补丁形成提交前已通过：
+基线感知 readiness 逻辑已实现：部署前保存健康基线，只允许 SO1 会话依赖在部署前后保持完全相同的既有降级；新增或恶化的降级仍必须失败并回滚。
 
-- 补丁完整性和精确大小 91,523 字节；
-- `git apply --check`；
-- Python 编译；
-- 338 项测试；
-- 最终页面资源检查；
-- `configuration.js` 语法检查；
-- 临时补丁与工作流自动清理；
-- 正式 `tests.yml` 恢复。
+当前构建器候选：
 
-下一步：等待本次文档提交触发的标准 Linux、Windows、Parser Center、所有 WebUI JavaScript、PowerShell 5.1 和依赖审计全部通过；随后以当前生产为第一父提交生成 P3B V3 不可变一键部署包。PR #41 保持 Draft，Issue #40 保持打开。
+- `5df00bb8e0763972294fde9443f26436c42b2320`
+
+该候选已经通过 Linux、Windows、Parser Center、341 项测试、全部 WebUI JavaScript、17 个 PowerShell 脚本的 Windows PowerShell 5.1 解析和依赖安全审计。
+
+## 当前阻塞
+
+第二次 V3 构建目标：
+
+- `954f7748d41da9c3264441d33d60b7c9273fd946`
+- 临时 Draft PR #50，禁止合并
+- V3 Run `31020489861`
+- Job `92355626999`
+
+不可变测试、PowerShell 5.1 和依赖审计均通过，但 ZIP 构建失败：
+
+```text
+Verifier readyz block anchor was not unique.
+```
+
+失败位置在 `ops/Build-FullBugRepairPackageV3.ps1` 约第 325 行。根因与前一次部署调用锚点相同：Windows PowerShell 5.1 here-string 为 CRLF，被扫描验证脚本为 LF，多行锚点未标准化。
+
+没有上传制品，没有可部署 ZIP。以下两个目标均禁止部署：
+
+- `f9e00b505dc549f3d761348dc741535f4294e352`
+- `954f7748d41da9c3264441d33d60b7c9273fd946`
+
+## 新对话第一步
+
+修复 Verifier readyz block 锚点：先把查找锚点和替换文本标准化为 LF，再继续要求精确匹配一次；不要放宽唯一性安全门。更新回归测试后跑完整标准 CI，再创建新的生产第一父提交目标和新的 `[DO NOT MERGE]` V3 构建 PR。
