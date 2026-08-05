@@ -319,6 +319,8 @@ def update_lanzou_config(patch: dict[str, Any]) -> tuple[AppConfig, str]:
     if "watchers" in patch:
         if not isinstance(patch["watchers"], list):
             raise ValueError("watchers must be a list")
+        current_watchers = [item for item in current.get("watchers", []) if isinstance(item, dict)]
+        current_by_id = {str(item.get("id") or "").strip(): item for item in current_watchers}
         watchers: list[dict[str, Any]] = []
         ids: set[str] = set()
         for index, raw in enumerate(patch["watchers"], start=1):
@@ -328,11 +330,21 @@ def update_lanzou_config(patch: dict[str, Any]) -> tuple[AppConfig, str]:
             if not watcher_id or watcher_id in ids:
                 raise ValueError(f"watcher id is empty or duplicated: {watcher_id}")
             ids.add(watcher_id)
+            previous = current_by_id.get(watcher_id)
+            if previous is None and index <= len(current_watchers):
+                previous = current_watchers[index - 1]
+            supplied_password = str(raw.get("password") or "").strip()
+            if raw.get("clear_password") is True:
+                password = ""
+            elif supplied_password and supplied_password != "***":
+                password = supplied_password
+            else:
+                password = str((previous or {}).get("password") or "").strip()
             item = {
                 "id": watcher_id,
                 "title": str(raw.get("title") or watcher_id).strip(),
                 "url": _validate_http_url(raw.get("url"), f"watcher {watcher_id} url"),
-                "password": str(raw.get("password") or "").strip(),
+                "password": password,
                 "enabled": _as_bool_strict(raw.get("enabled", True), f"watcher {watcher_id} enabled"),
                 "max_pages": _as_int(20 if raw.get("max_pages") is None else raw.get("max_pages"), f"watcher {watcher_id} max_pages", 1, 100),
             }
@@ -342,6 +354,8 @@ def update_lanzou_config(patch: dict[str, Any]) -> tuple[AppConfig, str]:
     if "notify_targets" in patch:
         if not isinstance(patch["notify_targets"], list):
             raise ValueError("notify_targets must be a list")
+        current_targets = [item for item in current.get("notify_targets", []) if isinstance(item, dict)]
+        current_by_name = {str(item.get("name") or "").strip(): item for item in current_targets}
         targets: list[dict[str, Any]] = []
         target_names: set[str] = set()
         for index, raw in enumerate(patch["notify_targets"], start=1):
@@ -356,13 +370,27 @@ def update_lanzou_config(patch: dict[str, Any]) -> tuple[AppConfig, str]:
             if target_name in target_names:
                 raise ValueError(f"notify target names must be unique (index {index})")
             target_names.add(target_name)
+            previous = current_by_name.get(target_name)
+            if previous is None and index <= len(current_targets):
+                previous = current_targets[index - 1]
+            previous_headers = (previous or {}).get("headers") or {}
+            merged_headers = {}
+            for key, value in headers.items():
+                header_name = str(key).strip()
+                if not header_name:
+                    raise ValueError(f"notify target {index} header name must be non-empty")
+                text = str(value)
+                if text == "***" and header_name in previous_headers:
+                    merged_headers[header_name] = str(previous_headers[header_name])
+                else:
+                    merged_headers[header_name] = text
             targets.append(
                 {
                     "name": target_name,
                     "enabled": _as_bool_strict(raw.get("enabled", True), f"notify target {index} enabled"),
                     "url": _validate_http_url(raw.get("url"), f"notify target {index} url"),
                     "timeout_seconds": _as_float(8.0 if raw.get("timeout_seconds") is None else raw.get("timeout_seconds"), f"notify target {index} timeout_seconds", 0.1, 120.0),
-                    "headers": {str(key): str(value) for key, value in headers.items()},
+                    "headers": merged_headers,
                 }
             )
         current["notify_targets"] = targets
