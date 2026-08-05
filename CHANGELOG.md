@@ -4,6 +4,22 @@
 
 ## 2026-08-05
 
+### WEBUI-CONTROL-PANEL-003 P3A：日志、诊断、安全与回滚独立页面
+
+- 完成 6178 前端依赖审查，确认当前并存三套页面：新总览、旧 `?tab=` 全功能运行面板和更早的 `/legacy-ui`；停止用“隐藏旧入口”代替功能迁移。
+- 新增 `/logs` 独立日志中心，复用 `/admin/logs` 与 `/admin/logs/{name}`，支持日志目录、存在状态、大小、尾部行数和关键词过滤。
+- 新增 `/diagnostics` 独立诊断页，复用 `/admin/diagnostics` 与 `/admin/repair/state`，显示端口、配置、状态、Python、Playwright 和 Windows 服务检查。
+- 新增 `/system` 独立安全与回滚页，复用安全状态、Windows 服务、配置备份、回滚和管理审计接口。
+- `/?tab=logs`、`/?tab=diagnostics`、`/?tab=system` 改为 307 兼容重定向；尚未迁移的主接口配置、蓝奏配置、监控项、通知目标和接口调试器继续保留旧页面。
+- 新页面使用共享 Sidebar、Topbar、管理令牌 Dialog、Toast、设计令牌和本地 SVG 图标，不加载总览专用 `console.js`。
+- 新增 `operations.js` 与 `operations.css`，日志正文和 JSON 状态使用等宽字体，危险操作使用自定义确认 Dialog。
+- 页面壳在启用 `WEBUI_ADMIN_TOKEN` 时仍可打开，管理 API 继续要求令牌；401/403 会提示填写当前标签页令牌。
+- 修复安全页没有读取 `token_configured` 的问题。
+- 修复重启、回滚和状态修复接口在 HTTP 200 但返回 `ok:false` 时可能误报成功的问题。
+- 新增独立页面、路由、鉴权边界、兼容重定向、操作结果语义和 JavaScript 语法回归测试。
+- P3A 初始实现提交 `9ce588d3b3b9d4cf96352b4bc5465c8814bf69ef` 已通过 Linux、Windows、Parser Center、WebUI JavaScript、PowerShell 5.1 和依赖审计。
+- 当前生产仍为 `3d0ddd7e76123660409ddaaf74b641641d282ee4`；P3A 尚未部署，需生成以当前生产为直接祖先的 V3 候选包。
+
 ### 封号 Provider Secret 就地配置
 
 - 修复封号查询主接口引用 `$secret:LOLMAP_API_TOKEN`、但 WebUI 没有对应安全配置入口的问题；此前主接口测试会明确报“Secret 未配置”，正式链路最终表现为“服务器繁忙”。
@@ -68,6 +84,7 @@
 - 提交 `28e68e75ee14674bba10606587937473d37baa1e` 已在 Windows 生产机安全部署成功，完成 6178 专业控制台、解析中心入口和 4PNG Token 专用配置入口。
 - 提交 `5a1f6420867e289a9dc36b6ef62fa116b8b47880` 已在 Windows 生产机安全部署成功，完成独立新总览、统一设计系统、管理令牌 Dialog、Skeleton、Toast 和共享控制台组件。
 - 提交 `51a93e05fd4bd49e451e864ec7af305961d8a47a` 已在 Windows 生产机安全部署成功，完成 P0 状态语义和 4PNG Token 启动加载修复。
+- 提交 `3d0ddd7e76123660409ddaaf74b641641d282ee4` 已在 Windows 生产机安全部署成功，完成主接口与 4PNG Provider Secret 就地配置及正确祖先链部署。
 - 最新生产验证报告状态为 `pass`，备份保存在仓库外部部署备份目录。
 - `observability=status=degraded` 表示可选上游或业务任务存在降级，不等同于 5001 或 6178 核心服务故障。
 
