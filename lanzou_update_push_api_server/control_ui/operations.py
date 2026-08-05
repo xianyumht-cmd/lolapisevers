@@ -3,6 +3,7 @@ from __future__ import annotations
 from .components import icon, render_console_shell
 
 
+_OPERATIONS_STYLES = ("/control-assets/console.css", "/control-assets/operations.css")
 _OPERATIONS_SCRIPT = ("/control-assets/operations.js",)
 
 
@@ -78,6 +79,7 @@ def render_logs_page() -> str:
         title="运行日志",
         content=content,
         body_marker="logs",
+        styles=_OPERATIONS_STYLES,
         scripts=_OPERATIONS_SCRIPT,
     )
 
@@ -114,6 +116,7 @@ def render_diagnostics_page() -> str:
         title="诊断与修复",
         content=content,
         body_marker="diagnostics",
+        styles=_OPERATIONS_STYLES,
         scripts=_OPERATIONS_SCRIPT,
     )
 
@@ -155,6 +158,7 @@ def render_system_page() -> str:
         title="安全与回滚",
         content=content,
         body_marker="system",
+        styles=_OPERATIONS_STYLES,
         scripts=_OPERATIONS_SCRIPT,
     )
 
