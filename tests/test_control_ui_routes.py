@@ -20,38 +20,59 @@ class ControlUiRouteTests(unittest.TestCase):
             watchers=[WatcherConfig(id="demo", title="Demo", url="https://example.test")],
         )
 
-    def test_new_root_assets_and_legacy_fallback_are_served(self) -> None:
+    def test_new_root_operations_pages_assets_and_legacy_fallback_are_served(self) -> None:
         with TemporaryDirectory() as temp_dir:
             app = create_app(self.make_config(temp_dir))
 
             with TestClient(app) as client:
                 root = client.get("/")
+                logs = client.get("/logs")
+                diagnostics = client.get("/diagnostics")
+                system = client.get("/system")
                 css = client.get("/control-assets/console.css")
+                operations_css = client.get("/control-assets/operations.css")
                 script = client.get("/control-assets/console.js")
+                operations_script = client.get("/control-assets/operations.js")
                 icons = client.get("/control-assets/icons.svg")
                 legacy = client.get("/legacy-ui")
-                legacy_tab = client.get("/?tab=logs")
+                legacy_tab = client.get("/?tab=logs", follow_redirects=False)
 
         self.assertEqual(root.status_code, 200)
         self.assertIn('data-console-ui="p0"', root.text)
         self.assertIn('/control-assets/console.js', root.text)
         self.assertIn('id="adminTokenDialog"', root.text)
 
+        for response, marker in (
+            (logs, 'data-console-ui="logs"'),
+            (diagnostics, 'data-console-ui="diagnostics"'),
+            (system, 'data-console-ui="system"'),
+        ):
+            self.assertEqual(response.status_code, 200)
+            self.assertIn(marker, response.text)
+            self.assertIn('/control-assets/operations.js', response.text)
+            self.assertIn('/control-assets/operations.css', response.text)
+            self.assertNotIn('/control-assets/console.js', response.text)
+
         self.assertEqual(css.status_code, 200)
         self.assertIn('"Microsoft YaHei UI"', css.text)
+        self.assertEqual(operations_css.status_code, 200)
+        self.assertIn('.operations-console', operations_css.text)
         self.assertEqual(script.status_code, 200)
         self.assertIn('/admin/overview', script.text)
         self.assertIn('sessionStorage', script.text)
+        self.assertEqual(operations_script.status_code, 200)
+        self.assertIn('/admin/diagnostics', operations_script.text)
+        self.assertIn('/admin/service/restart', operations_script.text)
         self.assertEqual(icons.status_code, 200)
         self.assertIn('icon-dashboard', icons.text)
-        self.assertIn('icon-x', icons.text)
+        self.assertIn('icon-tool', icons.text)
 
         self.assertEqual(legacy.status_code, 200)
         self.assertNotIn('data-console-ui="p0"', legacy.text)
-        self.assertEqual(legacy_tab.status_code, 200)
-        self.assertNotIn('data-console-ui="p0"', legacy_tab.text)
+        self.assertEqual(legacy_tab.status_code, 307)
+        self.assertEqual(legacy_tab.headers.get("location"), "/logs")
 
-    def test_static_assets_stay_public_when_admin_token_is_enabled(self) -> None:
+    def test_page_shells_and_assets_stay_public_when_admin_token_is_enabled(self) -> None:
         with TemporaryDirectory() as temp_dir, patch.dict(
             os.environ,
             {"WEBUI_ADMIN_TOKEN": "configured-token"},
@@ -60,16 +81,24 @@ class ControlUiRouteTests(unittest.TestCase):
             app = create_app(self.make_config(temp_dir))
             with TestClient(app) as client:
                 root = client.get("/")
+                logs = client.get("/logs")
+                diagnostics = client.get("/diagnostics")
+                system = client.get("/system")
                 css = client.get("/control-assets/console.css")
+                operations_css = client.get("/control-assets/operations.css")
                 script = client.get("/control-assets/console.js")
+                operations_script = client.get("/control-assets/operations.js")
                 icons = client.get("/control-assets/icons.svg")
-                protected = client.get("/admin/overview")
+                protected = client.get("/admin/logs")
+                authorized = client.get(
+                    "/admin/logs",
+                    headers={"x-admin-token": "configured-token"},
+                )
 
-        self.assertEqual(root.status_code, 200)
-        self.assertEqual(css.status_code, 200)
-        self.assertEqual(script.status_code, 200)
-        self.assertEqual(icons.status_code, 200)
+        for response in (root, logs, diagnostics, system, css, operations_css, script, operations_script, icons):
+            self.assertEqual(response.status_code, 200)
         self.assertEqual(protected.status_code, 401)
+        self.assertEqual(authorized.status_code, 200)
 
 
 if __name__ == "__main__":
