@@ -255,7 +255,8 @@ function Get-JsonEndpointSnapshot {
         -Hero $Hero `
         -OutputPath $verificationPath
 '@
-    if ([regex]::Matches($deployText, [regex]::Escape($verifyCallAnchor.TrimEnd())).Count -ne 1) {
+    $verifyCallAnchorText = $verifyCallAnchor.Replace("`r`n", "`n").TrimEnd()
+    if ([regex]::Matches($deployText, [regex]::Escape($verifyCallAnchorText)).Count -ne 1) {
         throw "Deployment verifier call anchor was not unique."
     }
     $verifyCallReplacement = @'
@@ -263,13 +264,14 @@ function Get-JsonEndpointSnapshot {
         -BaselineHealthPath $baselineHealthPath `
         -OutputPath $verificationPath
 '@
-    $deployText = $deployText.Replace($verifyCallAnchor.TrimEnd(), $verifyCallReplacement.TrimEnd())
+    $verifyCallReplacementText = $verifyCallReplacement.Replace("`r`n", "`n").TrimEnd()
+    $deployText = $deployText.Replace($verifyCallAnchorText, $verifyCallReplacementText)
     Write-Utf8NoBom -Path $deployPath -Text $deployText
 
     $verifyPath = Join-Path $packageRoot "Verify-FullBugRepairProduction.ps1"
     $verifyText = (Get-Content -LiteralPath $verifyPath -Raw -Encoding UTF8).Replace("`r`n", "`n")
 
-    $verifyParamAnchor = '    [string]$OutputPath = "",'
+    $verifyParamAnchor = '    [string]$OutputPath = ""'
     if ([regex]::Matches($verifyText, [regex]::Escape($verifyParamAnchor)).Count -ne 1) {
         throw "Verifier baseline parameter anchor was not unique."
     }
@@ -347,7 +349,7 @@ if ($postSession -eq "authenticated") {
     Add-Check "so1_session" "pass" "authenticated"
 } else {
     $baselineFingerprint = Get-So1FailureFingerprint -Payload $baselineHealth
-    $postFingerprint = Get-So1FailureFingerprint -Payload $health.Body
+    $postFingerprint = Get-S/1FailureFingerprint -Payload $health.Body
     $sameInheritedFailure = (
         $baselineSession -ne "authenticated" -and
         $baselineFingerprint -ne "|" -and

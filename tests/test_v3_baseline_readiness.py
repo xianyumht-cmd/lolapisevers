@@ -20,6 +20,8 @@ class V3BaselineReadinessTests(unittest.TestCase):
             "Pre-switch SO1 browser readiness is not up",
             "Production was not stopped or changed",
             "BaselineHealthPath",
+            '$verifyCallAnchor.Replace("`r`n", "`n").TrimEnd()',
+            '$verifyCallReplacement.Replace("`r`n", "`n").TrimEnd()',
         ):
             self.assertIn(marker, text)
         self.assertIn(
