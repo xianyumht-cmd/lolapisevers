@@ -13,7 +13,7 @@ from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
 import requests
 
@@ -273,6 +273,47 @@ def _validate_http_url(value: str, name: str, allow_empty: bool = False) -> str:
     return text
 
 
+def _merge_masked_query_url(candidate: str, previous: str, name: str) -> str:
+    candidate_parts = urlsplit(candidate)
+    candidate_pairs = parse_qsl(candidate_parts.query, keep_blank_values=True)
+    if not any(value == "***" for _, value in candidate_pairs):
+        return candidate
+    if not previous:
+        raise ValueError(f"{name} contains a masked value but no previous URL exists")
+    previous_parts = urlsplit(previous)
+    if (
+        candidate_parts.scheme.lower(),
+        candidate_parts.netloc.lower(),
+        candidate_parts.path,
+    ) != (
+        previous_parts.scheme.lower(),
+        previous_parts.netloc.lower(),
+        previous_parts.path,
+    ):
+        raise ValueError(f"{name} destination changed; replace masked query values explicitly")
+    previous_values: dict[str, list[str]] = {}
+    for key, value in parse_qsl(previous_parts.query, keep_blank_values=True):
+        previous_values.setdefault(key, []).append(value)
+    merged: list[tuple[str, str]] = []
+    used: dict[str, int] = {}
+    for key, value in candidate_pairs:
+        if value == "***":
+            position = used.get(key, 0)
+            available = previous_values.get(key, [])
+            if position >= len(available):
+                raise ValueError(f"{name} cannot restore masked query parameter: {key}")
+            value = available[position]
+            used[key] = position + 1
+        merged.append((key, value))
+    return urlunsplit((
+        candidate_parts.scheme,
+        candidate_parts.netloc,
+        candidate_parts.path,
+        urlencode(merged),
+        candidate_parts.fragment,
+    ))
+
+
 def update_lanzou_config(patch: dict[str, Any]) -> tuple[AppConfig, str]:
     if not isinstance(patch, dict):
         raise ValueError("lanzou config patch must be an object")
@@ -373,6 +414,9 @@ def update_lanzou_config(patch: dict[str, Any]) -> tuple[AppConfig, str]:
             previous = current_by_name.get(target_name)
             if previous is None and index <= len(current_targets):
                 previous = current_targets[index - 1]
+            candidate_url = _validate_http_url(raw.get("url"), f"notify target {index} url")
+            previous_url = str((previous or {}).get("url") or "").strip()
+            target_url = _merge_masked_query_url(candidate_url, previous_url, f"notify target {index} url")
             previous_headers = (previous or {}).get("headers") or {}
             merged_headers = {}
             for key, value in headers.items():
@@ -388,7 +432,7 @@ def update_lanzou_config(patch: dict[str, Any]) -> tuple[AppConfig, str]:
                 {
                     "name": target_name,
                     "enabled": _as_bool_strict(raw.get("enabled", True), f"notify target {index} enabled"),
-                    "url": _validate_http_url(raw.get("url"), f"notify target {index} url"),
+                    "url": target_url,
                     "timeout_seconds": _as_float(8.0 if raw.get("timeout_seconds") is None else raw.get("timeout_seconds"), f"notify target {index} timeout_seconds", 0.1, 120.0),
                     "headers": merged_headers,
                 }

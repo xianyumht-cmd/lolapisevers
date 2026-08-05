@@ -130,7 +130,10 @@ def render_lanzou_config_page() -> str:
   </article>
   <article class="panel">
     <header class="panel-header"><div><h2>通知模板</h2><p>可使用标题、链接等现有模板变量</p></div></header>
-    <div class="panel-body"><label class="field"><span>推送消息模板</span><textarea id="lzTemplate" rows="10"></textarea></label></div>
+    <div class="panel-body">
+      <div class="alert alert-warning" id="lzTemplateEncodingWarning" hidden>检测到历史 WebUI 编码损坏。当前运行模板保持原样；只有重新输入内容后才会替换。</div>
+      <label class="field"><span>推送消息模板</span><textarea id="lzTemplate" rows="10" placeholder="留空保留当前运行模板"></textarea></label>
+    </div>
   </article>
 </section>
 <section class="panel"><header class="panel-header"><div><h2>最后一次操作</h2><p>保存成功后显示备份与运行态刷新结果</p></div><a class="text-link" href="/lanzou/watchers">管理监控项目</a></header><div class="panel-body"><pre class="operations-result configuration-result" id="configurationResult">尚未执行操作</pre></div></section>''' + _confirm_dialog()
@@ -186,7 +189,7 @@ def render_targets_page() -> str:
     content = _page_header(
         eyebrow="P3B · 蓝奏监控",
         title="通知目标",
-        description="管理多个通知回调地址、超时和请求 Headers。Header 值只返回掩码，未修改的掩码会安全保留原值。",
+        description="管理多个通知回调地址、超时和请求 Headers。Header 与 URL 敏感查询值只返回掩码，未修改的掩码会安全保留原值。",
         actions=actions,
     ) + '''
 <section class="metric-grid metric-grid-3">
@@ -228,6 +231,7 @@ def render_debugger_page() -> str:
       </div>
       <div class="alert alert-neutral" id="debuggerRouteHint">请选择接口</div>
       <label class="field"><span>Query 与 Path 参数 JSON</span><textarea id="debuggerQuery" rows="9">{}</textarea></label>
+      <label class="field"><span>请求 Headers JSON</span><textarea id="debuggerHeaders" rows="6">{}</textarea></label>
       <label class="field"><span>请求体 JSON</span><textarea id="debuggerBody" rows="9">{}</textarea></label>
       <button class="button button-primary" id="debuggerSendButton" type="button">''' + icon("send") + '''<span>发送请求</span></button>
     </div>

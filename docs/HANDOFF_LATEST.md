@@ -1,6 +1,6 @@
 # Latest handoff
 
-更新时间：2026-08-06 02:02 +08:00
+更新时间：2026-08-06 02:43 +08:00
 
 当前任务请按顺序读取：
 
@@ -12,17 +12,62 @@
 - `docs/PLAN_WEBUI_CONTROL_PANEL_003.md`
 - `CHANGELOG.md`
 
-当前主题：继续 `WEBUI-CONTROL-PANEL-003` P3B。部署目标 `292b43ef...` 已在 Windows 生产机执行，但后置验证仍因 SO1 原始失败原因字符串变化而安全回滚。归一化状态修复已经形成候选，当前等待标准 CI 与新的 V3 不可变离线部署包。
+当前主题：继续 `WEBUI-CONTROL-PANEL-003` P3B。新 V3 目标已在 Windows 生产机安全部署成功，当前只剩五个 P3B 页面、旧 `?tab=` 重定向和实际页面操作验收。
 
 ## 当前真实状态
 
-- 当前生产：`7d637b90ac2b177de86bae024713ac9172bb26fa`
-- 自动回滚成功，生产仍是已通过实机验收的 P3A
-- P3B 尚未部署生产
+- 当前生产：`7524a5ea36b53a4186a1934edb69b691af56ac09`
+- Windows 服务：Running
+- 部署结果：`pass`
+- `degraded=false`
+- `inherited_so1_session_degradation=false`
 - Issue #40 保持打开
-- Draft PR #41 保持 Draft，禁止合并
+- Draft PR #41 保持 Draft，页面实机验收完成前禁止合并
 
-P3B 五个页面已完成：
+生产备份目录：
+
+- `D:\project2\lolapisevers.deploy-backups\20260806-023757-full-bug-repair-7524a5ea36b5`
+
+生产验证报告：
+
+- `D:\project2\lolapisevers.deploy-backups\20260806-023757-full-bug-repair-7524a5ea36b5\verification-report.json`
+
+## Windows 生产部署结果
+
+目标提交：
+
+- `7524a5ea36b53a4186a1934edb69b691af56ac09`
+
+部署器完成：
+
+- release.bundle 完整性验证：PASS
+- Python 3.14 离线候选环境：PASS
+- 343 项候选测试：PASS
+- WebUI JavaScript 语法：PASS
+- 停服前健康基线采集：PASS
+- 跟踪源码切换：PASS
+- 已测试虚拟环境安装：PASS
+- Windows 服务启动：PASS
+- 后置生产验证：PASS
+- 未触发自动回滚
+
+生产验证检查：
+
+- `windows_service`：pass，Running
+- `/livez`：HTTP 200
+- MySQL：up
+- SO1 Chromium：up
+- SO1 session：authenticated
+- `/readyz`：HTTP 200
+- build-info：`7524a5ea36b53a4186a1934edb69b691af56ac09`
+- Git HEAD：`7524a5ea36b53a4186a1934edb69b691af56ac09`
+- shard 正式交付：`kind=segments`
+- ARAM 正式交付：`kind=segments`
+- observability 门禁：pass；业务观测摘要仍显示 `status=degraded`，不影响本次部署通过
+
+停服前基线记录的是旧生产 `7d637b90...`，这是预期行为。该基线当时已经是 `ready=true`、MySQL up、Chromium up、SO1 session authenticated。
+
+## 已完成的 P3B 页面
 
 - `/main-config`
 - `/lanzou/config`
@@ -32,81 +77,18 @@ P3B 五个页面已完成：
 
 对应旧 `?tab=` 地址保留 307 兼容重定向。
 
-## `292b43ef...` Windows 部署结果
-
-旧部署目标：
-
-- `292b43ef439b6102fd34b3c7b198cc7671b65eab`
-
-实机执行结果：
-
-- release bundle、候选环境和 Python 3.14 离线依赖安装：PASS
-- 341 项候选测试：PASS
-- WebUI JavaScript：PASS
-- 停服前健康基线采集：PASS
-- 切换到目标提交并启动服务：PASS
-- 后置验证：FAIL
-- 自动回滚：PASS
-- 恢复生产提交：`7d637b90ac2b177de86bae024713ac9172bb26fa`
-
-失败信息：
-
-```text
-Post-switch SO1 session is down and does not match the pre-switch degradation baseline.
-DEPLOYMENT FAILED, AUTOMATIC ROLLBACK SUCCEEDED.
-```
-
-该包已经完成一次实机失败验证，禁止再次部署。
-
-## 新根因
-
-`292b43ef...` 的验证器以 SO1 `reason|error_class` 原始字符串作为失败指纹。
-
-SO1 Chromium 浏览器在部署前后均为 `up`、SO1 会话在部署前后均为未认证时，探测原因仍可能在 `TimeoutError`、`session_expired_or_challenge` 等值之间波动。原验证器因此把“同一个会话不可用状态下的原因文字变化”误判为依赖状态恶化。
-
-这不是放宽真实回归门禁的问题，而是指纹层级选错：应比较稳定的服务状态，同时保留原始原因用于审计。
-
-## 已完成的归一化修复
-
-当前候选提交：
-
-- `b213d0a6c66e2dc4877d070d5b5721fa5ea04b92`
-
-修复规则：
-
-- 当 `so1_browser=up` 且 `so1_session!=authenticated` 时，归一化指纹为 `browser_up|session_unavailable`
-- 原始 `reason|error_class` 不参与等价判断，但会作为前后 detail 写入 verification report
-- 部署前会话已认证、部署后失效：仍强制失败并回滚
-- MySQL 回归：仍强制失败并回滚
-- SO1 Chromium 浏览器回归：仍强制失败并回滚
-- 部署前后均为受控的会话不可用状态：允许 `pass_with_warning`
-- `/readyz` 在继承降级时仍必须保持 HTTP 503
-- `/livez`、build-info、Git HEAD 和正式交付链路门禁不变
-
-临时补丁门禁已经通过：
-
-- 补丁 CRLF checkout SHA-256 与字节数：PASS
-- `git apply --check --whitespace=error-all`：PASS
-- 完整 Windows 安全门测试：PASS
-- 全部单元测试：PASS
-- 全部 WebUI JavaScript：PASS
-- 依赖审计：PASS
-- Windows PowerShell 5.1：PASS
-- 临时补丁与临时工作流已清理
-- 正式 `tests.yml` 已恢复
-
 ## 当前下一步
 
-1. 等待候选 `b213d0a6...` 的标准 Linux、Windows、Parser Center 和依赖审计 CI 全绿。
-2. 以当前生产 `7d637b90...` 为第一父提交，创建新的部署目标。
-3. 验证新部署目标与最终候选零文件差异。
-4. 创建新的 `[DO NOT MERGE]` 临时 Draft PR 触发 V3 构建。
-5. 完成 Artifact、内层 ZIP、metadata、manifest 51 文件、release.bundle、祖先链和安全标志本地复核。
-6. 只向用户交付新的部署包；禁止再次使用 `292b43ef...`。
-7. Windows 实机部署后，依据完整控制台输出、`pre-switch-health.json`、`verification-report.json` 和五个页面截图验收。
-8. P3B 实机验收前，不合并 PR #41，不关闭 Issue #40。
+1. 浏览器对 6178 页面执行 Ctrl + F5。
+2. 提交五个 P3B 页面截图。
+3. 验收五个旧 `?tab=` 地址是否跳转到新页面。
+4. 实际验证主接口配置读取、保存、备份和重启提示。
+5. 实际验证蓝奏配置覆盖状态、Watcher 密码掩码往返、通知 Header 脱敏与测试推送。
+6. 实际验证接口调试器 Path、Query、Header、JSON Body 和结果展示。
+7. 页面与操作验收通过后，标记 P3B 完成，再审查退休 `ui_control.py`、`ui_runtime.py`、旧导航注入和 `/legacy-ui`。
+8. 整体迁移完成前，PR #41 保持 Draft，Issue #40 保持打开。
 
-## 禁止部署目标
+## 禁止再次部署的旧目标
 
 - `f9e00b505dc549f3d761348dc741535f4294e352`
 - `954f7748d41da9c3264441d33d60b7c9273fd946`

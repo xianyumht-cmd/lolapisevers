@@ -73,6 +73,9 @@ class ControlUiConfigurationTests(unittest.TestCase):
             self.assertIn(endpoint, script)
         self.assertIn("password_configured", script)
         self.assertIn("clear_password", script)
+        self.assertIn("looksLikeLegacyTemplateEncodingDamage", script)
+        self.assertIn("lanzouTemplatePreserve", script)
+        self.assertIn("debuggerHeaders", script)
         self.assertIn('text == "***"', Path("lanzou_update_push_api_server/management.py").read_text(encoding="utf-8"))
         self.assertIn("showModal()", script)
         self.assertIn("sessionStorage", script)
@@ -104,7 +107,7 @@ class ControlUiConfigurationTests(unittest.TestCase):
             wer_api_url_param="share_url",
             wer_api_password_param="share_password",
             watchers=[WatcherConfig(id="demo", title="Demo", url="https://example.test", password="1234")],
-            notify_targets=[NotifyTargetConfig(name="target", url="http://127.0.0.1:6108/", headers={"x-token": "secret"})],
+            notify_targets=[NotifyTargetConfig(name="target", url="http://127.0.0.1:6108/event?token=url-secret&mode=push", headers={"x-token": "secret"})],
         )
         payload = sanitized_config(config)
         self.assertTrue(payload["wer_api_key_configured"])
@@ -114,6 +117,9 @@ class ControlUiConfigurationTests(unittest.TestCase):
         self.assertEqual(payload["watchers"][0]["password"], "")
         self.assertTrue(payload["watchers"][0]["password_configured"])
         self.assertEqual(payload["notify_targets"][0]["headers"]["x-token"], "***")
+        self.assertIn("token=%2A%2A%2A", payload["notify_targets"][0]["url"])
+        self.assertIn("mode=push", payload["notify_targets"][0]["url"])
+        self.assertNotIn("url-secret", json.dumps(payload))
         self.assertNotIn("secret-api-key", json.dumps(payload))
         self.assertNotIn("1234", json.dumps(payload))
         self.assertNotIn('"secret"', json.dumps(payload))
@@ -133,7 +139,7 @@ class ControlUiConfigurationTests(unittest.TestCase):
                 "notify_targets": [{
                     "name": "target",
                     "enabled": True,
-                    "url": "http://127.0.0.1:6108/",
+                    "url": "http://127.0.0.1:6108/event?token=existing-url-token&mode=push",
                     "timeout_seconds": 8,
                     "headers": {"x-token": "existing-token", "x-mode": "old"},
                 }],
@@ -150,7 +156,7 @@ class ControlUiConfigurationTests(unittest.TestCase):
                     "notify_targets": [{
                         "name": "target",
                         "enabled": True,
-                        "url": "http://127.0.0.1:6108/",
+                        "url": "http://127.0.0.1:6108/event?token=%2A%2A%2A&mode=push",
                         "timeout_seconds": 9,
                         "headers": {"x-token": "***", "x-mode": "new"},
                     }],
@@ -159,6 +165,8 @@ class ControlUiConfigurationTests(unittest.TestCase):
         self.assertEqual(saved["watchers"][0]["password"], "existing-password")
         self.assertEqual(saved["notify_targets"][0]["headers"]["x-token"], "existing-token")
         self.assertEqual(saved["notify_targets"][0]["headers"]["x-mode"], "new")
+        self.assertIn("token=existing-url-token", saved["notify_targets"][0]["url"])
+        self.assertIn("mode=push", saved["notify_targets"][0]["url"])
 
 
 if __name__ == "__main__":

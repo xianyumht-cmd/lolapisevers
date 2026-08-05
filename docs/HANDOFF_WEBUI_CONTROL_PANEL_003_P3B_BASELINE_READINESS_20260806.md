@@ -1,10 +1,10 @@
 # WEBUI-CONTROL-PANEL-003 P3B 基线感知 readiness 交接
 
-更新时间：2026-08-06 01:20 +08:00
+更新时间：2026-08-06 02:43 +08:00
 
 ## 当前断点
 
-P3B 基线感知 readiness 修复、标准 CI、V3 不可变离线部署构建和本地制品复核均已完成。当前不再有代码或打包阻塞，下一步是 Windows 生产机部署与实机验收。
+P3B 新 V3 目标已经在 Windows 生产机部署成功，验证报告为完整 `pass`。代码、打包和生产切换均无阻塞，当前进入五个 P3B 页面与实际操作验收。
 
 继续任务时先读取：
 
@@ -12,20 +12,23 @@ P3B 基线感知 readiness 修复、标准 CI、V3 不可变离线部署构建�
 2. 本文档
 3. `docs/HANDOFF_WEBUI_CONTROL_PANEL_003_P3B_20260805.md`
 
-## 当前真实状态
+## 当前生产
 
 - 仓库：`xianyumht-cmd/lolapisevers`
 - Issue：#40，保持打开
-- Draft PR：#41，保持 Draft，禁止合并
+- Draft PR：#41，保持 Draft
 - 功能分支：`feat/webui-control-panel-003-20260805`
-- 当前生产：`7d637b90ac2b177de86bae024713ac9172bb26fa`
-- 生产仍是 P3A，P3B 尚未部署
+- 当前生产：`7524a5ea36b53a4186a1934edb69b691af56ac09`
+- 服务：`LOLDataSystem`
+- 生产验证：`pass`
+- `degraded=false`
+- `inherited_so1_session_degradation=false`
 
-P3A 已在 Windows 生产机安全部署并通过实机验收：333 项测试、Windows 服务、`/livez`、`/readyz`、build-info、Git HEAD、合集和 ARAM 正式交付链路通过，verification report 为 `pass`。
+备份目录：
 
-## P3B 页面功能
+- `D:\project2\lolapisevers.deploy-backups\20260806-023757-full-bug-repair-7524a5ea36b5`
 
-P3B 五个页面已完成：
+## P3B 页面
 
 - `/main-config`
 - `/lanzou/config`
@@ -33,142 +36,89 @@ P3B 五个页面已完成：
 - `/lanzou/targets`
 - `/api-debugger`
 
-对应旧 `?tab=` 地址保留 307 兼容重定向。共享控制台 Shell、Secret 脱敏、Watcher 密码掩码往返、通知 Header 掩码往返、本机回环或 `WEBUI_ADMIN_TOKEN` 管理保护均已实现。
+对应旧 `?tab=` 地址保留 307 兼容重定向。共享控制台 Shell、Secret 脱敏、Watcher 密码掩码往返、通知 Header 掩码往返、本机回环或 `WEBUI_ADMIN_TOKEN` 保护均已实现。
 
-## Windows 首次部署失败根因
+## Windows 部署记录
 
-首次 P3B 部署在生产切换验证阶段回滚。诊断包证明：
+部署目标：
 
-- 21:07 Keepalive 查询成功
-- 21:17 SO1 会话探测已经开始超时
-- 21:22 才开始 P3B 部署
-- 回滚后的旧生产仍连续 `/readyz` 503
-- MySQL 为 up
-- Chromium 浏览器为 up
-- 只有 `so1_session=false`，失败原因是 TimeoutError
-- 群查询正式链路仍持续返回 HTTP 200
+- `7524a5ea36b53a4186a1934edb69b691af56ac09`
 
-因此不是 P3B 页面代码或服务切换引入的新回归，而是旧验证器把部署前已有的 SO1 会话依赖降级误判为候选故障。
+部署时间：
 
-## 基线感知规则
+- 候选目录时间戳：`20260806-023757`
+- verification generated_at：`2026-08-05T18:39:20.1378100Z`
 
-当前部署器和验证器已经实现：
+部署过程：
 
-- 停止生产前保存 `pre-switch-health.json`
-- 部署后重新采集 readiness
-- MySQL 不是 up：失败并回滚
-- SO1 Chromium 浏览器不是 up：失败并回滚
-- 部署前 SO1 会话正常、部署后失效：失败并回滚
-- 部署前后 SO1 会话失败指纹不同或状态恶化：失败并回滚
-- 只有相同的既有 SO1 会话降级才允许 `pass_with_warning`
-- 报告明确写入 `inherited_so1_session_degradation=true`
-- `/livez`、build-info、Git HEAD、正式交付链路等门禁保持不变
+- release.bundle 验证：PASS
+- Python 3.14 离线依赖安装：PASS
+- 无破损依赖：PASS
+- 343 项候选测试：PASS
+- WebUI JavaScript：PASS
+- 停服前健康基线：PASS
+- 生产源码切换：PASS
+- build-info 写入：PASS
+- 服务启动：PASS
+- 后置生产验证：PASS
+- 自动回滚：未触发
 
-这不是忽略 `/readyz`，而是区分“候选引入的新回归”和“部署前已存在且部署后没有恶化的依赖降级”。
+验证报告：
 
-## 最终代码与部署目标
+- `status=pass`
+- Windows 服务：Running
+- `/livez`：HTTP 200
+- MySQL：up
+- SO1 Chromium：up
+- SO1 session：authenticated
+- `/readyz`：HTTP 200
+- build-info：目标提交
+- Git HEAD：目标提交
+- shard：`kind=segments`
+- ARAM：`kind=segments`
+- observability 检查：pass，detail 为 `status=degraded`
 
-最终功能候选：
+`observability status=degraded` 是业务观测摘要，验证器已确认它不构成本次部署失败条件；服务、必需依赖、Git、构建信息和两条正式交付链路均通过。
 
-- `7414ad596aa8d1fb6ecc87d6ae3c81d55ff42746`
+## 停服前基线说明
 
-最终 V3 部署目标：
+`pre-switch-health.json` 记录的是切换前旧生产：
 
-- `292b43ef439b6102fd34b3c7b198cc7671b65eab`
-- 第一父提交：当前生产 `7d637b90ac2b177de86bae024713ac9172bb26fa`
-- 第二父提交：功能候选 `7414ad596aa8d1fb6ecc87d6ae3c81d55ff42746`
-- 两者文件树：`1bbc7a6907841eafd28b5ebe974dc5a1386bb12c`
-- 部署目标与功能候选零文件差异
+- commit：`7d637b90ac2b177de86bae024713ac9172bb26fa`
+- `ready=true`
+- MySQL：up
+- SO1 Chromium：up
+- SO1 session：authenticated
 
-## CI 与 V3 构建
+因此本次部署没有使用 inherited degradation 例外；新生产直接以完整健康状态通过。
 
-临时 Draft PR：#51，`[DO NOT MERGE]`
+## SO1 readiness 修复结论
 
-提交 `292b43ef439b6102fd34b3c7b198cc7671b65eab` 已通过：
+此前目标 `292b43ef...` 因原始 `reason|error_class` 文字漂移误回滚。最终版本保留以下规则：
 
-- 标准 tests：success
-- LAPI Parser Center CI：success
-- V3 不可变离线部署构建：success
-- V3 Run：`31022261240`
-- V3 Job：`92361708127`
-- Artifact：`8937175097`
+- 浏览器在线、会话不可用时使用稳定状态指纹
+- 原始失败原因保留在报告 detail
+- 部署前已认证、部署后失效仍强制回滚
+- MySQL、Chromium、服务、Git、build-info 和正式链路回归仍强制回滚
 
-V3 Job 的以下步骤全部成功：
+本次实际部署时 SO1 session 已恢复 authenticated，所以归一化 warning 路径没有被使用。
 
-- immutable target tests
-- Windows PowerShell 5.1 解析
-- dependency audit
-- V3 immutable offline package build
-- hashes and safety flags verification
-- artifact upload
+## 下一步验收
 
-旧的非 V3打包工作流失败不作为交付依据；本次只使用成功的 V3 Artifact。
+1. Ctrl + F5 刷新 6178 页面。
+2. 提交五个独立页面截图。
+3. 验收旧 `?tab=` 地址 307 跳转。
+4. 主接口页：读取、修改、保存、备份、重启提示。
+5. 蓝奏全局配置：环境覆盖状态、保存和热刷新。
+6. Watcher：新增、编辑、启停、删除、扫描和密码保留。
+7. 通知目标：Header 脱敏、保留、启停、删除和测试推送。
+8. 接口调试器：Path、Query、Header、JSON Body 和响应显示。
+9. 页面操作验收通过后标记 P3B 完成。
+10. 再进入旧运行面板、旧导航注入和 `/legacy-ui` 退休审查。
+11. 整体迁移完成前不合并 PR #41，不关闭 Issue #40。
 
-## 制品信息
-
-外层 Artifact：
-
-- 文件名：`LOLDataSystem-WEBUI-P3B-baseline-readiness-v3-20260806.zip`
-- SHA-256：`701170dcd80fd2fddaeb4e29d1fa11fd1c6563dadc133317b92cba2eba56032a`
-
-内层部署 ZIP：
-
-- 文件名：`LOLDataSystem-full-bug-repair-safe-deploy-292b43ef439b-py311-py314-winps51-v3.zip`
-- SHA-256：`2d529a11c449f129f6ae511ddd8bd8b5ab145f4fa6654c2dee79ec83aff97981`
-- 大小：`85,815,771` 字节
-- Package content SHA-256：`6347a8ec8fce691e169ebed84df682d2197a8d0cc468141de094325ff6c06848`
-- Package revision：3
-- 支持 Python：3.11、3.12、3.13、3.14
-- `powershell_utf8_parse_input=true`
-- `baseline_aware_readiness=true`
-
-## 本地二次复核
-
-已经完成：
-
-- 外层 Artifact SHA-256 与 Actions digest 一致
-- metadata 记录的内层 ZIP 名称、哈希、大小一致
-- manifest 51 个文件逐一大小和 SHA-256：PASS
-- V3 安全标志：PASS
-- `Deploy-FullBugRepairSafe.ps1` 包含停服前健康基线采集：PASS
-- `Verify-FullBugRepairProduction.ps1` 包含 MySQL、浏览器、SO1 回归门禁和 inherited warning：PASS
-- `release.bundle` 完整历史验证：PASS
-- 当前生产是部署目标祖先：PASS
-- 当前生产是部署目标第一父提交：PASS
-- 部署目标与最终功能候选零文件差异：PASS
-
-## 旧失败目标
-
-以下目标均没有可部署制品，继续禁止部署：
+## 禁止再次部署
 
 - `f9e00b505dc549f3d761348dc741535f4294e352`
 - `954f7748d41da9c3264441d33d60b7c9273fd946`
-
-对应临时 PR #49、#50 不得合并。
-
-## 下一步必须按顺序执行
-
-1. 下载并解压外层 V3 Artifact。
-2. 再解压内层部署 ZIP。
-3. 双击 `run-deploy.cmd`。
-4. 保留完整控制台输出。
-5. 找到并提交部署生成的 `verification-report.json`。
-6. 部署成功后按 Ctrl + F5，实机验收五个 P3B 页面。
-7. 验证五个旧 `?tab=` 地址是否 307 跳转到新页面。
-8. 检查合集与 ARAM 正式交付链路没有回归。
-9. 如果报告为 `pass_with_warning`，必须确认唯一降级原因是 `inherited_so1_session_degradation`，且 MySQL、Chromium、服务、Git HEAD、build-info 和正式交付链路全部通过。
-10. P3B 实机验收前，不合并 PR #41，不关闭 Issue #40。
-
-## P3B 实机验收重点
-
-- 目标 commit、Git HEAD、build-info 一致
-- `/livez` 200
-- `/readyz` 不允许新回归
-- 五个 P3B 页面可访问
-- 旧 `?tab=` 地址正确 307 跳转
-- 主接口配置读取、保存、备份和重启提示
-- 蓝奏配置环境覆盖状态、掩码往返与热刷新
-- watcher 新增、编辑、启停、删除、扫描、密码保留
-- 通知目标 Header 脱敏、保留与测试推送
-- 接口调试器 Path、Query、Header、JSON Body 和结果展示
-- 合集与 ARAM 正式交付链路不回归
+- `292b43ef439b6102fd34b3c7b198cc7671b65eab`

@@ -9,6 +9,8 @@
     confirmAction: null,
     mainConfig: null,
     lanzou: null,
+    lanzouTemplatePreserve: false,
+    lanzouTemplateBaseline: '',
     environmentOverrides: {},
     overview: null,
     watchers: [],
@@ -217,6 +219,11 @@
     } catch (error) { throw new Error(`${label} JSON 格式错误：${error.message}`); }
   }
 
+  function looksLikeLegacyTemplateEncodingDamage(value) {
+    const text = String(value || '');
+    return /\?{3,}/.test(text) && text.includes('{title}') && text.includes('{url}');
+  }
+
   function fieldInput(field) {
     const key = escapeHtml(field.key);
     const label = escapeHtml(field.label || field.key);
@@ -302,7 +309,16 @@
     if ($('lzWerUrlParam')) $('lzWerUrlParam').value = config.wer_api_url_param || 'url';
     if ($('lzWerPwdParam')) $('lzWerPwdParam').value = config.wer_api_password_param || 'pwd';
     if ($('lzWerKey')) $('lzWerKey').value = '';
-    if ($('lzTemplate')) $('lzTemplate').value = config.notification_template || '';
+    const template = String(config.notification_template || '');
+    const templateDamaged = looksLikeLegacyTemplateEncodingDamage(template);
+    state.lanzouTemplatePreserve = templateDamaged;
+    state.lanzouTemplateBaseline = templateDamaged ? '' : template;
+    if ($('lzTemplate')) {
+      $('lzTemplate').value = state.lanzouTemplateBaseline;
+      $('lzTemplate').placeholder = templateDamaged ? '历史模板已保留；输入新内容才会替换' : '留空保留当前运行模板';
+    }
+    const templateWarning = $('lzTemplateEncodingWarning');
+    if (templateWarning) templateWarning.hidden = !templateDamaged;
     const status = $('werKeyStatus');
     if (status) {
       status.textContent = config.wer_api_key_configured ? 'API Key 已配置' : 'API Key 未配置';
@@ -331,8 +347,11 @@
       wer_api_method: $('lzWerMethod').value,
       wer_api_url_param: $('lzWerUrlParam').value,
       wer_api_password_param: $('lzWerPwdParam').value,
-      notification_template: $('lzTemplate').value,
     };
+    const template = $('lzTemplate').value;
+    if (!state.lanzouTemplatePreserve || template !== state.lanzouTemplateBaseline) {
+      patch.notification_template = template;
+    }
     const key = $('lzWerKey').value.trim();
     if (key) patch.wer_api_key = key;
     return patch;
@@ -556,6 +575,7 @@
       query[parameter.name] = schema.default ?? (parameter.required ? `<${parameter.name}>` : '');
     });
     $('debuggerQuery').value = JSON.stringify(query, null, 2);
+    $('debuggerHeaders').value = '{}';
     $('debuggerBody').value = '{}';
     $('debuggerService').value = route.service;
     setText('debuggerRouteHint', `${route.method} ${route.path} · ${route.summary || '无摘要'}`);
@@ -564,12 +584,13 @@
   async function sendDebuggerRequest() {
     const route = state.routes[Number($('debuggerRouteSelect')?.value || 0)];
     if (!route) { showToast('请选择接口', 'error'); return; }
-    let query; let body;
+    let query; let headers; let body;
     try {
       query = parseJsonValue($('debuggerQuery').value, 'Query 与 Path 参数');
+      headers = parseJsonValue($('debuggerHeaders').value, '请求 Headers');
       body = parseJsonValue($('debuggerBody').value, '请求体');
     } catch (error) { showToast(error.message, 'error'); return; }
-    const payload = { service: route.service, method: route.method, path: route.path, query, timeout: Number($('debuggerTimeout').value) || 30 };
+    const payload = { service: route.service, method: route.method, path: route.path, query, headers, timeout: Number($('debuggerTimeout').value) || 30 };
     if (route.method !== 'GET' && Object.keys(body).length) payload.json = body;
     setText('debuggerResponse', '正在发送请求...');
     const result = await safeApi('/admin/invoke', { method: 'POST', body: payload });

@@ -5,6 +5,40 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+
+_SENSITIVE_QUERY_KEYS = {
+    "access_token",
+    "api_key",
+    "apikey",
+    "auth",
+    "authorization",
+    "key",
+    "password",
+    "secret",
+    "signature",
+    "token",
+}
+
+
+def _is_sensitive_query_key(name: str) -> bool:
+    normalized = str(name or "").strip().lower().replace("-", "_")
+    return normalized in _SENSITIVE_QUERY_KEYS or normalized.endswith(
+        ("_token", "_secret", "_password", "_key")
+    )
+
+
+def _mask_sensitive_url(value: str) -> str:
+    text = str(value or "")
+    parts = urlsplit(text)
+    if not parts.query:
+        return text
+    pairs = [
+        (key, "***" if _is_sensitive_query_key(key) else item_value)
+        for key, item_value in parse_qsl(parts.query, keep_blank_values=True)
+    ]
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(pairs), parts.fragment))
 
 
 PACKAGE_DIR = Path(__file__).resolve().parent
@@ -264,7 +298,7 @@ def sanitized_config(config: AppConfig) -> dict[str, Any]:
         "notify_targets": [
             {
                 "name": target.name,
-                "url": target.url,
+                "url": _mask_sensitive_url(target.url),
                 "enabled": target.enabled,
                 "timeout_seconds": target.timeout_seconds,
                 "headers": {key: "***" for key in target.headers},
