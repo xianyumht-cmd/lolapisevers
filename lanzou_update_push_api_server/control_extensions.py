@@ -4,7 +4,7 @@ import asyncio
 from typing import Any
 
 from fastapi import FastAPI, Query, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from services.image_asset_store import get_image_asset_sync_manager
@@ -12,7 +12,13 @@ from services.image_asset_store import get_image_asset_sync_manager
 from . import management, parser_center_admin
 from .config import sanitized_config
 from .control_navigation import apply_control_navigation, select_parser_center_section
-from .control_ui import ASSET_DIRECTORY, render_overview_page
+from .control_ui import (
+    ASSET_DIRECTORY,
+    render_diagnostics_page,
+    render_logs_page,
+    render_overview_page,
+    render_system_page,
+)
 from .image_cache_ui import render_image_cache_page
 from .lolban_console import install_lolban_console_routes
 from .lolban_presets import ensure_lolban_provider_presets
@@ -30,6 +36,11 @@ from .state_recovery import recover_state_file
 
 
 _NEW_CONTROL_PATHS = {"/", "/ui"}
+_MIGRATED_TAB_REDIRECTS = {
+    "logs": "/logs",
+    "diagnostics": "/diagnostics",
+    "system": "/system",
+}
 _CONTROL_PAGE_ACTIVE = {
     "/parser-center": "parser-center",
     "/parser-center/secrets": "parser-secrets",
@@ -47,6 +58,12 @@ def _decorate_control_page(path: str, page: str) -> str:
 
 def _uses_new_overview(request: Request) -> bool:
     return request.url.path in _NEW_CONTROL_PATHS and not request.query_params.get("tab")
+
+
+def _migrated_tab_target(request: Request) -> str | None:
+    if request.url.path not in _NEW_CONTROL_PATHS:
+        return None
+    return _MIGRATED_TAB_REDIRECTS.get(str(request.query_params.get("tab") or "").strip().lower())
 
 
 async def _read_response_body(response) -> bytes:
@@ -101,6 +118,18 @@ def install_control_extensions(app: FastAPI, service) -> None:
         name="control-assets",
     )
 
+    @app.get("/logs", response_class=HTMLResponse, include_in_schema=False)
+    async def logs_page() -> str:
+        return render_logs_page()
+
+    @app.get("/diagnostics", response_class=HTMLResponse, include_in_schema=False)
+    async def diagnostics_page() -> str:
+        return render_diagnostics_page()
+
+    @app.get("/system", response_class=HTMLResponse, include_in_schema=False)
+    async def system_page() -> str:
+        return render_system_page()
+
     parser_center_admin.render_parser_center_page = render_guarded_parser_center_page
     parser_center_admin.install_parser_center_routes(app)
 
@@ -117,6 +146,10 @@ def install_control_extensions(app: FastAPI, service) -> None:
 
     @app.middleware("http")
     async def professional_control_panel(request: Request, call_next):
+        migrated_target = _migrated_tab_target(request)
+        if migrated_target:
+            return RedirectResponse(url=migrated_target, status_code=307)
+
         response = await call_next(request)
         content_type = str(response.headers.get("content-type") or "").lower()
         if "text/html" not in content_type:
