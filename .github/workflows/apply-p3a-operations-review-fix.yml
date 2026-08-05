@@ -1,0 +1,50 @@
+name: Apply P3A operations review fix
+
+on:
+  push:
+    branches:
+      - feat/webui-control-panel-003-20260805
+    paths:
+      - tools/apply_p3a_operations_review_fix.py
+      - .github/workflows/apply-p3a-operations-review-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-test-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/webui-control-panel-003-20260805
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
+      - name: Apply reviewed fix
+        run: |
+          python -m py_compile tools/apply_p3a_operations_review_fix.py
+          python tools/apply_p3a_operations_review_fix.py
+      - name: Validate operations JavaScript
+        run: node --check lanzou_update_push_api_server/control_ui/assets/operations.js
+      - name: Run full tests
+        run: |
+          python -m compileall -q .
+          python -m unittest discover -s tests -p "test_*.py" -v
+          python tests/check_ui_assets.py
+      - name: Remove one-time files and commit
+        run: |
+          rm -f tools/apply_p3a_operations_review_fix.py
+          rm -f .github/workflows/apply-p3a-operations-review-fix.yml
+          rm -f ui_control.generated.js ui_lolban_console.generated.js ui_parser_center.generated.js
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lanzou_update_push_api_server/control_ui/assets/operations.js
+          git add -u tools/apply_p3a_operations_review_fix.py .github/workflows/apply-p3a-operations-review-fix.yml
+          git commit -m "fix(webui): harden P3A operation result handling"
+          git push origin HEAD:feat/webui-control-panel-003-20260805
