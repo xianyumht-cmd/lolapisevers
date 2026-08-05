@@ -1,33 +1,67 @@
 # Latest handoff
 
+更新时间：2026-08-06 01:18 +08:00
+
 当前任务请按顺序读取：
 
+- `docs/HANDOFF_WEBUI_CONTROL_PANEL_003_P3B_BASELINE_READINESS_20260806.md`
+- `docs/HANDOFF_WEBUI_CONTROL_PANEL_003_P3B_20260805.md`
 - `docs/HANDOFF_WEBUI_CONTROL_PANEL_003_P3A_20260805.md`
 - `docs/HANDOFF_WEBUI_CONTROL_PANEL_003_P0_ACCEPTANCE_20260805.md`
 - `docs/HANDOFF_WEBUI_CONTROL_PANEL_003.md`
 - `docs/PLAN_WEBUI_CONTROL_PANEL_003.md`
 - `CHANGELOG.md`
 
-当前主题：继续 `WEBUI-CONTROL-PANEL-003`，完成 P3A 日志、诊断、安全与回滚独立页面的候选包与 Windows 实机验收。
+当前主题：继续 `WEBUI-CONTROL-PANEL-003` P3B，修复 V3 构建器中 `Verify-FullBugRepairDeployment.ps1` readyz 区块的 CRLF/LF 多行锚点匹配问题，重新构建基线感知 readiness 的 Windows 离线一键部署包。
 
-当前生产：`3d0ddd7e76123660409ddaaf74b641641d282ee4`，verification report 为 `pass`。
+## 当前真实状态
 
-P3A 已完成分支实现：
+- 当前生产：`7d637b90ac2b177de86bae024713ac9172bb26fa`
+- 生产仍是已通过实机验收的 P3A
+- P3B 尚未部署生产
+- Issue #40 保持打开
+- Draft PR #41 保持 Draft，禁止合并
+- 用户已在 2026-08-06 01:18 +08:00 要求标记进度，并在新聊天继续
 
-- `/logs`：独立日志中心；
-- `/diagnostics`：独立诊断与状态文件修复；
-- `/system`：独立安全、Windows 服务、备份、回滚和审计；
-- `/?tab=logs`、`/?tab=diagnostics`、`/?tab=system` 兼容重定向到新页面；
-- 页面壳公开，管理 API 继续受 `WEBUI_ADMIN_TOKEN` 保护；
-- 破坏性操作使用自定义 Dialog，不使用原生 `confirm`；
-- `operations.js` 已纳入 `node --check` 和回归测试。
+P3B 五个页面已完成：
 
-尚未迁移、仍依赖旧运行面板：
+- `/main-config`
+- `/lanzou/config`
+- `/lanzou/watchers`
+- `/lanzou/targets`
+- `/api-debugger`
 
-- 主接口配置；
-- 蓝奏全局配置；
-- 监控项目；
-- 通知目标；
-- 接口调试器。
+基线感知 readiness 逻辑已实现：部署前保存健康基线，只允许 SO1 会话依赖在部署前后保持完全相同的既有降级；新增或恶化的降级仍必须失败并回滚。
 
-下一步：最终标准 CI 全绿后，以当前生产为直接祖先生成 P3A V3 安全部署包，完成 `/logs`、`/diagnostics`、`/system` 实机验收；随后开始 P3B。
+当前构建器候选：
+
+- `5df00bb8e0763972294fde9443f26436c42b2320`
+
+该候选已经通过 Linux、Windows、Parser Center、341 项测试、全部 WebUI JavaScript、17 个 PowerShell 脚本的 Windows PowerShell 5.1 解析和依赖安全审计。
+
+## 当前阻塞
+
+第二次 V3 构建目标：
+
+- `954f7748d41da9c3264441d33d60b7c9273fd946`
+- 临时 Draft PR #50，禁止合并
+- V3 Run `31020489861`
+- Job `92355626999`
+- Run 已结束：`completed / failure`
+
+不可变测试、PowerShell 5.1 和依赖审计均通过，但 ZIP 构建失败：
+
+```text
+Verifier readyz block anchor was not unique.
+```
+
+失败位置在 `ops/Build-FullBugRepairPackageV3.ps1` 约第 325 行。根因与前一次部署调用锚点相同：Windows PowerShell 5.1 here-string 为 CRLF，被扫描验证脚本为 LF，多行锚点未标准化。
+
+没有上传制品，没有可部署 ZIP。以下两个目标均禁止部署：
+
+- `f9e00b505dc549f3d761348dc741535f4294e352`
+- `954f7748d41da9c3264441d33d60b7c9273fd946`
+
+## 新对话第一步
+
+修复 Verifier readyz block 锚点：先把查找锚点和替换文本标准化为 LF，再继续要求精确匹配一次；不要放宽唯一性安全门。更新回归测试后跑完整标准 CI，再创建新的生产第一父提交目标和新的 `[DO NOT MERGE]` V3 构建 PR。
