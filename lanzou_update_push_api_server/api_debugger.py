@@ -5,13 +5,64 @@ import json
 import re
 import time
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 import requests
 
 
 _PATH_PARAMETER_RE = re.compile(r"\{([^{}]+)\}")
+_HEADER_NAME_RE = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
 _MAX_DEBUG_RESPONSE_BYTES = 5_000_000
+_MAX_DEBUG_HEADERS = 50
+_MAX_DEBUG_HEADER_VALUE = 8_192
+_BLOCKED_REQUEST_HEADERS = {
+    "connection",
+    "content-length",
+    "host",
+    "proxy-authorization",
+    "proxy-connection",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+}
+_SENSITIVE_NAMES = {
+    "access_token",
+    "api_key",
+    "apikey",
+    "auth",
+    "authorization",
+    "cookie",
+    "key",
+    "password",
+    "secret",
+    "set_cookie",
+    "signature",
+    "token",
+}
+
+
+def _is_sensitive_name(name: str) -> bool:
+    normalized = str(name or "").strip().lower().replace("-", "_")
+    return normalized in _SENSITIVE_NAMES or normalized.endswith(
+        ("_token", "_secret", "_password", "_key", "_cookie")
+    )
+
+
+def _redact_headers(headers: dict[str, Any]) -> dict[str, str]:
+    return {
+        str(key): ("***" if _is_sensitive_name(str(key)) else str(value))
+        for key, value in headers.items()
+    }
+
+
+def _redact_url(value: str) -> str:
+    parts = urlsplit(str(value or ""))
+    pairs = [
+        (key, "***" if _is_sensitive_name(key) else item_value)
+        for key, item_value in parse_qsl(parts.query, keep_blank_values=True)
+    ]
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(pairs), parts.fragment))
 
 
 def _read_bounded(response: requests.Response, limit: int = _MAX_DEBUG_RESPONSE_BYTES) -> bytes:
@@ -93,7 +144,25 @@ def invoke_api(
 
     timeout = max(1.0, min(120.0, float(payload.get("timeout") or 30.0)))
     body = payload.get("json")
-    headers = {"x-admin-token": admin_token} if admin_token else {}
+    raw_headers = payload.get("headers") or {}
+    if not isinstance(raw_headers, dict):
+        raise ValueError("headers must be an object")
+    if len(raw_headers) > _MAX_DEBUG_HEADERS:
+        raise ValueError("too many request headers")
+    headers: dict[str, str] = {}
+    for raw_name, raw_value in raw_headers.items():
+        name = str(raw_name or "").strip()
+        lower_name = name.lower()
+        if not name or not _HEADER_NAME_RE.fullmatch(name):
+            raise ValueError(f"invalid request header name: {name}")
+        if lower_name in _BLOCKED_REQUEST_HEADERS:
+            raise ValueError(f"request header is not allowed: {name}")
+        value = str(raw_value)
+        if "\r" in value or "\n" in value or len(value) > _MAX_DEBUG_HEADER_VALUE:
+            raise ValueError(f"invalid request header value: {name}")
+        headers[name] = value
+    if admin_token:
+        headers["x-admin-token"] = admin_token
     started = time.time()
     response = requests.request(
         method,
@@ -113,8 +182,8 @@ def invoke_api(
             "status_code": response.status_code,
             "content_type": content_type,
             "elapsed_ms": elapsed_ms,
-            "headers": {key: value for key, value in response.headers.items()},
-            "request_url": str(getattr(response, "url", f"{base_url.rstrip('/')}{path}")),
+            "headers": _redact_headers(dict(response.headers.items())),
+            "request_url": _redact_url(str(getattr(response, "url", f"{base_url.rstrip('/')}{path}"))),
         }
         if "application/json" in content_type:
             try:
