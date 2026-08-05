@@ -20,15 +20,15 @@ _NAVIGATION_GROUPS = (
     (
         "蓝奏监控",
         (
-            ("lanzou-config", "/?tab=lanzouconfig", "全局配置", "settings"),
-            ("watchers", "/?tab=watchers", "监控项目", "radar"),
-            ("targets", "/?tab=targets", "通知目标", "bell"),
+            ("lanzou-config", "/lanzou/config", "全局配置", "settings"),
+            ("watchers", "/lanzou/watchers", "监控项目", "radar"),
+            ("targets", "/lanzou/targets", "通知目标", "bell"),
         ),
     ),
     (
         "系统管理",
         (
-            ("main-config", "/?tab=mainconfig", "主接口配置", "server"),
+            ("main-config", "/main-config", "主接口配置", "server"),
             ("logs", "/logs", "运行日志", "file-text"),
             ("diagnostics", "/diagnostics", "诊断与修复", "activity"),
             ("system", "/system", "安全与回滚", "lock"),
@@ -36,7 +36,10 @@ _NAVIGATION_GROUPS = (
     ),
     (
         "开发与文档",
-        (("docs", "/docs", "OpenAPI 文档", "book"),),
+        (
+            ("api-debugger", "/api-debugger", "接口调试器", "plug"),
+            ("docs", "/docs", "OpenAPI 文档", "book"),
+        ),
     ),
 )
 

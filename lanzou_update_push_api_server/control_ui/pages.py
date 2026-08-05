@@ -74,7 +74,7 @@ def render_overview_page() -> str:
       <a href="/query-console/lolban">{icon('shield')}<span><strong>封号查询</strong><small>Provider 与正式链路</small></span>{icon('chevron-right')}</a>
       <a href="/parser-center">{icon('workflow')}<span><strong>接口与解析中心</strong><small>请求、解析和模板</small></span>{icon('chevron-right')}</a>
       <a href="/parser-center/secrets">{icon('key')}<span><strong>Secret 与备份</strong><small>密钥、备份和回滚</small></span>{icon('chevron-right')}</a>
-      <a href="/?tab=diagnostics">{icon('activity')}<span><strong>诊断与修复</strong><small>检查生产运行状态</small></span>{icon('chevron-right')}</a>
+      <a href="/diagnostics">{icon('activity')}<span><strong>诊断与修复</strong><small>检查生产运行状态</small></span>{icon('chevron-right')}</a>
     </div>
   </article>
 

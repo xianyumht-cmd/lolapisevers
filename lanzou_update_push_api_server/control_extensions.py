@@ -14,10 +14,15 @@ from .config import sanitized_config
 from .control_navigation import apply_control_navigation, select_parser_center_section
 from .control_ui import (
     ASSET_DIRECTORY,
+    render_debugger_page,
     render_diagnostics_page,
+    render_lanzou_config_page,
     render_logs_page,
+    render_main_config_page,
     render_overview_page,
     render_system_page,
+    render_targets_page,
+    render_watchers_page,
 )
 from .image_cache_ui import render_image_cache_page
 from .lolban_console import install_lolban_console_routes
@@ -37,6 +42,12 @@ from .state_recovery import recover_state_file
 
 _NEW_CONTROL_PATHS = {"/", "/ui"}
 _MIGRATED_TAB_REDIRECTS = {
+    "overview": "/",
+    "mainconfig": "/main-config",
+    "lanzouconfig": "/lanzou/config",
+    "watchers": "/lanzou/watchers",
+    "targets": "/lanzou/targets",
+    "debugger": "/api-debugger",
     "logs": "/logs",
     "diagnostics": "/diagnostics",
     "system": "/system",
@@ -117,6 +128,26 @@ def install_control_extensions(app: FastAPI, service) -> None:
         StaticFiles(directory=str(ASSET_DIRECTORY), check_dir=True),
         name="control-assets",
     )
+
+    @app.get("/main-config", response_class=HTMLResponse, include_in_schema=False)
+    async def main_config_page() -> str:
+        return render_main_config_page()
+
+    @app.get("/lanzou/config", response_class=HTMLResponse, include_in_schema=False)
+    async def lanzou_config_page() -> str:
+        return render_lanzou_config_page()
+
+    @app.get("/lanzou/watchers", response_class=HTMLResponse, include_in_schema=False)
+    async def lanzou_watchers_page() -> str:
+        return render_watchers_page()
+
+    @app.get("/lanzou/targets", response_class=HTMLResponse, include_in_schema=False)
+    async def lanzou_targets_page() -> str:
+        return render_targets_page()
+
+    @app.get("/api-debugger", response_class=HTMLResponse, include_in_schema=False)
+    async def api_debugger_page() -> str:
+        return render_debugger_page()
 
     @app.get("/logs", response_class=HTMLResponse, include_in_schema=False)
     async def logs_page() -> str:
