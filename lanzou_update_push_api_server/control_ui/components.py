@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from html import escape
+from typing import Iterable
 
 
 _NAVIGATION_GROUPS = (
@@ -28,17 +29,14 @@ _NAVIGATION_GROUPS = (
         "系统管理",
         (
             ("main-config", "/?tab=mainconfig", "主接口配置", "server"),
-            ("logs", "/?tab=logs", "运行日志", "file-text"),
-            ("diagnostics", "/?tab=diagnostics", "诊断与修复", "activity"),
-            ("system", "/?tab=system", "安全与回滚", "lock"),
+            ("logs", "/logs", "运行日志", "file-text"),
+            ("diagnostics", "/diagnostics", "诊断与修复", "activity"),
+            ("system", "/system", "安全与回滚", "lock"),
         ),
     ),
     (
         "开发与文档",
-        (
-            ("docs", "/docs", "OpenAPI 文档", "book"),
-            ("legacy", "/legacy-ui", "旧版控制台", "history"),
-        ),
+        (("docs", "/docs", "OpenAPI 文档", "book"),),
     ),
 )
 
@@ -95,7 +93,6 @@ def render_topbar(*, title: str) -> str:
   <div class="topbar-actions">
     <span class="environment-badge"><span class="status-dot" id="globalStatusDot"></span><span id="globalStatusText">正在读取状态</span></span>
     <button class="button button-secondary" id="adminTokenButton" type="button">{icon('key')}<span>管理令牌</span></button>
-    <a class="button button-secondary" href="/legacy-ui">旧版入口</a>
   </div>
 </header>'''
 
@@ -129,15 +126,31 @@ def render_admin_token_dialog() -> str:
 </dialog>'''
 
 
+def _asset_tags(paths: Iterable[str], *, kind: str) -> str:
+    if kind == "style":
+        return "\n".join(
+            f'<link rel="stylesheet" href="{escape(path, quote=True)}">'
+            for path in paths
+        )
+    return "\n".join(
+        f'<script src="{escape(path, quote=True)}" defer></script>'
+        for path in paths
+    )
+
+
 def render_console_shell(
     *,
     active: str,
     title: str,
     content: str,
     body_marker: str,
+    styles: tuple[str, ...] = ("/control-assets/console.css",),
+    scripts: tuple[str, ...] = ("/control-assets/console.js",),
 ) -> str:
     safe_title = escape(title)
     safe_marker = escape(body_marker, quote=True)
+    style_tags = _asset_tags(styles, kind="style")
+    script_tags = _asset_tags(scripts, kind="script")
     return f'''<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -145,7 +158,7 @@ def render_console_shell(
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light">
 <title>LOLDataSystem · {safe_title}</title>
-<link rel="stylesheet" href="/control-assets/console.css">
+{style_tags}
 </head>
 <body data-console-ui="{safe_marker}">
 <div class="app-shell">
@@ -159,7 +172,7 @@ def render_console_shell(
 {render_admin_token_dialog()}
 <div class="toast-region" id="toastRegion" aria-live="polite"></div>
 <!-- legacy compatibility markers: lolapisevers 接口端总控台 watcherRows /notify/test -->
-<script src="/control-assets/console.js" defer></script>
+{script_tags}
 </body>
 </html>'''
 

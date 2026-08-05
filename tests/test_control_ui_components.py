@@ -20,6 +20,18 @@ class ControlUiComponentTests(unittest.TestCase):
         self.assertEqual(sidebar.count('aria-current="page"'), 1)
         self.assertIn('href="/" class="nav-link"', sidebar)
 
+    def test_legacy_console_is_not_advertised_in_production_navigation(self) -> None:
+        sidebar = render_sidebar(active="overview")
+        shell = render_console_shell(
+            active="overview",
+            title="控制台总览",
+            content='<section id="content">ok</section>',
+            body_marker="test",
+        )
+        self.assertNotIn('旧版控制台', sidebar)
+        self.assertNotIn('旧版入口', shell)
+        self.assertNotIn('href="/legacy-ui"', shell)
+
     def test_component_values_are_html_escaped(self) -> None:
         link = nav_link(
             "custom",

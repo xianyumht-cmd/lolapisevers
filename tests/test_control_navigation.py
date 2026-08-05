@@ -24,7 +24,9 @@ class ControlNavigationTests(unittest.TestCase):
         self.assertIn('/query-console/lolban', page)
         self.assertIn('/?tab=mainconfig', page)
         self.assertIn('/?tab=logs', page)
-        self.assertIn('/legacy-ui', page)
+        self.assertNotIn('/legacy-ui', page)
+        self.assertNotIn('旧版入口', page)
+        self.assertNotIn('旧版控制台', page)
         self.assertNotIn('control-navigation-style', page)
 
     def test_root_is_not_wrapped_by_legacy_navigation_injector(self):
