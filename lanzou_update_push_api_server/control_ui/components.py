@@ -35,10 +35,7 @@ _NAVIGATION_GROUPS = (
     ),
     (
         "开发与文档",
-        (
-            ("docs", "/docs", "OpenAPI 文档", "book"),
-            ("legacy", "/legacy-ui", "旧版控制台", "history"),
-        ),
+        (("docs", "/docs", "OpenAPI 文档", "book"),),
     ),
 )
 
@@ -95,7 +92,6 @@ def render_topbar(*, title: str) -> str:
   <div class="topbar-actions">
     <span class="environment-badge"><span class="status-dot" id="globalStatusDot"></span><span id="globalStatusText">正在读取状态</span></span>
     <button class="button button-secondary" id="adminTokenButton" type="button">{icon('key')}<span>管理令牌</span></button>
-    <a class="button button-secondary" href="/legacy-ui">旧版入口</a>
   </div>
 </header>'''
 
