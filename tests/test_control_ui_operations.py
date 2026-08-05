@@ -4,6 +4,7 @@ import unittest
 
 from lanzou_update_push_api_server.control_extensions import _migrated_tab_target
 from lanzou_update_push_api_server.control_ui import (
+    ASSET_DIRECTORY,
     render_diagnostics_page,
     render_logs_page,
     render_system_page,
@@ -44,11 +45,23 @@ class ControlUiOperationsTests(unittest.TestCase):
     def test_destructive_operations_use_dialog_not_native_confirm(self) -> None:
         diagnostics = render_diagnostics_page()
         system = render_system_page()
+        script = (ASSET_DIRECTORY / "operations.js").read_text(encoding="utf-8")
         for html in (diagnostics, system):
             self.assertIn('id="operationConfirmDialog"', html)
             self.assertIn('id="operationConfirmForm"', html)
         self.assertIn('id="repairStateButton"', diagnostics)
         self.assertIn('id="restartServiceButton"', system)
+        self.assertNotIn('confirm(', script)
+        self.assertNotIn('alert(', script)
+        self.assertNotIn('prompt(', script)
+
+    def test_operation_result_and_security_state_handling_is_explicit(self) -> None:
+        script = (ASSET_DIRECTORY / "operations.js").read_text(encoding="utf-8")
+        self.assertIn('data?.token_configured', script)
+        self.assertIn('result.data?.ok === false', script)
+        self.assertIn('repairError', script)
+        self.assertIn('rollbackError', script)
+        self.assertIn('restartError', script)
 
     def test_only_migrated_tabs_redirect_to_new_routes(self) -> None:
         self.assertEqual(_migrated_tab_target(_Request("/", "logs")), "/logs")
