@@ -212,15 +212,16 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           git apply $patchPath
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          git add -N -- tests/test_v3_baseline_readiness.py
           $actual = @(git diff --name-only | Sort-Object)
           $expected = @(
             ".github/workflows/build-production-safe-deployment-v3.yml",
-            "ops/Build-FullBugRepairPackageV3.ps1",
-            "tests/test_v3_baseline_readiness.py"
+            "ops/Build-FullBugRepairPackageV3.ps1"
           ) | Sort-Object
           if (@(Compare-Object $expected $actual).Count -ne 0) {
             throw "Unexpected patched files: $($actual -join ', ')"
+          }
+          if (-not (Test-Path -LiteralPath "tests/test_v3_baseline_readiness.py" -PathType Leaf)) {
+            throw "Tracked baseline-readiness regression test is missing."
           }
 
       - name: Install dependencies and audit tool
