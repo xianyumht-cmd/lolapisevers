@@ -1,24 +1,16 @@
 # WEBUI-CONTROL-PANEL-003 P3B 基线感知 readiness 交接
 
-更新时间：2026-08-06 01:18 +08:00
+更新时间：2026-08-06 01:20 +08:00
 
-## 新对话从这里开始
+## 当前断点
 
-先读取：
+P3B 基线感知 readiness 修复、标准 CI、V3 不可变离线部署构建和本地制品复核均已完成。当前不再有代码或打包阻塞，下一步是 Windows 生产机部署与实机验收。
+
+继续任务时先读取：
 
 1. `docs/HANDOFF_LATEST.md`
 2. 本文档
 3. `docs/HANDOFF_WEBUI_CONTROL_PANEL_003_P3B_20260805.md`
-
-继续任务时不要重新设计 P3B 页面，也不要部署当前两个失败目标。第一步应修复 V3 构建器的 **Verifier readyz block anchor** 换行标准化问题，重新跑标准 CI，再生成新的生产第一父提交目标和离线一键部署包。
-
-## 交接标记
-
-- 用户已要求暂停当前对话，并在新聊天继续。
-- 当前没有后台任务需要等待；V3 Run `31020489861` 已结束并失败。
-- 失败发生在 ZIP 构建阶段，生产没有发生任何变更。
-- 没有生成或上传可部署制品。
-- 新聊天必须从本文档记录的阻塞点继续，不要把失败 Run 误判为仍在运行。
 
 ## 当前真实状态
 
@@ -28,13 +20,12 @@
 - 功能分支：`feat/webui-control-panel-003-20260805`
 - 当前生产：`7d637b90ac2b177de86bae024713ac9172bb26fa`
 - 生产仍是 P3A，P3B 尚未部署
-- 不要声称任何 P3B 新包已经部署或验收
 
 P3A 已在 Windows 生产机安全部署并通过实机验收：333 项测试、Windows 服务、`/livez`、`/readyz`、build-info、Git HEAD、合集和 ARAM 正式交付链路通过，verification report 为 `pass`。
 
 ## P3B 页面功能
 
-P3B 五个页面已经完成分支实现：
+P3B 五个页面已完成：
 
 - `/main-config`
 - `/lanzou/config`
@@ -42,111 +33,142 @@ P3B 五个页面已经完成分支实现：
 - `/lanzou/targets`
 - `/api-debugger`
 
-对应旧 `?tab=` 地址保留 307 兼容重定向。共享控制台 Shell、配置脚本、Secret 脱敏、Watcher 密码掩码往返、通知 Header 掩码往返、本机回环或 `WEBUI_ADMIN_TOKEN` 管理保护均已实现。
+对应旧 `?tab=` 地址保留 307 兼容重定向。共享控制台 Shell、Secret 脱敏、Watcher 密码掩码往返、通知 Header 掩码往返、本机回环或 `WEBUI_ADMIN_TOKEN` 管理保护均已实现。
 
-## Windows 实机失败根因
+## Windows 首次部署失败根因
 
-最初 P3B 部署在切换生产前被旧验证规则拦截：当前生产已有 SO1 会话依赖降级，候选没有引入新的降级，但原 V3 验证器把 inherited baseline degradation 误判为候选失败。
+首次 P3B 部署在生产切换验证阶段回滚。诊断包证明：
 
-已实现的基线感知规则：
+- 21:07 Keepalive 查询成功
+- 21:17 SO1 会话探测已经开始超时
+- 21:22 才开始 P3B 部署
+- 回滚后的旧生产仍连续 `/readyz` 503
+- MySQL 为 up
+- Chromium 浏览器为 up
+- 只有 `so1_session=false`，失败原因是 TimeoutError
+- 群查询正式链路仍持续返回 HTTP 200
+
+因此不是 P3B 页面代码或服务切换引入的新回归，而是旧验证器把部署前已有的 SO1 会话依赖降级误判为候选故障。
+
+## 基线感知规则
+
+当前部署器和验证器已经实现：
 
 - 停止生产前保存 `pre-switch-health.json`
 - 部署后重新采集 readiness
-- 仅允许 **SO1 会话依赖** 在部署前后保持同样的既有降级
-- 新增依赖失败、状态恶化、其他 readiness 失败仍必须回滚
-- 不降低 `/livez`、build-info、Git HEAD、正式交付链路等验证要求
+- MySQL 不是 up：失败并回滚
+- SO1 Chromium 浏览器不是 up：失败并回滚
+- 部署前 SO1 会话正常、部署后失效：失败并回滚
+- 部署前后 SO1 会话失败指纹不同或状态恶化：失败并回滚
+- 只有相同的既有 SO1 会话降级才允许 `pass_with_warning`
+- 报告明确写入 `inherited_so1_session_degradation=true`
+- `/livez`、build-info、Git HEAD、正式交付链路等门禁保持不变
 
-## 已完成的代码与测试
+这不是忽略 `/readyz`，而是区分“候选引入的新回归”和“部署前已存在且部署后没有恶化的依赖降级”。
 
-最终干净功能候选曾形成：
+## 最终代码与部署目标
 
-- `ac5d29d7e52c9cab45765deda489d28a933dd9ce`
+最终功能候选：
 
-之后修复 V3 构建器部署调用锚点 CRLF/LF 不匹配：
+- `7414ad596aa8d1fb6ecc87d6ae3c81d55ff42746`
 
-- 当前构建器候选：`5df00bb8e0763972294fde9443f26436c42b2320`
-- 只修改 V3 构建器和对应回归测试
+最终 V3 部署目标：
 
-该候选已经通过：
+- `292b43ef439b6102fd34b3c7b198cc7671b65eab`
+- 第一父提交：当前生产 `7d637b90ac2b177de86bae024713ac9172bb26fa`
+- 第二父提交：功能候选 `7414ad596aa8d1fb6ecc87d6ae3c81d55ff42746`
+- 两者文件树：`1bbc7a6907841eafd28b5ebe974dc5a1386bb12c`
+- 部署目标与功能候选零文件差异
 
-- Linux 全量测试
-- Windows 全量测试
-- Parser Center 专项与全套测试
-- 341 项测试
-- 全部最终 WebUI JavaScript 生成与语法检查
-- 17 个 PowerShell 脚本的 Windows PowerShell 5.1 解析
-- 依赖安全审计，无已知漏洞
+## CI 与 V3 构建
 
-## 两次 V3 构建失败记录
+临时 Draft PR：#51，`[DO NOT MERGE]`
 
-### 第一次失败目标：禁止部署
+提交 `292b43ef439b6102fd34b3c7b198cc7671b65eab` 已通过：
 
-- 目标：`f9e00b505dc549f3d761348dc741535f4294e352`
-- 临时 Draft PR：#49
-- V3 Run：`31019102202`
-- 不可变 341 项测试、PowerShell 5.1、依赖审计通过
-- ZIP 构建失败
-- 原因：`Deployment verifier call anchor was not unique.`
-- 根因：Windows PowerShell 5.1 here-string 使用 CRLF，而被扫描部署脚本为 LF，导致多行锚点计数为 0
-- 未上传制品，不可部署
+- 标准 tests：success
+- LAPI Parser Center CI：success
+- V3 不可变离线部署构建：success
+- V3 Run：`31022261240`
+- V3 Job：`92361708127`
+- Artifact：`8937175097`
 
-### 第二次失败目标：禁止部署
+V3 Job 的以下步骤全部成功：
 
-- 目标：`954f7748d41da9c3264441d33d60b7c9273fd946`
-- 功能候选：`5df00bb8e0763972294fde9443f26436c42b2320`
-- 两者零文件差异
-- 第一父提交是当前生产 `7d637b90ac2b177de86bae024713ac9172bb26fa`
-- 临时 Draft PR：#50，禁止合并
-- V3 Run：`31020489861`
-- Job：`92355626999`
-- Run 状态：`completed / failure`
-- 不可变 341 项测试通过
-- WebUI JavaScript 通过
-- 17 个 PowerShell 脚本的 Windows PowerShell 5.1 解析通过
-- 依赖安全审计通过
-- ZIP 构建失败
-- 精确原因：`Verifier readyz block anchor was not unique.`
-- 失败位置：`ops/Build-FullBugRepairPackageV3.ps1` 约第 325 行
-- `Verify-FullBugRepairDeployment.ps1` 的 readyz 替换区块仍存在与前一次相同类型的 CRLF/LF 多行锚点问题
-- 哈希和安全标志验证、制品上传均被跳过
-- 没有可部署 ZIP
+- immutable target tests
+- Windows PowerShell 5.1 解析
+- dependency audit
+- V3 immutable offline package build
+- hashes and safety flags verification
+- artifact upload
+
+旧的非 V3打包工作流失败不作为交付依据；本次只使用成功的 V3 Artifact。
+
+## 制品信息
+
+外层 Artifact：
+
+- 文件名：`LOLDataSystem-WEBUI-P3B-baseline-readiness-v3-20260806.zip`
+- SHA-256：`701170dcd80fd2fddaeb4e29d1fa11fd1c6563dadc133317b92cba2eba56032a`
+
+内层部署 ZIP：
+
+- 文件名：`LOLDataSystem-full-bug-repair-safe-deploy-292b43ef439b-py311-py314-winps51-v3.zip`
+- SHA-256：`2d529a11c449f129f6ae511ddd8bd8b5ab145f4fa6654c2dee79ec83aff97981`
+- 大小：`85,815,771` 字节
+- Package content SHA-256：`6347a8ec8fce691e169ebed84df682d2197a8d0cc468141de094325ff6c06848`
+- Package revision：3
+- 支持 Python：3.11、3.12、3.13、3.14
+- `powershell_utf8_parse_input=true`
+- `baseline_aware_readiness=true`
+
+## 本地二次复核
+
+已经完成：
+
+- 外层 Artifact SHA-256 与 Actions digest 一致
+- metadata 记录的内层 ZIP 名称、哈希、大小一致
+- manifest 51 个文件逐一大小和 SHA-256：PASS
+- V3 安全标志：PASS
+- `Deploy-FullBugRepairSafe.ps1` 包含停服前健康基线采集：PASS
+- `Verify-FullBugRepairProduction.ps1` 包含 MySQL、浏览器、SO1 回归门禁和 inherited warning：PASS
+- `release.bundle` 完整历史验证：PASS
+- 当前生产是部署目标祖先：PASS
+- 当前生产是部署目标第一父提交：PASS
+- 部署目标与最终功能候选零文件差异：PASS
+
+## 旧失败目标
+
+以下目标均没有可部署制品，继续禁止部署：
+
+- `f9e00b505dc549f3d761348dc741535f4294e352`
+- `954f7748d41da9c3264441d33d60b7c9273fd946`
+
+对应临时 PR #49、#50 不得合并。
 
 ## 下一步必须按顺序执行
 
-1. 检查 `ops/Build-FullBugRepairPackageV3.ps1` 中 Verifier readyz block 的查找锚点和替换文本。
-2. 与部署调用锚点修复保持一致：将 here-string 锚点和替换文本标准化为 LF 后，再要求精确匹配一次；不要放宽唯一性校验。
-3. 增加或更新 `tests/test_v3_baseline_readiness.py`，覆盖 CRLF 构建器输入与 LF 验证脚本内容的真实组合。
-4. 在功能分支运行标准 Linux、Windows、Parser Center、341+ 项测试、全部 WebUI JavaScript、PowerShell 5.1 和依赖审计。
-5. 全绿后，以当前生产 `7d637b90...` 为第一父提交创建 **新的** 部署目标；不要复用 `f9e00b50...` 或 `954f7748...`。
-6. 验证新部署目标与最终功能候选零文件差异。
-7. 创建新的 `[DO NOT MERGE]` 临时 Draft PR 触发 V3 构建。
-8. 只有 Run 全绿、制品上传成功并完成本地 ZIP/manifest/metadata/hash/安全标志复核后，才向用户交付一键包。
-9. 用户在 Windows 生产机运行 `run-deploy.cmd` 后，再依据真实日志、verification report 和页面截图验收 P3B。
+1. 下载并解压外层 V3 Artifact。
+2. 再解压内层部署 ZIP。
+3. 双击 `run-deploy.cmd`。
+4. 保留完整控制台输出。
+5. 找到并提交部署生成的 `verification-report.json`。
+6. 部署成功后按 Ctrl + F5，实机验收五个 P3B 页面。
+7. 验证五个旧 `?tab=` 地址是否 307 跳转到新页面。
+8. 检查合集与 ARAM 正式交付链路没有回归。
+9. 如果报告为 `pass_with_warning`，必须确认唯一降级原因是 `inherited_so1_session_degradation`，且 MySQL、Chromium、服务、Git HEAD、build-info 和正式交付链路全部通过。
 10. P3B 实机验收前，不合并 PR #41，不关闭 Issue #40。
 
 ## P3B 实机验收重点
 
-部署成功后至少检查：
-
 - 目标 commit、Git HEAD、build-info 一致
 - `/livez` 200
-- `/readyz`：只允许与部署前完全相同的 inherited SO1 session degradation
-- 6178 首页和本地静态资源可加载
+- `/readyz` 不允许新回归
 - 五个 P3B 页面可访问
 - 旧 `?tab=` 地址正确 307 跳转
 - 主接口配置读取、保存、备份和重启提示
-- 蓝奏配置掩码往返与热刷新
+- 蓝奏配置环境覆盖状态、掩码往返与热刷新
 - watcher 新增、编辑、启停、删除、扫描、密码保留
 - 通知目标 Header 脱敏、保留与测试推送
 - 接口调试器 Path、Query、Header、JSON Body 和结果展示
 - 合集与 ARAM 正式交付链路不回归
-
-## 禁止事项
-
-- 不部署 `f9e00b505dc549f3d761348dc741535f4294e352`
-- 不部署 `954f7748d41da9c3264441d33d60b7c9273fd946`
-- 不合并临时构建 PR #49 或 #50
-- 不合并 PR #41
-- 不关闭 Issue #40
-- 不把构建失败说成功
-- 不把候选 CI 通过说成 Windows 生产部署成功
