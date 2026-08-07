@@ -24,6 +24,8 @@ class ControlNavigationTests(unittest.TestCase):
         self.assertIn('/query-console/lolban', page)
         self.assertIn('/main-config', page)
         self.assertIn('/logs', page)
+        self.assertIn('/target-file-watch', page)
+        self.assertIn('定向文件监控', page)
         self.assertNotIn('/legacy-ui', page)
         self.assertNotIn('旧版入口', page)
         self.assertNotIn('旧版控制台', page)
@@ -40,6 +42,8 @@ class ControlNavigationTests(unittest.TestCase):
         self.assertIn('/admin/parser-center/secret', page)
         self.assertIn('/admin/parser-center/test', page)
         self.assertIn('/admin/parser-center/rollback', page)
+        self.assertIn('/target-file-watch', page)
+        self.assertIn('定向文件监控', page)
         self.assertIn('Secret 配置', page)
         self.assertIn('请求并解析', page)
 
@@ -52,6 +56,7 @@ class ControlNavigationTests(unittest.TestCase):
         self.assertIn('providerSecretControl', page)
         self.assertNotIn('id="fourPngSecretPanel"', page)
         self.assertIn('class="control-sidebar"', page)
+        self.assertIn('/target-file-watch', page)
 
     def test_parser_secret_section_is_server_selected(self):
         raw = render_parser_center_page()
