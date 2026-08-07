@@ -5,10 +5,8 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 
 from services.main_control_security import require_control_access
-from services.target_file_watch_service import (
-    TargetFileWatchError,
-    target_file_watch_service,
-)
+from services.target_file_watch_service import TargetFileWatchError
+from services.target_file_watch_runtime import target_file_watch_service
 
 
 router = APIRouter(prefix="/api/v1/target-file-watch", tags=["target-file-watch"])
