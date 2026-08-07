@@ -9,6 +9,7 @@ from typing import Any
 from services.target_file_watch_directory import DirectoryLanzouResolver, check_directory_once
 from services.target_file_watch_service import (
     STATE_VERSION,
+    TargetFileWatchConfig,
     TargetFileWatchError,
     TargetFileWatchService,
     _atomic_json_write,
@@ -32,6 +33,18 @@ class SafeTargetFileWatchService(TargetFileWatchService):
         self.state_quarantine_file = ""
         self.directory_resolver = DirectoryLanzouResolver()
         super().__init__()
+
+    def _load_config(self) -> None:
+        path = _config_path()
+        if not path.exists():
+            self._config = TargetFileWatchConfig()
+            return
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8-sig"))
+            self._config = normalize_config(raw)
+        except Exception as exc:
+            self.logger.error("target file config load failed; feature stays disabled: %s", type(exc).__name__)
+            self._config = TargetFileWatchConfig()
 
     def _load_state(self) -> None:
         path = _state_path()
