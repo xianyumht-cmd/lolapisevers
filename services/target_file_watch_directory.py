@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 class DirectoryResolvedFile:
     key: str
     file: ResolvedTargetFile
+    provider_fingerprint: str = ""
 
 
 @dataclass(frozen=True)
@@ -36,12 +37,35 @@ class DirectorySnapshot:
 
     @property
     def signature(self) -> str:
+        """Provider-independent snapshot signature."""
         payload = sorted(
             ({"key": item.key, "fingerprint": item.file.fingerprint} for item in self.files),
             key=lambda item: (item["key"], item["fingerprint"]),
         )
         encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
         return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _hash_payload(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _provider_file_fingerprint(file: FileEntry) -> str:
+    """Reuse legacy monitor semantics for replacements within one provider."""
+    return _hash_payload(file.fingerprint_payload())
+
+
+def _event_fingerprint(item: DirectoryResolvedFile, *, same_provider: bool) -> str:
+    """Create a dedupe fingerprint that can represent provider-only replacements."""
+    if same_provider and item.provider_fingerprint:
+        return _hash_payload(
+            {
+                "canonical": item.file.fingerprint,
+                "provider": item.provider_fingerprint,
+            }
+        )
+    return item.file.fingerprint
 
 
 class DirectoryLanzouResolver:
@@ -88,7 +112,13 @@ class DirectoryLanzouResolver:
             if key in keys:
                 raise TargetFileWatchError(f"蓝奏目录存在无法安全区分的同名文件：{entry.name}")
             keys.add(key)
-            items.append(DirectoryResolvedFile(key=key, file=self._resolved(entry, snapshot.provider, source_url)))
+            items.append(
+                DirectoryResolvedFile(
+                    key=key,
+                    file=self._resolved(entry, snapshot.provider, source_url),
+                    provider_fingerprint=_provider_file_fingerprint(entry),
+                )
+            )
         return DirectorySnapshot(provider=str(snapshot.provider or "").strip(), files=tuple(items))
 
     def resolve_for_delivery(self, source_url: str, key: str, fingerprint: str) -> ResolvedTargetFile:
@@ -125,6 +155,7 @@ def _file_state(item: DirectoryResolvedFile) -> dict[str, Any]:
     return {
         "key": item.key,
         "fingerprint": file.fingerprint,
+        "provider_fingerprint": item.provider_fingerprint,
         "stable_id": file.stable_id,
         "name": file.name,
         "size": file.size,
@@ -173,6 +204,39 @@ def _baseline_files(value: Any) -> dict[str, dict[str, Any]]:
     return {}
 
 
+def _provider_switch_guard(service: "SafeTargetFileWatchService", baseline: dict[str, Any], current: DirectorySnapshot) -> dict[str, Any] | None:
+    previous_provider = str(baseline.get("provider") or "").strip()
+    if not previous_provider or previous_provider == current.provider:
+        service._state.pop("provider_switch_guard", None)
+        return None
+
+    previous_signature = str(baseline.get("signature") or "").strip()
+    if previous_signature and previous_signature == current.signature:
+        # Equivalent contents from a different provider are safe to accept.
+        service._state.pop("provider_switch_guard", None)
+        return None
+
+    existing = service._state.get("provider_switch_guard")
+    if not isinstance(existing, dict):
+        existing = {}
+    same_candidate = (
+        str(existing.get("from_provider") or "") == previous_provider
+        and str(existing.get("to_provider") or "") == current.provider
+        and str(existing.get("signature") or "") == current.signature
+    )
+    seen_count = int(existing.get("seen_count") or 0) + 1 if same_candidate else 1
+    candidate = {
+        "from_provider": previous_provider,
+        "to_provider": current.provider,
+        "signature": current.signature,
+        "seen_count": seen_count,
+        "first_seen_at": existing.get("first_seen_at") if same_candidate else utc_now_iso(),
+        "last_seen_at": utc_now_iso(),
+    }
+    service._state["provider_switch_guard"] = candidate
+    return candidate
+
+
 async def check_directory_once(
     service: "SafeTargetFileWatchService",
     resolver: DirectoryLanzouResolver,
@@ -195,6 +259,7 @@ async def check_directory_once(
             if baseline is None:
                 service._state["baseline"] = current_state
                 service._state["pending"] = None
+                service._state.pop("provider_switch_guard", None)
                 service._save_state()
                 return {
                     "ok": True,
@@ -204,18 +269,60 @@ async def check_directory_once(
                     "signature": current.signature,
                 }
 
+            guard = _provider_switch_guard(service, baseline, current)
+            if guard is not None:
+                service._state["pending"] = None
+                if int(guard.get("seen_count") or 0) >= 2:
+                    # Match the legacy monitor's conservative provider-switch rule:
+                    # accept the new provider snapshot without sending ambiguous updates.
+                    service._state["baseline"] = current_state
+                    service._state.pop("provider_switch_guard", None)
+                    service._save_state()
+                    return {
+                        "ok": True,
+                        "state": "rebaselined_provider_switch",
+                        "uploaded": False,
+                        "provider_changed": True,
+                        "file_count": len(current.files),
+                        "signature": current.signature,
+                    }
+                service._save_state()
+                return {
+                    "ok": True,
+                    "state": "provider_switch_guarded",
+                    "uploaded": False,
+                    "guarded": True,
+                    "provider_changed": True,
+                    "seen_count": guard["seen_count"],
+                    "file_count": len(current.files),
+                    "signature": current.signature,
+                }
+
             baseline_map = _baseline_files(baseline)
             current_map = {item.key: item for item in current.files}
-            changed = [
-                item
-                for item in current.files
-                if item.key not in baseline_map
-                or str(baseline_map[item.key].get("fingerprint") or "") != item.file.fingerprint
-            ]
+            same_provider = str(baseline.get("provider") or "").strip() == current.provider
+
+            changed: list[DirectoryResolvedFile] = []
+            for item in current.files:
+                old = baseline_map.get(item.key)
+                if old is None:
+                    changed.append(item)
+                    continue
+                canonical_changed = str(old.get("fingerprint") or "") != item.file.fingerprint
+                old_provider_fp = str(old.get("provider_fingerprint") or "").strip()
+                provider_changed = (
+                    same_provider
+                    and bool(old_provider_fp)
+                    and bool(item.provider_fingerprint)
+                    and old_provider_fp != item.provider_fingerprint
+                )
+                if canonical_changed or provider_changed:
+                    changed.append(item)
+
             removed_keys = [key for key in baseline_map if key not in current_map]
 
             if not changed:
-                state_name = "baseline_updated" if removed_keys else "unchanged"
+                state_name = "baseline_updated" if removed_keys or str(baseline.get("provider") or "") != current.provider else "unchanged"
                 service._state["baseline"] = current_state
                 service._state["pending"] = None
                 service._save_state()
@@ -230,12 +337,14 @@ async def check_directory_once(
 
             pending_events: list[dict[str, Any]] = []
             for item in changed:
-                event_id = _event_id(service._config.source_url, item.file.fingerprint)
+                event_fingerprint = _event_fingerprint(item, same_provider=same_provider)
+                event_id = _event_id(service._config.source_url, event_fingerprint)
                 pending_events.append(
                     {
                         "event_id": event_id,
                         "key": item.key,
-                        "fingerprint": item.file.fingerprint,
+                        "fingerprint": event_fingerprint,
+                        "canonical_fingerprint": item.file.fingerprint,
                         "file": item.file.public_file(),
                     }
                 )
@@ -253,13 +362,13 @@ async def check_directory_once(
                     resolver.resolve_for_delivery,
                     service._config.source_url,
                     item.key,
-                    item.file.fingerprint,
+                    pending["canonical_fingerprint"],
                 )
                 payload = {
                     "schema": SCHEMA,
                     "event_id": pending["event_id"],
                     "source_url": service._config.source_url,
-                    "fingerprint": item.file.fingerprint,
+                    "fingerprint": pending["fingerprint"],
                     "detected_at": now,
                     "file": delivery.public_file(),
                     "direct_url": delivery.direct_url,
