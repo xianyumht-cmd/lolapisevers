@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - build/target-file-push-prod-dda1c-v3-20260808
+  pull_request:
+    branches:
+      - fix/target-file-push-prod-dda1c-20260808
 
 jobs:
   build-target-file-v3:
