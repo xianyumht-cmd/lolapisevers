@@ -11,6 +11,7 @@ fid/
 
 data/image-cache/
 data/upstream_snapshots/
+data/target-file-watch-state.json
 
 .so1_state.json
 .so1_token.txt
@@ -27,6 +28,7 @@ lanzou_update_push_api_server/*.tmp
 lanzou_update_push_api_server/*.bak.*
 lanzou_update_push_api_server/*.bak-*
 lanzou_update_push_api_server/*.bad.*
+config/target-file-watch.json
 
 2.0.0
 26.0.1
