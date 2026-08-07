@@ -94,6 +94,24 @@ def render_target_file_watch_page() -> str:
     <div class="log-summary" id="targetWatchErrorBox"><div class="empty-state">当前没有已读取的错误</div></div>
   </article>
 </section>
+
+<dialog class="dialog" id="targetWatchRebaselineDialog" aria-labelledby="targetWatchRebaselineTitle">
+  <div class="dialog-card">
+    <header class="dialog-header">
+      <div><p class="eyebrow">危险操作确认</p><h2 id="targetWatchRebaselineTitle">重新建立定向文件 baseline</h2></div>
+      <button class="icon-button" id="targetWatchRebaselineClose" type="button" aria-label="关闭">{icon('x')}</button>
+    </header>
+    <div class="dialog-body">
+      <p class="dialog-description">这会清空 5001 当前定向监控差异状态。下一次检查只把蓝奏目录现状建立为新 baseline，不会上传目录里已经存在的文件。</p>
+      <div class="inline-status"><span class="status-dot status-dot-warning"></span><span>只在 baseline 损坏、Provider 切换异常或明确需要重置监控起点时使用。</span></div>
+    </div>
+    <footer class="dialog-footer">
+      <span class="dialog-footer-spacer"></span>
+      <button class="button button-secondary" id="targetWatchRebaselineCancel" type="button">取消</button>
+      <button class="button button-danger" id="targetWatchRebaselineConfirm" type="button">确认重新建立基线</button>
+    </footer>
+  </div>
+</dialog>
 '''
     return render_console_shell(
         active="target-file-watch",
