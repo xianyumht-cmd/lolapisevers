@@ -1,0 +1,551 @@
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import logging
+import os
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any, Callable, TYPE_CHECKING
+
+from lanzou_update_push_api_server.config import WatcherConfig
+from lanzou_update_push_api_server.providers import (
+    FileEntry,
+    LanzouWebProvider,
+    WerApiProvider,
+    canonical_file_key,
+    utc_now_iso,
+)
+from services.target_file_watch_service import (
+    SCHEMA,
+    ResolvedTargetFile,
+    TargetFileWatchError,
+    _direct_candidates,
+    _event_id,
+    _file_fingerprint,
+    _stable_url,
+)
+
+if TYPE_CHECKING:
+    from services.target_file_watch_runtime import SafeTargetFileWatchService
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_WER_ENDPOINT = "https://api2.wer.plus/api/lanzpro"
+
+
+@dataclass(frozen=True)
+class TargetFileWatchProviderConfig:
+    """Provider settings owned by target-file-watch, not the legacy monitor."""
+
+    wer_api_endpoint: str = DEFAULT_WER_ENDPOINT
+    wer_api_method: str = "GET"
+    wer_api_url_param: str = "url"
+    wer_api_password_param: str = "pwd"
+    wer_api_key: str = ""
+
+
+def _load_legacy_provider_defaults() -> dict[str, Any]:
+    """Read compatible defaults without importing the legacy AppConfig object."""
+
+    raw_path = str(os.getenv("LANZOU_MONITOR_CONFIG") or "").strip()
+    path = Path(raw_path).expanduser() if raw_path else PROJECT_ROOT / "lanzou_update_push_api_server" / "config.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError, TypeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def load_target_file_watch_provider_config() -> TargetFileWatchProviderConfig:
+    """Load target-file resolver settings with backward-compatible secret reuse.
+
+    The target-file feature owns its provider strategy. Existing LANZOU_API_KEY
+    remains a fallback so production does not need a duplicate secret.
+    """
+
+    raw = _load_legacy_provider_defaults()
+    method = str(
+        os.getenv("TARGET_FILE_WATCH_WER_METHOD")
+        or raw.get("wer_api_method")
+        or "GET"
+    ).strip().upper()
+    if method not in {"GET", "POST"}:
+        method = "GET"
+    return TargetFileWatchProviderConfig(
+        wer_api_endpoint=str(
+            os.getenv("TARGET_FILE_WATCH_WER_ENDPOINT")
+            or raw.get("wer_api_endpoint")
+            or DEFAULT_WER_ENDPOINT
+        ).strip(),
+        wer_api_method=method,
+        wer_api_url_param=str(
+            os.getenv("TARGET_FILE_WATCH_WER_URL_PARAM")
+            or raw.get("wer_api_url_param")
+            or "url"
+        ).strip()
+        or "url",
+        wer_api_password_param=str(
+            os.getenv("TARGET_FILE_WATCH_WER_PASSWORD_PARAM")
+            or raw.get("wer_api_password_param")
+            or "pwd"
+        ).strip()
+        or "pwd",
+        wer_api_key=str(
+            os.getenv("TARGET_FILE_WATCH_WER_KEY")
+            or os.getenv("LANZOU_API_KEY")
+            or raw.get("wer_api_key")
+            or raw.get("api_key")
+            or ""
+        ).strip(),
+    )
+
+
+@dataclass(frozen=True)
+class DirectoryResolvedFile:
+    key: str
+    file: ResolvedTargetFile
+    provider_fingerprint: str = ""
+
+
+@dataclass(frozen=True)
+class DirectorySnapshot:
+    provider: str
+    files: tuple[DirectoryResolvedFile, ...]
+
+    @property
+    def signature(self) -> str:
+        """Provider-independent snapshot signature."""
+        payload = sorted(
+            ({"key": item.key, "fingerprint": item.file.fingerprint} for item in self.files),
+            key=lambda item: (item["key"], item["fingerprint"]),
+        )
+        encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _hash_payload(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _provider_file_fingerprint(file: FileEntry) -> str:
+    """Reuse legacy provider field semantics only for one provider snapshot."""
+    return _hash_payload(file.fingerprint_payload())
+
+
+def _event_fingerprint(item: DirectoryResolvedFile, *, same_provider: bool) -> str:
+    """Create a dedupe fingerprint that can represent provider-only replacements."""
+    if same_provider and item.provider_fingerprint:
+        return _hash_payload(
+            {
+                "canonical": item.file.fingerprint,
+                "provider": item.provider_fingerprint,
+            }
+        )
+    return item.file.fingerprint
+
+
+class TargetFileDirectResolver:
+    """Resolve one concrete Lanzou file share link into a fresh download URL."""
+
+    def __init__(
+        self,
+        *,
+        provider_config_loader: Callable[[], TargetFileWatchProviderConfig] = load_target_file_watch_provider_config,
+        provider: WerApiProvider | None = None,
+    ) -> None:
+        self._provider_config_loader = provider_config_loader
+        self._provider = provider or WerApiProvider()
+        self._logger = logging.getLogger("LOLDataSystem.TargetFileWatch")
+
+    @staticmethod
+    def _watcher(share_link: str) -> WatcherConfig:
+        return WatcherConfig(
+            id="target-file-watch-direct",
+            title="target-file-watch-direct",
+            url=share_link,
+            enabled=True,
+            max_pages=1,
+        )
+
+    def resolve(self, share_link: str) -> str:
+        share_link = str(share_link or "").strip()
+        if not share_link:
+            raise TargetFileWatchError("目标文件缺少单文件分享链接，无法解析直链")
+
+        config = self._provider_config_loader()
+        try:
+            snapshot = self._provider.fetch(self._watcher(share_link), config)  # type: ignore[arg-type]
+        except Exception as exc:
+            self._logger.warning(
+                "target file direct-url provider failed: %s",
+                type(exc).__name__,
+            )
+            raise TargetFileWatchError("未取得可下载直链；请确认定向文件直链解析配置可用") from exc
+
+        source_key = _stable_url(share_link)
+        for entry in snapshot.files:
+            for candidate in _direct_candidates(entry):
+                if _stable_url(candidate) == source_key:
+                    continue
+                return candidate
+        raise TargetFileWatchError("未取得可下载直链；请确认定向文件直链解析配置可用")
+
+
+class TargetFileDirectoryResolver:
+    """Enumerate a Lanzou folder with a target-file-owned provider strategy."""
+
+    def __init__(
+        self,
+        *,
+        provider_config_loader: Callable[[], TargetFileWatchProviderConfig] = load_target_file_watch_provider_config,
+        native_provider: LanzouWebProvider | None = None,
+        fallback_provider: WerApiProvider | None = None,
+        direct_resolver: TargetFileDirectResolver | None = None,
+    ) -> None:
+        self._provider_config_loader = provider_config_loader
+        self._native_provider = native_provider or LanzouWebProvider()
+        self._fallback_provider = fallback_provider or WerApiProvider()
+        self.direct_resolver = direct_resolver or TargetFileDirectResolver(
+            provider_config_loader=provider_config_loader,
+        )
+        self._logger = logging.getLogger("LOLDataSystem.TargetFileWatch")
+
+    @staticmethod
+    def _watcher(source_url: str) -> WatcherConfig:
+        return WatcherConfig(
+            id="target-file-watch-directory",
+            title="target-file-watch-directory",
+            url=source_url,
+            enabled=True,
+            max_pages=20,
+        )
+
+    @staticmethod
+    def _resolved(file: FileEntry, provider: str, source_url: str) -> ResolvedTargetFile:
+        return ResolvedTargetFile(
+            fingerprint=_file_fingerprint(file),
+            stable_id=str(file.id or "").split("?", 1)[0].split("#", 1)[0],
+            name=str(file.name or "").strip() or "download.bin",
+            size=str(file.size or "").strip(),
+            modified_time=str(file.modified_time or "").strip(),
+            share_link=str(file.link or source_url).strip(),
+            provider=str(provider or "").strip(),
+        )
+
+    def _fetch_directory_snapshot(self, source_url: str):
+        config = self._provider_config_loader()
+        watcher = self._watcher(source_url)
+        empty_snapshot = None
+        for provider in (self._native_provider, self._fallback_provider):
+            try:
+                snapshot = provider.fetch(watcher, config)  # type: ignore[arg-type]
+            except Exception as exc:
+                self._logger.warning(
+                    "target file directory provider failed: provider=%s error=%s",
+                    str(getattr(provider, "name", type(provider).__name__)),
+                    type(exc).__name__,
+                )
+                continue
+            if snapshot.files:
+                return snapshot
+            if empty_snapshot is None:
+                empty_snapshot = snapshot
+        if empty_snapshot is not None:
+            return empty_snapshot
+        raise TargetFileWatchError("蓝奏目录解析失败；为避免误判删除，本轮不推进 baseline")
+
+    def resolve_snapshot(self, source_url: str) -> DirectorySnapshot:
+        snapshot = self._fetch_directory_snapshot(source_url)
+        if not snapshot.files:
+            raise TargetFileWatchError("蓝奏目录未解析到文件；为避免误判删除，本轮不推进 baseline")
+
+        items: list[DirectoryResolvedFile] = []
+        keys: set[str] = set()
+        for entry in snapshot.files:
+            key = canonical_file_key(entry)
+            if key in keys:
+                raise TargetFileWatchError(f"蓝奏目录存在无法安全区分的同名文件：{entry.name}")
+            keys.add(key)
+            items.append(
+                DirectoryResolvedFile(
+                    key=key,
+                    file=self._resolved(entry, snapshot.provider, source_url),
+                    provider_fingerprint=_provider_file_fingerprint(entry),
+                )
+            )
+        return DirectorySnapshot(provider=str(snapshot.provider or "").strip(), files=tuple(items))
+
+    def resolve_for_delivery(self, source_url: str, key: str, fingerprint: str) -> ResolvedTargetFile:
+        fresh = self.resolve_snapshot(source_url)
+        current = [item for item in fresh.files if item.key == key]
+        if len(current) != 1 or current[0].file.fingerprint != fingerprint:
+            raise TargetFileWatchError("目标文件在投递前再次变化，旧事件已失效")
+        metadata = current[0].file
+
+        direct_url = self.direct_resolver.resolve(metadata.share_link)
+        if _stable_url(direct_url) in {
+            _stable_url(source_url),
+            _stable_url(metadata.share_link),
+        }:
+            raise TargetFileWatchError("直链解析返回了源分享链接，拒绝作为下载地址投递")
+        return ResolvedTargetFile(**{**asdict(metadata), "direct_url": direct_url})
+
+
+class DirectoryLanzouResolver(TargetFileDirectoryResolver):
+    pass
+
+
+def _file_state(item: DirectoryResolvedFile) -> dict[str, Any]:
+    file = item.file
+    return {
+        "key": item.key,
+        "fingerprint": file.fingerprint,
+        "provider_fingerprint": item.provider_fingerprint,
+        "stable_id": file.stable_id,
+        "name": file.name,
+        "size": file.size,
+        "modified_time": file.modified_time,
+        "share_link": file.share_link,
+        "provider": file.provider,
+    }
+
+
+def _snapshot_state(snapshot: DirectorySnapshot) -> dict[str, Any]:
+    return {
+        "signature": snapshot.signature,
+        "provider": snapshot.provider,
+        "file_count": len(snapshot.files),
+        "files": [_file_state(item) for item in snapshot.files],
+    }
+
+
+def _legacy_file_key(value: dict[str, Any]) -> str:
+    return canonical_file_key(
+        FileEntry(
+            id=str(value.get("stable_id") or ""),
+            name=str(value.get("name") or ""),
+            size=str(value.get("size") or ""),
+            modified_time=str(value.get("modified_time") or ""),
+            link=str(value.get("share_link") or ""),
+        )
+    )
+
+
+def _baseline_files(value: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(value, dict):
+        return {}
+    files = value.get("files")
+    if isinstance(files, list):
+        out: dict[str, dict[str, Any]] = {}
+        for raw in files:
+            if not isinstance(raw, dict):
+                continue
+            key = str(raw.get("key") or "").strip() or _legacy_file_key(raw)
+            out[key] = raw
+        return out
+    if value.get("fingerprint"):
+        key = _legacy_file_key(value)
+        return {key: {"key": key, **value}}
+    return {}
+
+
+def _provider_switch_guard(service: "SafeTargetFileWatchService", baseline: dict[str, Any], current: DirectorySnapshot) -> dict[str, Any] | None:
+    previous_provider = str(baseline.get("provider") or "").strip()
+    if not previous_provider or previous_provider == current.provider:
+        service._state.pop("provider_switch_guard", None)
+        return None
+
+    previous_signature = str(baseline.get("signature") or "").strip()
+    if previous_signature and previous_signature == current.signature:
+        service._state.pop("provider_switch_guard", None)
+        return None
+
+    existing = service._state.get("provider_switch_guard")
+    if not isinstance(existing, dict):
+        existing = {}
+    same_candidate = (
+        str(existing.get("from_provider") or "") == previous_provider
+        and str(existing.get("to_provider") or "") == current.provider
+        and str(existing.get("signature") or "") == current.signature
+    )
+    seen_count = int(existing.get("seen_count") or 0) + 1 if same_candidate else 1
+    candidate = {
+        "from_provider": previous_provider,
+        "to_provider": current.provider,
+        "signature": current.signature,
+        "seen_count": seen_count,
+        "first_seen_at": existing.get("first_seen_at") if same_candidate else utc_now_iso(),
+        "last_seen_at": utc_now_iso(),
+    }
+    service._state["provider_switch_guard"] = candidate
+    return candidate
+
+
+async def check_directory_once(
+    service: "SafeTargetFileWatchService",
+    resolver: DirectoryLanzouResolver,
+) -> dict[str, Any]:
+    async with service._check_lock:
+        service._load_config()
+        if not service._config.enabled:
+            return {"ok": False, "skipped": True, "error": "target_file_watch_disabled"}
+
+        now = utc_now_iso()
+        try:
+            current = await asyncio.to_thread(resolver.resolve_snapshot, service._config.source_url)
+            current_state = _snapshot_state(current)
+            service._state["last_check_at"] = now
+            service._state["last_success_at"] = now
+            service._state["last_error_code"] = ""
+            service._state["source_url"] = service._config.source_url
+
+            baseline = service._state.get("baseline") if isinstance(service._state.get("baseline"), dict) else None
+            if baseline is None:
+                service._state["baseline"] = current_state
+                service._state["pending"] = None
+                service._state.pop("provider_switch_guard", None)
+                service._save_state()
+                return {
+                    "ok": True,
+                    "state": "baselined",
+                    "uploaded": False,
+                    "file_count": len(current.files),
+                    "signature": current.signature,
+                }
+
+            guard = _provider_switch_guard(service, baseline, current)
+            if guard is not None:
+                service._state["pending"] = None
+                if int(guard.get("seen_count") or 0) >= 2:
+                    service._state["baseline"] = current_state
+                    service._state.pop("provider_switch_guard", None)
+                    service._save_state()
+                    return {
+                        "ok": True,
+                        "state": "rebaselined_provider_switch",
+                        "uploaded": False,
+                        "provider_changed": True,
+                        "file_count": len(current.files),
+                        "signature": current.signature,
+                    }
+                service._save_state()
+                return {
+                    "ok": True,
+                    "state": "provider_switch_guarded",
+                    "uploaded": False,
+                    "guarded": True,
+                    "provider_changed": True,
+                    "seen_count": guard["seen_count"],
+                    "file_count": len(current.files),
+                    "signature": current.signature,
+                }
+
+            baseline_map = _baseline_files(baseline)
+            current_map = {item.key: item for item in current.files}
+            same_provider = str(baseline.get("provider") or "").strip() == current.provider
+
+            changed: list[DirectoryResolvedFile] = []
+            for item in current.files:
+                old = baseline_map.get(item.key)
+                if old is None:
+                    changed.append(item)
+                    continue
+                canonical_changed = str(old.get("fingerprint") or "") != item.file.fingerprint
+                old_provider_fp = str(old.get("provider_fingerprint") or "").strip()
+                provider_changed = (
+                    same_provider
+                    and bool(old_provider_fp)
+                    and bool(item.provider_fingerprint)
+                    and old_provider_fp != item.provider_fingerprint
+                )
+                if canonical_changed or provider_changed:
+                    changed.append(item)
+
+            removed_keys = [key for key in baseline_map if key not in current_map]
+
+            if not changed:
+                state_name = "baseline_updated" if removed_keys or str(baseline.get("provider") or "") != current.provider else "unchanged"
+                service._state["baseline"] = current_state
+                service._state["pending"] = None
+                service._save_state()
+                return {
+                    "ok": True,
+                    "state": state_name,
+                    "uploaded": False,
+                    "file_count": len(current.files),
+                    "removed_count": len(removed_keys),
+                    "signature": current.signature,
+                }
+
+            pending_events: list[dict[str, Any]] = []
+            for item in changed:
+                event_fingerprint = _event_fingerprint(item, same_provider=same_provider)
+                event_id = _event_id(service._config.source_url, event_fingerprint)
+                pending_events.append(
+                    {
+                        "event_id": event_id,
+                        "key": item.key,
+                        "fingerprint": event_fingerprint,
+                        "canonical_fingerprint": item.file.fingerprint,
+                        "file": item.file.public_file(),
+                    }
+                )
+            service._state["pending"] = {
+                "detected_at": now,
+                "target_signature": current.signature,
+                "events": pending_events,
+                "removed_keys": removed_keys,
+            }
+            service._save_state()
+
+            delivered: list[dict[str, Any]] = []
+            for item, pending in zip(changed, pending_events):
+                delivery = await asyncio.to_thread(
+                    resolver.resolve_for_delivery,
+                    service._config.source_url,
+                    item.key,
+                    pending["canonical_fingerprint"],
+                )
+                payload = {
+                    "schema": SCHEMA,
+                    "event_id": pending["event_id"],
+                    "source_url": service._config.source_url,
+                    "fingerprint": pending["fingerprint"],
+                    "detected_at": now,
+                    "file": delivery.public_file(),
+                    "direct_url": delivery.direct_url,
+                }
+                response = await asyncio.to_thread(service._deliver, payload)
+                delivered.append(
+                    {
+                        "event_id": pending["event_id"],
+                        "file": delivery.public_file(),
+                        "callback": response,
+                    }
+                )
+
+            service._state["baseline"] = current_state
+            service._state["pending"] = None
+            service._state["last_delivery_at"] = utc_now_iso()
+            service._state["last_event_id"] = delivered[-1]["event_id"] if delivered else ""
+            service._state["last_error_code"] = ""
+            service._save_state()
+            return {
+                "ok": True,
+                "state": "delivered",
+                "uploaded": True,
+                "uploaded_count": len(delivered),
+                "removed_count": len(removed_keys),
+                "file_count": len(current.files),
+                "events": delivered,
+                "signature": current.signature,
+            }
+        except Exception as exc:
+            service._state["last_check_at"] = now
+            service._state["last_error_at"] = utc_now_iso()
+            service._state["last_error_code"] = str(exc)[:240]
+            service._save_state()
+            raise
