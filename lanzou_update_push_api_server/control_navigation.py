@@ -56,6 +56,7 @@ def _sidebar(active: str) -> str:
       {_nav_link('/?tab=lanzouconfig', '全局配置', '全局')}
       {_nav_link('/?tab=watchers', '监控项目', '监控')}
       {_nav_link('/?tab=targets', '通知目标', '通知')}
+      {_nav_link('/target-file-watch', '定向文件监控', '定向', active=active == 'target-file-watch')}
     </details>
     <details open>
       <summary>系统管理</summary>
