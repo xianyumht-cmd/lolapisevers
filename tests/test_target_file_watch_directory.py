@@ -14,7 +14,7 @@ from services.target_file_watch_service import ResolvedTargetFile, TargetFileWat
 SOURCE_URL = "https://wwbvf.lanzn.com/b016kzvvmd"
 
 
-def resolved(name: str, version: str) -> DirectoryResolvedFile:
+def resolved(name: str, version: str, *, provider_fingerprint: str = "") -> DirectoryResolvedFile:
     return DirectoryResolvedFile(
         key=f"name:{name.casefold()}",
         file=ResolvedTargetFile(
@@ -26,16 +26,34 @@ def resolved(name: str, version: str) -> DirectoryResolvedFile:
             share_link=f"https://wwbvf.lanzn.com/i{name}{version}",
             provider="lanzou_web",
         ),
+        provider_fingerprint=provider_fingerprint,
+    )
+
+
+def provider_only_replacement(provider_fingerprint: str) -> DirectoryResolvedFile:
+    return DirectoryResolvedFile(
+        key="name:client.zip",
+        file=ResolvedTargetFile(
+            fingerprint="sha256:canonical-same",
+            stable_id="provider-specific-id",
+            name="Client.zip",
+            size="10 MB",
+            modified_time="",
+            share_link="https://wwbvf.lanzn.com/iClient",
+            provider="lanzou_web",
+        ),
+        provider_fingerprint=provider_fingerprint,
     )
 
 
 class FakeDirectoryResolver:
-    def __init__(self, files: list[DirectoryResolvedFile]):
+    def __init__(self, files: list[DirectoryResolvedFile], provider: str = "lanzou_web"):
         self.files = files
+        self.provider = provider
         self.delivery_calls: list[tuple[str, str]] = []
 
     def resolve_snapshot(self, _source_url: str) -> DirectorySnapshot:
-        return DirectorySnapshot(provider="lanzou_web", files=tuple(self.files))
+        return DirectorySnapshot(provider=self.provider, files=tuple(self.files))
 
     def resolve_for_delivery(self, _source_url: str, key: str, fingerprint: str) -> ResolvedTargetFile:
         self.delivery_calls.append((key, fingerprint))
@@ -105,6 +123,56 @@ class TargetFileWatchDirectoryTest(unittest.IsolatedAsyncioTestCase):
         result = await self.service.check_once()
         self.assertEqual(result["uploaded_count"], 1)
         self.assertEqual(deliveries[-1]["fingerprint"], "sha256:Client.zip:2")
+
+    async def test_same_provider_id_change_detected_when_name_size_and_canonical_fingerprint_are_same(self) -> None:
+        fake = FakeDirectoryResolver([provider_only_replacement("sha256:provider-old")])
+        self.service.directory_resolver = fake
+        deliveries: list[dict] = []
+        self.service._deliver = lambda payload: deliveries.append(payload) or {"ok": True, "uploaded": True}
+        await self.service.check_once()
+        first_event_count = len(deliveries)
+
+        fake.files = [provider_only_replacement("sha256:provider-new")]
+        result = await self.service.check_once()
+
+        self.assertEqual(result["state"], "delivered")
+        self.assertEqual(result["uploaded_count"], 1)
+        self.assertEqual(len(deliveries), first_event_count + 1)
+        self.assertNotEqual(deliveries[-1]["fingerprint"], "sha256:canonical-same")
+        self.assertEqual(fake.delivery_calls[-1][1], "sha256:canonical-same")
+
+    async def test_provider_switch_with_different_snapshot_is_guarded_then_rebaselined_without_upload(self) -> None:
+        fake = FakeDirectoryResolver([resolved("A.zip", "1")], provider="lanzou_web")
+        self.service.directory_resolver = fake
+        deliveries: list[dict] = []
+        self.service._deliver = lambda payload: deliveries.append(payload) or {"ok": True, "uploaded": True}
+        await self.service.check_once()
+
+        fake.provider = "wer_api"
+        fake.files = [resolved("A.zip", "1"), resolved("B.zip", "1")]
+        first = await self.service.check_once()
+        second = await self.service.check_once()
+
+        self.assertEqual(first["state"], "provider_switch_guarded")
+        self.assertTrue(first["guarded"])
+        self.assertEqual(second["state"], "rebaselined_provider_switch")
+        self.assertFalse(second["uploaded"])
+        self.assertEqual(deliveries, [])
+        self.assertEqual(self.service.status()["baseline"]["provider"], "wer_api")
+        self.assertEqual(self.service.status()["baseline"]["file_count"], 2)
+
+    async def test_equivalent_provider_switch_does_not_create_false_update(self) -> None:
+        fake = FakeDirectoryResolver([resolved("A.zip", "1")], provider="lanzou_web")
+        self.service.directory_resolver = fake
+        deliveries: list[dict] = []
+        self.service._deliver = lambda payload: deliveries.append(payload) or {"ok": True, "uploaded": True}
+        await self.service.check_once()
+
+        fake.provider = "wer_api"
+        result = await self.service.check_once()
+        self.assertEqual(result["state"], "baseline_updated")
+        self.assertEqual(deliveries, [])
+        self.assertEqual(self.service.status()["baseline"]["provider"], "wer_api")
 
     async def test_removal_only_updates_baseline_without_upload(self) -> None:
         fake = FakeDirectoryResolver([resolved("A.zip", "1"), resolved("B.zip", "1")])
