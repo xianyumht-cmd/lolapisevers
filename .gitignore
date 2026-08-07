@@ -41,3 +41,5 @@ pip
 /ui_control.generated.js
 /ui_lolban_console.generated.js
 /ui_parser_center.generated.js
+data/target-file-watch-state.json
+config/target-file-watch.json

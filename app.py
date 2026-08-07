@@ -31,6 +31,7 @@ from routers.lolban import router as lolban_router
 from routers.query_admin import router as query_admin_router
 from routers.query_observability import router as query_observability_router
 from routers.shard_query import router as shard_query_router
+from routers.target_file_watch import router as target_file_watch_router
 
 
 def build_app() -> FastAPI:
@@ -61,6 +62,7 @@ def build_app() -> FastAPI:
     app.include_router(lolban_router)
     app.include_router(groupguard_delivery_router)
     app.include_router(query_observability_router)
+    app.include_router(target_file_watch_router)
     app.include_router(query_admin_router)
 
     logger.info("API routers mounted without legacy_app dependency")
