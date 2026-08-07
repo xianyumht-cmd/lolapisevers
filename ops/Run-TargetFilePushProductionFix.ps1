@@ -8,6 +8,7 @@ Set-StrictMode -Version 2.0
 
 $ExpectedTargetCommit = "acc6ad2f4e0f47d84d6e9ceb916f400f9782b2a2"
 $ExpectedPackagePrefix = "LOLDataSystem-full-bug-repair-safe-deploy-acc6ad2f4e0f-py311-py314-winps51-v3"
+$LauncherScriptPath = $PSCommandPath
 
 function Test-Administrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -16,10 +17,13 @@ function Test-Administrator {
 }
 
 function Restart-AsAdministrator {
+    if (-not $LauncherScriptPath) {
+        throw "Unable to resolve launcher script path for administrator elevation."
+    }
     $arguments = @(
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
-        "-File", ('"' + $MyInvocation.MyCommand.Path + '"'),
+        "-File", ('"' + $LauncherScriptPath + '"'),
         "-ProjectRoot", ('"' + $ProjectRoot + '"'),
         "-ServiceName", ('"' + $ServiceName + '"')
     )
