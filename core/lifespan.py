@@ -3,6 +3,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from services.target_file_watch_service import target_file_watch_service
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -14,9 +16,19 @@ async def lifespan(app: FastAPI):
             await client.init_browser()
     except Exception as exc:
         logger.error("startup browser init failed: %s", exc)
-    yield
     try:
-        if client is not None:
-            await client.close_browser()
+        await target_file_watch_service.start()
     except Exception as exc:
-        logger.error("shutdown browser close failed: %s", exc)
+        logger.error("startup target file watch failed: %s", type(exc).__name__)
+    try:
+        yield
+    finally:
+        try:
+            await target_file_watch_service.stop()
+        except Exception as exc:
+            logger.error("shutdown target file watch failed: %s", type(exc).__name__)
+        try:
+            if client is not None:
+                await client.close_browser()
+        except Exception as exc:
+            logger.error("shutdown browser close failed: %s", exc)
