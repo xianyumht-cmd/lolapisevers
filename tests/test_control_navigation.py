@@ -7,7 +7,7 @@ from lanzou_update_push_api_server.control_navigation import (
     apply_control_navigation,
     select_parser_center_section,
 )
-from lanzou_update_push_api_server.control_ui import render_overview_page
+from lanzou_update_push_api_server.control_ui import render_overview_page, render_target_file_watch_page
 from lanzou_update_push_api_server.lolban_console import render_lolban_console_page
 from lanzou_update_push_api_server.parser_center_ui_guard import render_parser_center_page
 from lanzou_update_push_api_server.server import _control_page
@@ -30,6 +30,12 @@ class ControlNavigationTests(unittest.TestCase):
         self.assertNotIn('旧版入口', page)
         self.assertNotIn('旧版控制台', page)
         self.assertNotIn('control-navigation-style', page)
+
+    def test_target_file_watch_page_marks_new_navigation_active(self):
+        page = render_target_file_watch_page()
+        self.assertIn('data-console-ui="target-file-watch"', page)
+        self.assertIn('href="/target-file-watch" class="nav-link is-active" aria-current="page"', page)
+        self.assertIn('定向文件监控', page)
 
     def test_root_is_not_wrapped_by_legacy_navigation_injector(self):
         old_page = _control_page()
