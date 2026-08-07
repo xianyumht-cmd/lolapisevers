@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from services.target_file_watch_service import target_file_watch_service
+from services.target_file_watch_runtime import target_file_watch_service
 
 
 @asynccontextmanager
