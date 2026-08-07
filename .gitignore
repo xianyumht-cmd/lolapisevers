@@ -11,6 +11,7 @@ fid/
 
 data/image-cache/
 data/upstream_snapshots/
+data/target-file-watch-state.json
 /data/*.db
 
 .so1_state.json
@@ -23,6 +24,7 @@ ops/app_env.local.ps1
 build-info.json
 
 /config/interface-parser-center.json
+/config/target-file-watch.json
 lanzou_update_push_api_server/config.json
 lanzou_update_push_api_server/state.json
 lanzou_update_push_api_server/*.tmp
