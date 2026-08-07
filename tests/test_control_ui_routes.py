@@ -30,6 +30,7 @@ class ControlUiRouteTests(unittest.TestCase):
                 lanzou_config = client.get("/lanzou/config")
                 watchers = client.get("/lanzou/watchers")
                 targets = client.get("/lanzou/targets")
+                target_file_watch = client.get("/target-file-watch")
                 debugger = client.get("/api-debugger")
                 logs = client.get("/logs")
                 diagnostics = client.get("/diagnostics")
@@ -40,6 +41,7 @@ class ControlUiRouteTests(unittest.TestCase):
                 script = client.get("/control-assets/console.js")
                 operations_script = client.get("/control-assets/operations.js")
                 configuration_script = client.get("/control-assets/configuration.js")
+                target_watch_script = client.get("/control-assets/target-file-watch.js")
                 icons = client.get("/control-assets/icons.svg")
                 legacy = client.get("/legacy-ui")
                 legacy_tab = client.get("/?tab=logs", follow_redirects=False)
@@ -48,12 +50,15 @@ class ControlUiRouteTests(unittest.TestCase):
         self.assertIn('data-console-ui="p0"', root.text)
         self.assertIn('/control-assets/console.js', root.text)
         self.assertIn('id="adminTokenDialog"', root.text)
+        self.assertIn('/target-file-watch', root.text)
+        self.assertIn('定向文件监控', root.text)
 
         for response, marker in (
             (main_config, 'data-console-ui="main-config"'),
             (lanzou_config, 'data-console-ui="lanzou-config"'),
             (watchers, 'data-console-ui="watchers"'),
             (targets, 'data-console-ui="targets"'),
+            (target_file_watch, 'data-console-ui="target-file-watch"'),
             (debugger, 'data-console-ui="api-debugger"'),
             (logs, 'data-console-ui="logs"'),
             (diagnostics, 'data-console-ui="diagnostics"'),
@@ -64,10 +69,16 @@ class ControlUiRouteTests(unittest.TestCase):
             if marker in {'data-console-ui="logs"', 'data-console-ui="diagnostics"', 'data-console-ui="system"'}:
                 self.assertIn('/control-assets/operations.js', response.text)
                 self.assertIn('/control-assets/operations.css', response.text)
+            elif marker == 'data-console-ui="target-file-watch"':
+                self.assertIn('/control-assets/target-file-watch.js', response.text)
+                self.assertNotIn('/control-assets/configuration.js', response.text)
+                self.assertNotIn('/control-assets/console.js', response.text)
+                self.assertIn('配置源：GroupGuard 6108', response.text)
+                self.assertIn('targetWatchRebaselineDialog', response.text)
             else:
                 self.assertIn('/control-assets/configuration.js', response.text)
                 self.assertIn('/control-assets/configuration.css', response.text)
-            self.assertNotIn('/control-assets/console.js', response.text)
+                self.assertNotIn('/control-assets/console.js', response.text)
 
         self.assertEqual(css.status_code, 200)
         self.assertIn('"Microsoft YaHei UI"', css.text)
@@ -84,6 +95,11 @@ class ControlUiRouteTests(unittest.TestCase):
         self.assertIn('/admin/main-config', configuration_script.text)
         self.assertIn('/admin/invoke', configuration_script.text)
         self.assertIn('/admin/service/restart', operations_script.text)
+        self.assertEqual(target_watch_script.status_code, 200)
+        self.assertIn('/admin/target-file-watch', target_watch_script.text)
+        self.assertIn('/admin/target-file-watch/check', target_watch_script.text)
+        self.assertIn('/admin/target-file-watch/rebaseline', target_watch_script.text)
+        self.assertIn('sessionStorage', target_watch_script.text)
         self.assertEqual(icons.status_code, 200)
         self.assertIn('icon-dashboard', icons.text)
         self.assertIn('icon-tool', icons.text)
@@ -106,6 +122,7 @@ class ControlUiRouteTests(unittest.TestCase):
                 lanzou_config = client.get("/lanzou/config")
                 watchers = client.get("/lanzou/watchers")
                 targets = client.get("/lanzou/targets")
+                target_file_watch = client.get("/target-file-watch")
                 debugger = client.get("/api-debugger")
                 logs = client.get("/logs")
                 diagnostics = client.get("/diagnostics")
@@ -116,6 +133,7 @@ class ControlUiRouteTests(unittest.TestCase):
                 script = client.get("/control-assets/console.js")
                 operations_script = client.get("/control-assets/operations.js")
                 configuration_script = client.get("/control-assets/configuration.js")
+                target_watch_script = client.get("/control-assets/target-file-watch.js")
                 icons = client.get("/control-assets/icons.svg")
                 protected = client.get("/admin/logs")
                 authorized = client.get(
@@ -123,7 +141,26 @@ class ControlUiRouteTests(unittest.TestCase):
                     headers={"x-admin-token": "configured-token"},
                 )
 
-        for response in (root, main_config, lanzou_config, watchers, targets, debugger, logs, diagnostics, system, css, operations_css, configuration_css, script, operations_script, configuration_script, icons):
+        for response in (
+            root,
+            main_config,
+            lanzou_config,
+            watchers,
+            targets,
+            target_file_watch,
+            debugger,
+            logs,
+            diagnostics,
+            system,
+            css,
+            operations_css,
+            configuration_css,
+            script,
+            operations_script,
+            configuration_script,
+            target_watch_script,
+            icons,
+        ):
             self.assertEqual(response.status_code, 200)
         self.assertEqual(protected.status_code, 401)
         self.assertEqual(authorized.status_code, 200)
