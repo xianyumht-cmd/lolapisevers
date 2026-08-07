@@ -1,0 +1,145 @@
+name: Build target file direct current-history hotfix
+
+on:
+  pull_request:
+    branches:
+      - fix/target-file-direct-current-20260808
+
+jobs:
+  build-current-hotfix:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      BASE_COMMIT: af5baa43b484748ffd159e4495f85f8231fb139f
+      TARGET_COMMIT: 9f5618bd375f96c217b42672480f01eb4cb26a3e
+      PACKAGE_REF: refs/heads/package-target-file-direct-current
+
+    steps:
+      - name: Checkout builder branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Verify immutable hotfix ancestry and file scope
+        shell: pwsh
+        run: |
+          git cat-file -e "$env:BASE_COMMIT^{commit}"
+          if ($LASTEXITCODE -ne 0) { throw "Base commit is unavailable." }
+          git cat-file -e "$env:TARGET_COMMIT^{commit}"
+          if ($LASTEXITCODE -ne 0) { throw "Target commit is unavailable." }
+          git merge-base --is-ancestor $env:BASE_COMMIT $env:TARGET_COMMIT
+          if ($LASTEXITCODE -ne 0) { throw "Target is not a descendant of the recorded current production base." }
+          $changed = @(git diff --name-only $env:BASE_COMMIT $env:TARGET_COMMIT)
+          $expected = @(
+            "services/target_file_watch_directory.py",
+            "tests/test_target_file_watch_direct_current.py"
+          )
+          if (($changed -join "`n") -ne ($expected -join "`n")) {
+            throw "Unexpected hotfix file scope: $($changed -join ', ')"
+          }
+          git diff --check $env:BASE_COMMIT $env:TARGET_COMMIT
+          if ($LASTEXITCODE -ne 0) { throw "Hotfix diff check failed." }
+
+      - name: Install current-branch dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Test immutable hotfix target
+        shell: pwsh
+        run: |
+          $candidate = Join-Path $env:RUNNER_TEMP "target-file-direct-current-candidate"
+          git worktree add --detach $candidate $env:TARGET_COMMIT
+          if ($LASTEXITCODE -ne 0) { throw "Unable to create immutable candidate worktree." }
+          try {
+            Push-Location $candidate
+            python -m py_compile services/target_file_watch_directory.py
+            if ($LASTEXITCODE -ne 0) { throw "Direct resolver module compile failed." }
+            python -m unittest discover -s tests -p "test_target_file_watch_direct_current.py" -v
+            if ($LASTEXITCODE -ne 0) { throw "Direct resolver regression tests failed." }
+          } finally {
+            Pop-Location
+            git worktree remove --force $candidate
+          }
+
+      - name: Validate launcher with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $launcher = Join-Path $pwd "ops\Run-TargetFileDirectCurrentHotfix.ps1"
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+              $launcher,
+              [ref]$tokens,
+              [ref]$errors
+          ) | Out-Null
+          if ($errors -and $errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error $_.Message }
+              exit 1
+          }
+          $text = Get-Content -LiteralPath $launcher -Raw -Encoding UTF8
+          foreach ($marker in @(
+              "Actual production HEAD",
+              "Production was not stopped or changed",
+              "target-file-watch.json",
+              "target-file-watch-state.json",
+              "worktree add --detach",
+              "Do NOT rebaseline",
+              "checkout --detach"
+          )) {
+              if (-not $text.Contains($marker)) { throw "Launcher safety marker missing: $marker" }
+          }
+          Write-Host "Windows PowerShell 5.1 parsed hotfix launcher successfully."
+
+      - name: Build prerequisite-aware Git bundle and metadata
+        shell: pwsh
+        run: |
+          $dist = Join-Path $pwd "dist-target-file-direct-current"
+          New-Item -ItemType Directory -Path $dist -Force | Out-Null
+          git branch -f package-target-file-direct-current $env:TARGET_COMMIT
+          if ($LASTEXITCODE -ne 0) { throw "Unable to create package ref." }
+          $bundle = Join-Path $dist "target-file-direct-current-hotfix.bundle"
+          git bundle create $bundle $env:PACKAGE_REF "^$env:BASE_COMMIT"
+          if ($LASTEXITCODE -ne 0) { throw "Unable to create hotfix bundle." }
+          git bundle verify $bundle
+          if ($LASTEXITCODE -ne 0) { throw "Hotfix bundle verification failed." }
+          $heads = @(git bundle list-heads $bundle)
+          if ($heads.Count -ne 1 -or -not $heads[0].StartsWith($env:TARGET_COMMIT + " ")) {
+              throw "Hotfix bundle advertised target mismatch."
+          }
+          $bundleHash = (Get-FileHash -LiteralPath $bundle -Algorithm SHA256).Hash.ToLowerInvariant()
+          $metadata = [ordered]@{
+              schema = "target-file-direct-current-hotfix.v1"
+              base_commit = $env:BASE_COMMIT
+              target_commit = $env:TARGET_COMMIT
+              package_ref = $env:PACKAGE_REF
+              bundle_sha256 = $bundleHash
+              changed_files = @(
+                  "services/target_file_watch_directory.py",
+                  "tests/test_target_file_watch_direct_current.py"
+              )
+          }
+          [System.IO.File]::WriteAllText(
+              (Join-Path $dist "target-file-direct-current-hotfix.metadata.json"),
+              ($metadata | ConvertTo-Json -Depth 5),
+              (New-Object System.Text.UTF8Encoding($false))
+          )
+          Copy-Item -LiteralPath "ops\Run-TargetFileDirectCurrentHotfix.ps1" -Destination $dist -Force
+          Copy-Item -LiteralPath "ops\RUN-TARGET-FILE-DIRECT-CURRENT-HOTFIX.cmd" -Destination $dist -Force
+          Get-Content (Join-Path $dist "target-file-direct-current-hotfix.metadata.json") -Raw
+
+      - name: Upload current-history hotfix
+        uses: actions/upload-artifact@v4
+        with:
+          name: LOLDataSystem-target-file-direct-current-hotfix
+          path: dist-target-file-direct-current/*
+          if-no-files-found: error
+          retention-days: 14
