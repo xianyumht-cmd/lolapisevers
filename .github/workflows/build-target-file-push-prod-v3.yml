@@ -80,7 +80,7 @@ jobs:
                   exit 1
               }
           }
-          Write-Host "Windows PowerShell 5.1 parsed $($files.Count) scripts successfully."
+          Write-Host "Windows PowerShell 5.1 parsed $($files.Count) target scripts successfully."
 
       - name: Audit immutable target dependencies
         shell: pwsh
@@ -129,6 +129,42 @@ jobs:
           }
           Get-Content $metadataFile.FullName -Raw
 
+      - name: Validate one-click safety launcher with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $launcher = Join-Path $pwd "ops\Run-TargetFilePushProductionFix.ps1"
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+              $launcher,
+              [ref]$tokens,
+              [ref]$errors
+          ) | Out-Null
+          if ($errors -and $errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error $_.Message }
+              exit 1
+          }
+          $text = Get-Content -LiteralPath $launcher -Raw -Encoding UTF8
+          foreach ($marker in @(
+              "target-file-watch.json",
+              "target-file-watch-state.json",
+              "Deployment ZIP SHA-256 verified",
+              "Restore-SafetyFiles",
+              "Do NOT rebaseline"
+          )) {
+              if (-not $text.Contains($marker)) { throw "Safety launcher marker is missing: $marker" }
+          }
+          if (-not (Test-Path -LiteralPath "ops\RUN-TARGET-FILE-FIX.cmd" -PathType Leaf)) {
+              throw "One-click CMD launcher is missing."
+          }
+          Write-Host "One-click safety launcher parsed successfully."
+
+      - name: Stage one-click launchers
+        shell: pwsh
+        run: |
+          Copy-Item -LiteralPath "ops\Run-TargetFilePushProductionFix.ps1" -Destination "dist-target-file-v3\Run-TargetFilePushProductionFix.ps1" -Force
+          Copy-Item -LiteralPath "ops\RUN-TARGET-FILE-FIX.cmd" -Destination "dist-target-file-v3\RUN-TARGET-FILE-FIX.cmd" -Force
+
       - name: Upload target file production V3 package
         uses: actions/upload-artifact@v4
         with:
@@ -136,5 +172,7 @@ jobs:
           path: |
             dist-target-file-v3/*.zip
             dist-target-file-v3/*.metadata.json
+            dist-target-file-v3/*.ps1
+            dist-target-file-v3/*.cmd
           if-no-files-found: error
           retention-days: 14
