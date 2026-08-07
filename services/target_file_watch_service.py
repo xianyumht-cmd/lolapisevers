@@ -13,14 +13,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
-from lanzou_update_push_api_server.config import WatcherConfig, load_config as load_lanzou_provider_config
-from lanzou_update_push_api_server.providers import (
-    FileEntry,
-    ProviderChain,
-    WerApiProvider,
-    canonical_file_key,
-    utc_now_iso,
-)
+from lanzou_update_push_api_server.providers import FileEntry, utc_now_iso
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -205,73 +198,17 @@ def _direct_candidates(file: FileEntry) -> list[str]:
     return output
 
 
-class LanzouTargetFileResolver:
-    """Reuse the existing Lanzou providers without using monitor watchers/state."""
-
-    def _watcher(self, source_url: str) -> WatcherConfig:
-        return WatcherConfig(
-            id="target-file-watch",
-            title="target-file-watch",
-            url=source_url,
-            enabled=True,
-            max_pages=2,
-        )
-
-    def resolve_metadata(self, source_url: str) -> ResolvedTargetFile:
-        provider_config = load_lanzou_provider_config()
-        watcher = self._watcher(source_url)
-        snapshot = ProviderChain(provider_config).fetch(watcher)
-        target = _choose_target_file(source_url, snapshot.files)
-        return ResolvedTargetFile(
-            fingerprint=_file_fingerprint(target),
-            stable_id=str(target.id or "").split("?", 1)[0].split("#", 1)[0],
-            name=str(target.name or "").strip() or "download.bin",
-            size=str(target.size or "").strip(),
-            modified_time=str(target.modified_time or "").strip(),
-            share_link=str(target.link or source_url).strip(),
-            provider=str(snapshot.provider or "").strip(),
-        )
-
-    def resolve_for_delivery(self, source_url: str, fingerprint: str) -> ResolvedTargetFile:
-        metadata = self.resolve_metadata(source_url)
-        if metadata.fingerprint != fingerprint:
-            raise TargetFileWatchError("源文件在投递前再次变化，旧事件已失效")
-
-        provider_config = load_lanzou_provider_config()
-        watcher = self._watcher(source_url)
-
-        try:
-            resolved_snapshot = WerApiProvider().fetch(watcher, provider_config)
-            wanted_key = canonical_file_key(
-                FileEntry(
-                    id=metadata.stable_id,
-                    name=metadata.name,
-                    size=metadata.size,
-                    modified_time=metadata.modified_time,
-                    link=metadata.share_link,
-                )
-            )
-            matches = [item for item in resolved_snapshot.files if canonical_file_key(item) == wanted_key]
-            candidate_file = matches[0] if len(matches) == 1 else _choose_target_file(source_url, resolved_snapshot.files)
-            for candidate in _direct_candidates(candidate_file):
-                if _stable_url(candidate) == _stable_url(source_url):
-                    continue
-                return ResolvedTargetFile(**{**asdict(metadata), "direct_url": candidate})
-        except Exception as exc:
-            logging.getLogger("LOLDataSystem.TargetFileWatch").warning(
-                "fresh Lanzou direct-url resolution failed: %s",
-                type(exc).__name__,
-            )
-
-        raise TargetFileWatchError(
-            "未取得可下载直链；请确认现有蓝奏直链 Provider/API Key 配置可用"
-        )
-
-
 class TargetFileWatchService:
+    """Shared state, lifecycle and callback transport for target-file-watch.
+
+    Production directory resolution is supplied by SafeTargetFileWatchService;
+    this base class intentionally does not instantiate the legacy Lanzou provider
+    chain at import time.
+    """
+
     def __init__(self) -> None:
         self.logger = logging.getLogger("LOLDataSystem.TargetFileWatch")
-        self.resolver = LanzouTargetFileResolver()
+        self.resolver: Any = None
         self._config = TargetFileWatchConfig()
         self._state: dict[str, Any] = self._empty_state()
         self._task: asyncio.Task[None] | None = None
@@ -424,6 +361,8 @@ class TargetFileWatchService:
             self._load_config()
             if not self._config.enabled:
                 return {"ok": False, "skipped": True, "error": "target_file_watch_disabled"}
+            if self.resolver is None:
+                raise TargetFileWatchError("target_file_resolver_unavailable")
 
             now = utc_now_iso()
             try:
@@ -529,6 +468,3 @@ class TargetFileWatchService:
             "deduplicated": body.get("deduplicated") is True,
             "cleanup_pending": body.get("cleanupPending") is True,
         }
-
-
-target_file_watch_service = TargetFileWatchService()
