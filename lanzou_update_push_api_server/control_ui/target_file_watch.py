@@ -42,7 +42,7 @@ def render_target_file_watch_page() -> str:
     </header>
     <div class="service-list">
       <div class="service-row">
-        <div class="service-name"><span class="service-symbol">{icon('link')}</span><div><strong>蓝奏目录</strong><small id="targetWatchSourceUrl">读取中</small></div></div>
+        <div class="service-name"><span class="service-symbol">{icon('radar')}</span><div><strong>蓝奏目录</strong><small id="targetWatchSourceUrl">读取中</small></div></div>
         <span class="badge badge-neutral" id="targetWatchInterval">读取中</span>
         <span class="service-message">配置源：GroupGuard 6108</span>
       </div>
@@ -108,7 +108,7 @@ def render_target_file_watch_page() -> str:
     <footer class="dialog-footer">
       <span class="dialog-footer-spacer"></span>
       <button class="button button-secondary" id="targetWatchRebaselineCancel" type="button">取消</button>
-      <button class="button button-danger" id="targetWatchRebaselineConfirm" type="button">确认重新建立基线</button>
+      <button class="button button-danger-ghost" id="targetWatchRebaselineConfirm" type="button">确认重新建立基线</button>
     </footer>
   </div>
 </dialog>
