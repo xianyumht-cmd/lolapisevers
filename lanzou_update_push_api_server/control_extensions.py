@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from fastapi import FastAPI, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -21,6 +21,7 @@ from .control_ui import (
     render_main_config_page,
     render_overview_page,
     render_system_page,
+    render_target_file_watch_page,
     render_targets_page,
     render_watchers_page,
 )
@@ -38,6 +39,12 @@ from .parser_center_retry_admin import install_parser_center_retry_routes
 from .parser_center_ui_guard import render_parser_center_page as render_guarded_parser_center_page
 from .security import security_status
 from .state_recovery import recover_state_file
+from .target_file_watch_admin import (
+    TargetFileWatchAdminError,
+    check_target_file_watch_now,
+    read_target_file_watch_overview,
+    rebaseline_target_file_watch,
+)
 
 
 _NEW_CONTROL_PATHS = {"/", "/ui"}
@@ -145,6 +152,10 @@ def install_control_extensions(app: FastAPI, service) -> None:
     async def lanzou_targets_page() -> str:
         return render_targets_page()
 
+    @app.get("/target-file-watch", response_class=HTMLResponse, include_in_schema=False)
+    async def target_file_watch_page() -> str:
+        return render_target_file_watch_page()
+
     @app.get("/api-debugger", response_class=HTMLResponse, include_in_schema=False)
     async def api_debugger_page() -> str:
         return render_debugger_page()
@@ -216,6 +227,36 @@ def install_control_extensions(app: FastAPI, service) -> None:
     @app.get("/security/status")
     async def get_security_status() -> dict[str, object]:
         return security_status()
+
+    @app.get("/admin/target-file-watch")
+    async def admin_target_file_watch() -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(
+                read_target_file_watch_overview,
+                app.state.main_base_url,
+            )
+        except TargetFileWatchAdminError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    @app.post("/admin/target-file-watch/check")
+    async def admin_target_file_watch_check() -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(
+                check_target_file_watch_now,
+                app.state.main_base_url,
+            )
+        except TargetFileWatchAdminError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    @app.post("/admin/target-file-watch/rebaseline")
+    async def admin_target_file_watch_rebaseline() -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(
+                rebaseline_target_file_watch,
+                app.state.main_base_url,
+            )
+        except TargetFileWatchAdminError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     @app.get("/image-cache", response_class=HTMLResponse)
     async def image_cache_page() -> str:

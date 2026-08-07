@@ -23,6 +23,7 @@ _NAVIGATION_GROUPS = (
             ("lanzou-config", "/lanzou/config", "全局配置", "settings"),
             ("watchers", "/lanzou/watchers", "监控项目", "radar"),
             ("targets", "/lanzou/targets", "通知目标", "bell"),
+            ("target-file-watch", "/target-file-watch", "定向文件监控", "workflow"),
         ),
     ),
     (

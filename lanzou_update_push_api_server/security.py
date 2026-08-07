@@ -16,6 +16,7 @@ PUBLIC_PATHS = {
     "/lanzou/config",
     "/lanzou/watchers",
     "/lanzou/targets",
+    "/target-file-watch",
     "/api-debugger",
     "/logs",
     "/diagnostics",

@@ -17,6 +17,7 @@ from lanzou_update_push_api_server.control_ui import (
     render_main_config_page,
     render_overview_page,
     render_system_page,
+    render_target_file_watch_page,
     render_targets_page,
     render_watchers_page,
 )
@@ -39,6 +40,8 @@ try:
     operations_script = operations_script_path.read_text(encoding="utf-8")
     configuration_script_path = ASSET_DIRECTORY / "configuration.js"
     configuration_script = configuration_script_path.read_text(encoding="utf-8")
+    target_watch_script_path = ASSET_DIRECTORY / "target-file-watch.js"
+    target_watch_script = target_watch_script_path.read_text(encoding="utf-8")
     console_css = (ASSET_DIRECTORY / "console.css").read_text(encoding="utf-8")
     operations_css = (ASSET_DIRECTORY / "operations.css").read_text(encoding="utf-8")
     configuration_css = (ASSET_DIRECTORY / "configuration.css").read_text(encoding="utf-8")
@@ -50,6 +53,7 @@ try:
     lanzou_config_html = render_lanzou_config_page()
     watchers_html = render_watchers_page()
     targets_html = render_targets_page()
+    target_watch_html = render_target_file_watch_page()
     debugger_html = render_debugger_page()
     lolban_html = render_lolban_console_page()
     parser_center_html = render_parser_center_page()
@@ -69,6 +73,7 @@ required_overview_markers = [
     'href="/logs"',
     'href="/diagnostics"',
     'href="/system"',
+    'href="/target-file-watch"',
 ]
 overview_missing = [marker for marker in required_overview_markers if marker not in html]
 if overview_missing:
@@ -119,6 +124,30 @@ for name, (page_html, markers) in configuration_pages.items():
     if "/control-assets/console.js" in page_html:
         raise SystemExit(f"{name} page incorrectly loads overview-only JavaScript")
 
+required_target_watch_markers = [
+    "定向文件监控",
+    'data-console-ui="target-file-watch"',
+    "/control-assets/target-file-watch.js",
+    "配置源：GroupGuard 6108",
+    "targetWatchBaselineRows",
+    "targetWatchPendingList",
+    "targetWatchRebaselineDialog",
+]
+target_watch_missing = [marker for marker in required_target_watch_markers if marker not in target_watch_html]
+if target_watch_missing:
+    raise SystemExit(f"target file watch page is missing required controls: {target_watch_missing}")
+if "/control-assets/console.js" in target_watch_html or "/control-assets/configuration.js" in target_watch_html:
+    raise SystemExit("target file watch page loads unrelated overview/configuration JavaScript")
+
+required_target_watch_endpoints = [
+    "/admin/target-file-watch",
+    "/admin/target-file-watch/check",
+    "/admin/target-file-watch/rebaseline",
+]
+target_watch_endpoint_missing = [marker for marker in required_target_watch_endpoints if marker not in target_watch_script]
+if target_watch_endpoint_missing:
+    raise SystemExit(f"target file watch JavaScript is missing endpoints: {target_watch_endpoint_missing}")
+
 required_configuration_endpoints = [
     "/admin/main-config",
     "/admin/lanzou-config",
@@ -150,7 +179,12 @@ if operations_missing:
     raise SystemExit(f"operations JavaScript is missing endpoints: {operations_missing}")
 
 for forbidden in ("alert(", "confirm(", "prompt("):
-    if forbidden in console_script or forbidden in operations_script or forbidden in configuration_script:
+    if (
+        forbidden in console_script
+        or forbidden in operations_script
+        or forbidden in configuration_script
+        or forbidden in target_watch_script
+    ):
         raise SystemExit(f"new control UI contains forbidden browser interaction: {forbidden}")
 for forbidden in ("radial-gradient", "linear-gradient", "backdrop-filter"):
     if forbidden in console_css or forbidden in operations_css or forbidden in configuration_css:
@@ -241,12 +275,14 @@ parser_path = Path("ui_parser_center.generated.js")
 parser_path.write_text(parser_script, encoding="utf-8")
 subprocess.run(["node", "--check", str(operations_script_path)], check=True)
 subprocess.run(["node", "--check", str(configuration_script_path)], check=True)
+subprocess.run(["node", "--check", str(target_watch_script_path)], check=True)
 subprocess.run(["node", "--check", str(lolban_path)], check=True)
 subprocess.run(["node", "--check", str(parser_path)], check=True)
 print(
     "wrote "
     f"{len(console_script)} new-console JavaScript characters, validated "
-    f"{len(operations_script)} operations and {len(configuration_script)} configuration JavaScript characters, and wrote "
+    f"{len(operations_script)} operations, {len(configuration_script)} configuration, and "
+    f"{len(target_watch_script)} target-file-watch JavaScript characters, and wrote "
     f"{len(lolban_script)} lolban-console and "
     f"{len(parser_script)} parser-center JavaScript characters for syntax validation"
 )
