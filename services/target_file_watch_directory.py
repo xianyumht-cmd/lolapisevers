@@ -4,11 +4,19 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 from dataclasses import asdict, dataclass
-from typing import Any, TYPE_CHECKING
+from pathlib import Path
+from typing import Any, Callable, TYPE_CHECKING
 
-from lanzou_update_push_api_server.config import WatcherConfig, load_config as load_lanzou_provider_config
-from lanzou_update_push_api_server.providers import FileEntry, ProviderChain, WerApiProvider, canonical_file_key, utc_now_iso
+from lanzou_update_push_api_server.config import WatcherConfig
+from lanzou_update_push_api_server.providers import (
+    FileEntry,
+    LanzouWebProvider,
+    WerApiProvider,
+    canonical_file_key,
+    utc_now_iso,
+)
 from services.target_file_watch_service import (
     SCHEMA,
     ResolvedTargetFile,
@@ -21,6 +29,77 @@ from services.target_file_watch_service import (
 
 if TYPE_CHECKING:
     from services.target_file_watch_runtime import SafeTargetFileWatchService
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_WER_ENDPOINT = "https://api2.wer.plus/api/lanzpro"
+
+
+@dataclass(frozen=True)
+class TargetFileWatchProviderConfig:
+    """Provider settings owned by target-file-watch, not the legacy monitor."""
+
+    wer_api_endpoint: str = DEFAULT_WER_ENDPOINT
+    wer_api_method: str = "GET"
+    wer_api_url_param: str = "url"
+    wer_api_password_param: str = "pwd"
+    wer_api_key: str = ""
+
+
+def _load_legacy_provider_defaults() -> dict[str, Any]:
+    """Read compatible defaults without importing the legacy AppConfig object."""
+
+    raw_path = str(os.getenv("LANZOU_MONITOR_CONFIG") or "").strip()
+    path = Path(raw_path).expanduser() if raw_path else PROJECT_ROOT / "lanzou_update_push_api_server" / "config.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError, TypeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def load_target_file_watch_provider_config() -> TargetFileWatchProviderConfig:
+    """Load target-file resolver settings with backward-compatible secret reuse.
+
+    The target-file feature owns its provider strategy. Existing LANZOU_API_KEY
+    remains a fallback so production does not need a duplicate secret.
+    """
+
+    raw = _load_legacy_provider_defaults()
+    method = str(
+        os.getenv("TARGET_FILE_WATCH_WER_METHOD")
+        or raw.get("wer_api_method")
+        or "GET"
+    ).strip().upper()
+    if method not in {"GET", "POST"}:
+        method = "GET"
+    return TargetFileWatchProviderConfig(
+        wer_api_endpoint=str(
+            os.getenv("TARGET_FILE_WATCH_WER_ENDPOINT")
+            or raw.get("wer_api_endpoint")
+            or DEFAULT_WER_ENDPOINT
+        ).strip(),
+        wer_api_method=method,
+        wer_api_url_param=str(
+            os.getenv("TARGET_FILE_WATCH_WER_URL_PARAM")
+            or raw.get("wer_api_url_param")
+            or "url"
+        ).strip()
+        or "url",
+        wer_api_password_param=str(
+            os.getenv("TARGET_FILE_WATCH_WER_PASSWORD_PARAM")
+            or raw.get("wer_api_password_param")
+            or "pwd"
+        ).strip()
+        or "pwd",
+        wer_api_key=str(
+            os.getenv("TARGET_FILE_WATCH_WER_KEY")
+            or os.getenv("LANZOU_API_KEY")
+            or raw.get("wer_api_key")
+            or raw.get("api_key")
+            or ""
+        ).strip(),
+    )
 
 
 @dataclass(frozen=True)
@@ -52,7 +131,7 @@ def _hash_payload(payload: dict[str, Any]) -> str:
 
 
 def _provider_file_fingerprint(file: FileEntry) -> str:
-    """Reuse legacy monitor semantics for replacements within one provider."""
+    """Reuse legacy provider field semantics only for one provider snapshot."""
     return _hash_payload(file.fingerprint_payload())
 
 
@@ -68,14 +147,74 @@ def _event_fingerprint(item: DirectoryResolvedFile, *, same_provider: bool) -> s
     return item.file.fingerprint
 
 
-class DirectoryLanzouResolver:
-    """Resolve a Lanzou single-file share or folder into one safe snapshot.
+class TargetFileDirectResolver:
+    """Resolve one concrete Lanzou file share link into a fresh download URL."""
 
-    This intentionally reuses the existing Lanzou providers but owns no watcher,
-    event or state from the legacy Lanzou monitor service.
-    """
+    def __init__(
+        self,
+        *,
+        provider_config_loader: Callable[[], TargetFileWatchProviderConfig] = load_target_file_watch_provider_config,
+        provider: WerApiProvider | None = None,
+    ) -> None:
+        self._provider_config_loader = provider_config_loader
+        self._provider = provider or WerApiProvider()
+        self._logger = logging.getLogger("LOLDataSystem.TargetFileWatch")
 
-    def _watcher(self, source_url: str) -> WatcherConfig:
+    @staticmethod
+    def _watcher(share_link: str) -> WatcherConfig:
+        return WatcherConfig(
+            id="target-file-watch-direct",
+            title="target-file-watch-direct",
+            url=share_link,
+            enabled=True,
+            max_pages=1,
+        )
+
+    def resolve(self, share_link: str) -> str:
+        share_link = str(share_link or "").strip()
+        if not share_link:
+            raise TargetFileWatchError("目标文件缺少单文件分享链接，无法解析直链")
+
+        config = self._provider_config_loader()
+        try:
+            snapshot = self._provider.fetch(self._watcher(share_link), config)  # type: ignore[arg-type]
+        except Exception as exc:
+            self._logger.warning(
+                "target file direct-url provider failed: %s",
+                type(exc).__name__,
+            )
+            raise TargetFileWatchError("未取得可下载直链；请确认定向文件直链解析配置可用") from exc
+
+        source_key = _stable_url(share_link)
+        for entry in snapshot.files:
+            for candidate in _direct_candidates(entry):
+                if _stable_url(candidate) == source_key:
+                    continue
+                return candidate
+        raise TargetFileWatchError("未取得可下载直链；请确认定向文件直链解析配置可用")
+
+
+class TargetFileDirectoryResolver:
+    """Enumerate a Lanzou folder with a target-file-owned provider strategy."""
+
+    def __init__(
+        self,
+        *,
+        provider_config_loader: Callable[[], TargetFileWatchProviderConfig] = load_target_file_watch_provider_config,
+        native_provider: LanzouWebProvider | None = None,
+        fallback_provider: WerApiProvider | None = None,
+        direct_resolver: TargetFileDirectResolver | None = None,
+    ) -> None:
+        self._provider_config_loader = provider_config_loader
+        self._native_provider = native_provider or LanzouWebProvider()
+        self._fallback_provider = fallback_provider or WerApiProvider()
+        self.direct_resolver = direct_resolver or TargetFileDirectResolver(
+            provider_config_loader=provider_config_loader,
+        )
+        self._logger = logging.getLogger("LOLDataSystem.TargetFileWatch")
+
+    @staticmethod
+    def _watcher(source_url: str) -> WatcherConfig:
         return WatcherConfig(
             id="target-file-watch-directory",
             title="target-file-watch-directory",
@@ -96,13 +235,31 @@ class DirectoryLanzouResolver:
             provider=str(provider or "").strip(),
         )
 
-    def resolve_snapshot(self, source_url: str) -> DirectorySnapshot:
-        provider_config = load_lanzou_provider_config()
+    def _fetch_directory_snapshot(self, source_url: str):
+        config = self._provider_config_loader()
         watcher = self._watcher(source_url)
-        snapshot = ProviderChain(provider_config).fetch(watcher)
+        empty_snapshot = None
+        for provider in (self._native_provider, self._fallback_provider):
+            try:
+                snapshot = provider.fetch(watcher, config)  # type: ignore[arg-type]
+            except Exception as exc:
+                self._logger.warning(
+                    "target file directory provider failed: provider=%s error=%s",
+                    str(getattr(provider, "name", type(provider).__name__)),
+                    type(exc).__name__,
+                )
+                continue
+            if snapshot.files:
+                return snapshot
+            if empty_snapshot is None:
+                empty_snapshot = snapshot
+        if empty_snapshot is not None:
+            return empty_snapshot
+        raise TargetFileWatchError("蓝奏目录解析失败；为避免误判删除，本轮不推进 baseline")
+
+    def resolve_snapshot(self, source_url: str) -> DirectorySnapshot:
+        snapshot = self._fetch_directory_snapshot(source_url)
         if not snapshot.files:
-            # An empty upstream response can also be a challenge/anti-bot page.
-            # Never turn it into a destructive "all files removed" decision.
             raise TargetFileWatchError("蓝奏目录未解析到文件；为避免误判删除，本轮不推进 baseline")
 
         items: list[DirectoryResolvedFile] = []
@@ -128,26 +285,17 @@ class DirectoryLanzouResolver:
             raise TargetFileWatchError("目标文件在投递前再次变化，旧事件已失效")
         metadata = current[0].file
 
-        provider_config = load_lanzou_provider_config()
-        watcher = self._watcher(source_url)
-        try:
-            resolved_snapshot = WerApiProvider().fetch(watcher, provider_config)
-            matches = [item for item in resolved_snapshot.files if canonical_file_key(item) == key]
-            if len(matches) != 1:
-                raise TargetFileWatchError("直链 Provider 未唯一匹配到目标文件")
-            candidate_file = matches[0]
-            for candidate in _direct_candidates(candidate_file):
-                if _stable_url(candidate) == _stable_url(source_url):
-                    continue
-                return ResolvedTargetFile(**{**asdict(metadata), "direct_url": candidate})
-        except TargetFileWatchError:
-            raise
-        except Exception as exc:
-            logging.getLogger("LOLDataSystem.TargetFileWatch").warning(
-                "fresh Lanzou directory direct-url resolution failed: %s",
-                type(exc).__name__,
-            )
-        raise TargetFileWatchError("未取得可下载直链；请确认现有蓝奏直链 Provider/API Key 配置可用")
+        direct_url = self.direct_resolver.resolve(metadata.share_link)
+        if _stable_url(direct_url) in {
+            _stable_url(source_url),
+            _stable_url(metadata.share_link),
+        }:
+            raise TargetFileWatchError("直链解析返回了源分享链接，拒绝作为下载地址投递")
+        return ResolvedTargetFile(**{**asdict(metadata), "direct_url": direct_url})
+
+
+class DirectoryLanzouResolver(TargetFileDirectoryResolver):
+    pass
 
 
 def _file_state(item: DirectoryResolvedFile) -> dict[str, Any]:
@@ -212,7 +360,6 @@ def _provider_switch_guard(service: "SafeTargetFileWatchService", baseline: dict
 
     previous_signature = str(baseline.get("signature") or "").strip()
     if previous_signature and previous_signature == current.signature:
-        # Equivalent contents from a different provider are safe to accept.
         service._state.pop("provider_switch_guard", None)
         return None
 
@@ -273,8 +420,6 @@ async def check_directory_once(
             if guard is not None:
                 service._state["pending"] = None
                 if int(guard.get("seen_count") or 0) >= 2:
-                    # Match the legacy monitor's conservative provider-switch rule:
-                    # accept the new provider snapshot without sending ambiguous updates.
                     service._state["baseline"] = current_state
                     service._state.pop("provider_switch_guard", None)
                     service._save_state()
