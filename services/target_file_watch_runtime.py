@@ -6,6 +6,7 @@ import time
 from dataclasses import asdict
 from typing import Any
 
+from services.target_file_watch_directory import DirectoryLanzouResolver, check_directory_once
 from services.target_file_watch_service import (
     STATE_VERSION,
     TargetFileWatchError,
@@ -19,17 +20,17 @@ from services.target_file_watch_service import (
 
 
 class SafeTargetFileWatchService(TargetFileWatchService):
-    """Production wrapper that never guesses after persisted state corruption.
+    """Production target-file watcher with fail-safe persisted state handling.
 
-    The base service contains the feature state machine. This wrapper adds the
-    production invariants that malformed state cannot be silently replaced and
-    that every disabled-to-enabled transition starts from a fresh baseline.
+    The legacy Lanzou monitor remains untouched. This service reuses only the
+    provider/parser layer and keeps an independent directory snapshot baseline.
     """
 
     def __init__(self) -> None:
         self.state_healthy = True
         self.state_error_code = ""
         self.state_quarantine_file = ""
+        self.directory_resolver = DirectoryLanzouResolver()
         super().__init__()
 
     def _load_state(self) -> None:
@@ -93,7 +94,7 @@ class SafeTargetFileWatchService(TargetFileWatchService):
         self._load_state()
         if not self.state_healthy:
             raise TargetFileWatchError("target_file_watch_state_unavailable")
-        return await super().check_once()
+        return await check_directory_once(self, self.directory_resolver)
 
     def rebaseline(self) -> dict[str, Any]:
         path = _state_path()
