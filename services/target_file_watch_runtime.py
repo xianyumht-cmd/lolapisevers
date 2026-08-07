@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from pathlib import Path
+from dataclasses import asdict
 from typing import Any
 
 from services.target_file_watch_service import (
@@ -11,7 +11,10 @@ from services.target_file_watch_service import (
     TargetFileWatchError,
     TargetFileWatchService,
     _atomic_json_write,
+    _config_path,
+    _stable_url,
     _state_path,
+    normalize_config,
 )
 
 
@@ -19,10 +22,8 @@ class SafeTargetFileWatchService(TargetFileWatchService):
     """Production wrapper that never guesses after persisted state corruption.
 
     The base service contains the feature state machine. This wrapper adds the
-    production invariant that a malformed/unreadable state file cannot be
-    silently replaced with an empty state, because that could lose delivery
-    history and allow a duplicate upload. Recovery is explicit through the
-    authenticated rebaseline action, which quarantines the damaged state first.
+    production invariants that malformed state cannot be silently replaced and
+    that every disabled-to-enabled transition starts from a fresh baseline.
     """
 
     def __init__(self) -> None:
@@ -60,6 +61,23 @@ class SafeTargetFileWatchService(TargetFileWatchService):
         if not self.state_healthy:
             raise TargetFileWatchError("target_file_watch_state_unavailable")
         _atomic_json_write(_state_path(), self._state)
+
+    def save_config(self, value: Any) -> dict[str, Any]:
+        next_config = normalize_config(value)
+        previous = self._config
+        source_changed = _stable_url(previous.source_url) != _stable_url(next_config.source_url)
+        newly_enabled = next_config.enabled and not previous.enabled
+        needs_fresh_baseline = source_changed or newly_enabled
+        if needs_fresh_baseline and not self.state_healthy:
+            raise TargetFileWatchError("target_file_watch_state_unavailable")
+
+        _atomic_json_write(_config_path(), asdict(next_config))
+        self._config = next_config
+        if needs_fresh_baseline:
+            self._state = self._empty_state()
+            self._state["source_url"] = next_config.source_url
+            self._save_state()
+        return self.status()
 
     def status(self) -> dict[str, Any]:
         result = super().status()
