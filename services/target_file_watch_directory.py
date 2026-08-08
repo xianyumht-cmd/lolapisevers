@@ -129,22 +129,24 @@ class DirectoryLanzouResolver:
         metadata = current[0].file
 
         provider_config = load_lanzou_provider_config()
-        watcher = self._watcher(source_url)
+        # Delivery resolution must use the concrete file share link, never the
+        # watched folder URL. WER's single-file endpoint can then return a fresh
+        # download URL for exactly this pending file.
+        watcher = self._watcher(metadata.share_link)
         try:
             resolved_snapshot = WerApiProvider().fetch(watcher, provider_config)
-            matches = [item for item in resolved_snapshot.files if canonical_file_key(item) == key]
-            if len(matches) != 1:
-                raise TargetFileWatchError("直链 Provider 未唯一匹配到目标文件")
-            candidate_file = matches[0]
-            for candidate in _direct_candidates(candidate_file):
-                if _stable_url(candidate) == _stable_url(source_url):
-                    continue
-                return ResolvedTargetFile(**{**asdict(metadata), "direct_url": candidate})
-        except TargetFileWatchError:
-            raise
+            rejected_urls = {
+                _stable_url(source_url),
+                _stable_url(metadata.share_link),
+            }
+            for candidate_file in resolved_snapshot.files:
+                for candidate in _direct_candidates(candidate_file):
+                    if _stable_url(candidate) in rejected_urls:
+                        continue
+                    return ResolvedTargetFile(**{**asdict(metadata), "direct_url": candidate})
         except Exception as exc:
             logging.getLogger("LOLDataSystem.TargetFileWatch").warning(
-                "fresh Lanzou directory direct-url resolution failed: %s",
+                "fresh Lanzou file direct-url resolution failed: %s",
                 type(exc).__name__,
             )
         raise TargetFileWatchError("未取得可下载直链；请确认现有蓝奏直链 Provider/API Key 配置可用")
