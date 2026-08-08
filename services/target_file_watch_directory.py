@@ -4,7 +4,8 @@ import asyncio
 import hashlib
 import json
 import logging
-from dataclasses import asdict, dataclass
+import os
+from dataclasses import asdict, dataclass, replace
 from typing import Any, TYPE_CHECKING
 
 from lanzou_update_push_api_server.config import WatcherConfig, load_config as load_lanzou_provider_config
@@ -21,6 +22,12 @@ from services.target_file_watch_service import (
 
 if TYPE_CHECKING:
     from services.target_file_watch_runtime import SafeTargetFileWatchService
+
+
+TARGET_FILE_DIRECT_WER_ENDPOINT = (
+    str(os.getenv("TARGET_FILE_WATCH_WER_ENDPOINT") or "https://api2.wer.plus/api/lanz").strip()
+    or "https://api2.wer.plus/api/lanz"
+)
 
 
 @dataclass(frozen=True)
@@ -97,7 +104,10 @@ class DirectoryLanzouResolver:
         )
 
     def resolve_snapshot(self, source_url: str) -> DirectorySnapshot:
-        provider_config = load_lanzou_provider_config()
+        provider_config = replace(
+            load_lanzou_provider_config(),
+            wer_api_endpoint=TARGET_FILE_DIRECT_WER_ENDPOINT,
+        )
         watcher = self._watcher(source_url)
         snapshot = ProviderChain(provider_config).fetch(watcher)
         if not snapshot.files:
