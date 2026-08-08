@@ -137,7 +137,10 @@ class DirectoryLanzouResolver:
             raise TargetFileWatchError("目标文件在投递前再次变化，旧事件已失效")
         metadata = current[0].file
 
-        provider_config = load_lanzou_provider_config()
+        provider_config = replace(
+            load_lanzou_provider_config(),
+            wer_api_endpoint=TARGET_FILE_DIRECT_WER_ENDPOINT,
+        )
         # Delivery resolution must use the concrete file share link, never the
         # watched folder URL. WER's single-file endpoint can then return a fresh
         # download URL for exactly this pending file.
