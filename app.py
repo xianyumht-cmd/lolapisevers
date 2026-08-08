@@ -1,5 +1,14 @@
 import logging
 
+from core.local_env import load_local_powershell_env
+
+
+# NSSM normally starts the service through ops/run_service.ps1, which dot-sources
+# app_env.local.ps1. Load missing literal assignments again inside Python so a
+# trailing or unreachable PowerShell line cannot leave provider Secrets absent.
+load_local_powershell_env()
+
+
 from fastapi import FastAPI
 import uvicorn
 
@@ -19,8 +28,10 @@ from routers.cross_session import router as cross_session_router
 from routers.groupguard_delivery import router as groupguard_delivery_router
 from routers.health import router as health_router
 from routers.lolban import router as lolban_router
+from routers.query_admin import router as query_admin_router
 from routers.query_observability import router as query_observability_router
 from routers.shard_query import router as shard_query_router
+from routers.target_file_watch import router as target_file_watch_router
 
 
 def build_app() -> FastAPI:
@@ -51,6 +62,8 @@ def build_app() -> FastAPI:
     app.include_router(lolban_router)
     app.include_router(groupguard_delivery_router)
     app.include_router(query_observability_router)
+    app.include_router(target_file_watch_router)
+    app.include_router(query_admin_router)
 
     logger.info("API routers mounted without legacy_app dependency")
     return app

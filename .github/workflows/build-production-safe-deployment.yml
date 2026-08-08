@@ -1,382 +1,72 @@
 name: Build production safe deployment package
 
+# Legacy compatibility gate.
+#
+# The original 2026-08-01 package builder was pinned to a28483e and validated
+# an exact four-script layout. The current production-safe release path is V3:
+# .github/workflows/build-production-safe-deployment-v3.yml.
+#
+# Keep this workflow/check name so existing repository protection or historical
+# references do not break while the old release branches remain available for
+# audit. Current master PRs must validate the V3 entry point instead of trying
+# to rebuild the retired fixed-target package.
+
 on:
-  push:
-    branches:
-      - release/full-bug-repair-safe-deploy-pycompat-v2-20260801
   pull_request:
     branches:
       - master
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build-package:
-    runs-on: windows-latest
-    timeout-minutes: 75
-    env:
-      TARGET_COMMIT: a28483eadb25986031d11ca40e0d26aa6f9e6dfa
-      TOOLS_ZIP_SHA256: 30266c26bc21b4600d7e2cf63a27978f486958fa7c1e65a11e19484587a54237
+    name: build-package
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - name: Checkout package builder branch
+      - name: Checkout reconciliation candidate
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Reconstruct reviewed deployment tools
-        shell: pwsh
+      - name: Validate current V3 production-safe release gate
+        shell: python
         run: |
-          $chunkRoot = Join-Path $pwd ".deployment-package\full-bug-repair-20260801"
-          $chunks = Get-ChildItem $chunkRoot -Filter "chunk-*.txt" -File | Sort-Object Name
-          if ($chunks.Count -ne 4) {
-            throw "Expected exactly four package tool chunks."
-          }
-          $encoded = ""
-          foreach ($chunk in $chunks) {
-            $encoded += (Get-Content $chunk.FullName -Raw -Encoding ASCII).Trim()
-          }
-          $zipPath = Join-Path $env:RUNNER_TEMP "package-tools.zip"
-          [System.IO.File]::WriteAllBytes($zipPath, [Convert]::FromBase64String($encoded))
-          $actual = (Get-FileHash $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($actual -ne $env:TOOLS_ZIP_SHA256) {
-            throw "Deployment tools archive SHA-256 mismatch."
-          }
-          Expand-Archive -LiteralPath $zipPath -DestinationPath $pwd -Force
+          from pathlib import Path
 
-      - name: Validate deployment safety invariants
-        shell: pwsh
-        run: |
-          $deploy = Get-Content ops/Deploy-FullBugRepairSafe.ps1 -Raw -Encoding UTF8
-          $builder = Get-Content ops/Build-FullBugRepairPackage.ps1 -Raw -Encoding UTF8
-          $preflight = $deploy.IndexOf('$record.status = "candidate_preflight_passed"')
-          $switch = $deploy.IndexOf('$productionSwitchStarted = $true', $preflight)
-          $stop = $deploy.IndexOf('Stop-ReleaseService -Name $ServiceName', $switch)
-          $backup = $deploy.IndexOf('$backupItems = New-Object', $stop)
-          $checkout = $deploy.IndexOf('checkout", "--detach", $TargetCommit', $backup)
-          $start = $deploy.IndexOf('Start-ReleaseService -Name $ServiceName', $checkout)
-          if ($preflight -lt 0 -or $switch -le $preflight -or $stop -le $switch -or $backup -le $stop -or $checkout -le $backup -or $start -le $checkout) {
-            throw "Candidate-test-before-stop ordering invariant failed."
-          }
-          foreach ($marker in @(
-            '--no-index',
-            '--find-links',
-            'venv.previous',
-            'Automatic rollback is starting',
-            'Rollback-FullBugRepairSafe.ps1'
-          )) {
-            if (-not $deploy.Contains($marker)) {
-              throw "Required deployment safety marker is missing: $marker"
-            }
-          }
-          foreach ($marker in @(
-            'bundle create',
-            'pip download',
-            'wheelhouse',
-            'package_content_sha256',
-            'Compress-Archive',
-            'zip_sha256'
-          )) {
-            if (-not $builder.Contains($marker)) {
-              throw "Required package builder marker is missing: $marker"
-            }
-          }
-          $scripts = Get-ChildItem ops -Filter "*FullBugRepair*.ps1" -File
-          if ($scripts.Count -ne 4) {
-            throw "Expected four deployment scripts."
-          }
-          foreach ($script in $scripts) {
-            $bytes = [System.IO.File]::ReadAllBytes($script.FullName)
-            if (@($bytes | Where-Object { $_ -gt 127 }).Count -gt 0) {
-              throw "Deployment script is not ASCII safe: $($script.Name)"
-            }
-            $tokens = $null
-            $errors = $null
-            [System.Management.Automation.Language.Parser]::ParseFile(
-              $script.FullName,
-              [ref]$tokens,
-              [ref]$errors
-            ) | Out-Null
-            if ($errors -and $errors.Count -gt 0) {
-              $errors | ForEach-Object { Write-Error "$($script.Name): $($_.Message)" }
-              exit 1
-            }
-          }
+          workflow = Path('.github/workflows/build-production-safe-deployment-v3.yml')
+          builder = Path('ops/Build-FullBugRepairPackageV3.ps1')
 
-      - name: Verify target commit and create immutable worktree
-        shell: pwsh
-        run: |
-          git cat-file -e "$env:TARGET_COMMIT^{commit}"
-          if ($LASTEXITCODE -ne 0) {
-            throw "Target commit is unavailable."
-          }
-          git worktree add --detach candidate-ci $env:TARGET_COMMIT
-          if ($LASTEXITCODE -ne 0) {
-            throw "Unable to create immutable candidate worktree."
-          }
+          if not workflow.is_file():
+              raise SystemExit('Missing V3 production-safe deployment workflow.')
+          if not builder.is_file():
+              raise SystemExit('Missing V3 production-safe package builder.')
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: candidate-ci/requirements.txt
-
-      - name: Install candidate and audit dependencies
-        shell: pwsh
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r candidate-ci/requirements.txt
-          python -m pip install pip-audit
-
-      - name: Run immutable candidate tests
-        shell: pwsh
-        run: |
-          Push-Location candidate-ci
-          try {
-            python -m compileall -q .
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            python -m unittest discover -s tests -p "test_*.py" -v
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            python tests/check_ui_assets.py
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            node --check ui_control.generated.js
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          } finally {
-            Pop-Location
-          }
-
-      - name: Parse all candidate PowerShell files
-        shell: pwsh
-        run: |
-          $files = Get-ChildItem candidate-ci -Filter *.ps1 -File -Recurse
-          foreach ($file in $files) {
-            $tokens = $null
-            $errors = $null
-            [System.Management.Automation.Language.Parser]::ParseFile(
-              $file.FullName,
-              [ref]$tokens,
-              [ref]$errors
-            ) | Out-Null
-            if ($errors -and $errors.Count -gt 0) {
-              $errors | ForEach-Object { Write-Error "$($file.FullName): $($_.Message)" }
-              exit 1
-            }
-          }
-
-      - name: Audit target dependency set
-        shell: pwsh
-        run: python -m pip_audit -r candidate-ci/requirements.txt --strict
-
-      - name: Build immutable offline deployment ZIP
-        shell: pwsh
-        run: |
-          powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
-            ops/Build-FullBugRepairPackage.ps1 `
-            -RepositoryRoot "$pwd" `
-            -TargetCommit "$env:TARGET_COMMIT" `
-            -OutputRoot "$pwd\dist"
-          if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
-          }
-
-      - name: Add Python 3.11 to 3.14 offline compatibility
-        shell: pwsh
-        run: |
-          $oldZip = Get-ChildItem dist -Filter *.zip -File | Select-Object -First 1
-          $oldMetadata = Get-ChildItem dist -Filter *.metadata.json -File | Select-Object -First 1
-          if (-not $oldZip -or -not $oldMetadata) {
-            throw "Base deployment package was not generated."
-          }
-
-          $staging = Join-Path $env:RUNNER_TEMP "full-bug-repair-pycompat-v2"
-          if (Test-Path -LiteralPath $staging) {
-            Remove-Item -LiteralPath $staging -Recurse -Force
-          }
-          New-Item -ItemType Directory -Path $staging -Force | Out-Null
-          Expand-Archive -LiteralPath $oldZip.FullName -DestinationPath $staging -Force
-          $packageRoot = Get-ChildItem $staging -Directory | Select-Object -First 1
-          if (-not $packageRoot) {
-            throw "Expanded package root is missing."
-          }
-
-          $newPackageName = "LOLDataSystem-full-bug-repair-safe-deploy-a28483eadb25-py311-py314-v2"
-          $renamedRoot = Join-Path $staging $newPackageName
-          Rename-Item -LiteralPath $packageRoot.FullName -NewName $newPackageName
-          $packageRoot = Get-Item -LiteralPath $renamedRoot
-          $wheelhouse = Join-Path $packageRoot.FullName "payload\wheelhouse"
-          $requirements = Join-Path $packageRoot.FullName "payload\requirements.txt"
-
-          foreach ($pythonVersion in @("3.11", "3.12", "3.13", "3.14")) {
-            $abi = "cp" + $pythonVersion.Replace(".", "")
-            Write-Host "Downloading offline wheels for Python $pythonVersion ($abi)..."
-            python -m pip download `
-              --disable-pip-version-check `
-              --dest $wheelhouse `
-              --only-binary=:all: `
-              --platform win_amd64 `
-              --implementation cp `
-              --python-version $pythonVersion `
-              --abi $abi `
-              -r $requirements
-            if ($LASTEXITCODE -ne 0) {
-              throw "Offline wheel download failed for Python $pythonVersion."
-            }
-          }
-
-          foreach ($pythonVersion in @("3.11", "3.12", "3.13", "3.14")) {
-            $tag = "cp" + $pythonVersion.Replace(".", "")
-            foreach ($package in @("pillow", "pydantic_core", "cffi", "greenlet", "charset_normalizer")) {
-              $match = Get-ChildItem $wheelhouse -File | Where-Object {
-                $_.Name -like "$package-*-$tag-$tag-win_amd64.whl"
-              } | Select-Object -First 1
-              if (-not $match) {
-                throw "Missing $package wheel for Python $pythonVersion."
-              }
-            }
-          }
-
-          $deployPath = Join-Path $packageRoot.FullName "Deploy-FullBugRepairSafe.ps1"
-          $deployText = Get-Content $deployPath -Raw -Encoding UTF8
-          $anchor = '    $bootstrapPython = Resolve-BootstrapPython -Root $ProjectRoot'
-          if ([regex]::Matches($deployText, [regex]::Escape($anchor)).Count -ne 1) {
-            throw "Bootstrap Python patch anchor was not unique."
-          }
-          $replacement = @'
-              $bootstrapPython = Resolve-BootstrapPython -Root $ProjectRoot
-              $bootstrapVersion = (& $bootstrapPython -c "import sys; print(str(sys.version_info[0]) + str(sys.version_info[1]))").Trim()
-              if ($LASTEXITCODE -ne 0 -or $bootstrapVersion -notin @("311", "312", "313", "314")) {
-                  throw "Production Python must be 3.11, 3.12, 3.13, or 3.14 for this offline package."
-              }
-              Write-Host ("Candidate Python: {0} (Python {1}.{2})" -f $bootstrapPython, $bootstrapVersion.Substring(0, 1), $bootstrapVersion.Substring(1))
-          '@
-          $replacement = ($replacement -replace '(?m)^ {10}', '    ').TrimEnd()
-          $deployText = $deployText.Replace($anchor, $replacement)
-          [System.IO.File]::WriteAllText($deployPath, $deployText, [System.Text.UTF8Encoding]::new($false))
-
-          $tokens = $null
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile($deployPath, [ref]$tokens, [ref]$errors) | Out-Null
-          if ($errors -and $errors.Count -gt 0) {
-            $errors | ForEach-Object { Write-Error $_.Message }
-            throw "Patched deployment script failed PowerShell syntax validation."
-          }
-
-          $manifestPath = Join-Path $packageRoot.FullName "manifest.json"
-          $manifest = Get-Content $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
-          $manifest.package_id = "LOLAPI-FULL-BUG-REPAIR-SAFE-DEPLOY-20260801-a28483eadb25-PYCOMPAT-V2"
-          $manifest.built_at = [DateTime]::UtcNow.ToString("o")
-          $manifest.ci.python = "3.11, 3.12, 3.13, 3.14"
-          $manifest.deployment | Add-Member -NotePropertyName supported_python_versions -NotePropertyValue @("3.11", "3.12", "3.13", "3.14") -Force
-          $manifest.deployment | Add-Member -NotePropertyName bootstrap_python_version_logged -NotePropertyValue $true -Force
-          $manifest | Add-Member -NotePropertyName package_revision -NotePropertyValue 2 -Force
-
-          $entries = @(
-            Get-ChildItem $packageRoot.FullName -Recurse -File |
-              Where-Object { $_.FullName -ne $manifestPath } |
-              ForEach-Object {
-                $relative = $_.FullName.Substring($packageRoot.FullName.Length).TrimStart("\") -replace "\\", "/"
-                [ordered]@{
-                  path = $relative
-                  sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-                  bytes = [int64]$_.Length
-                }
-              } |
-              Sort-Object path
+          text = workflow.read_text(encoding='utf-8')
+          required = (
+              'name: Build production safe deployment package V3',
+              'TARGET_COMMIT:',
+              'github.event.pull_request.head.sha',
+              'github.sha',
+              'Build-FullBugRepairPackageV3.ps1',
+              'candidate_tests_before_stop',
+              'automatic_rollback',
+              'offline_dependencies',
+              'powershell_utf8_parse_input',
+              'baseline_aware_readiness',
           )
-          $contentLines = ($entries | ForEach-Object { "$($_.path)`t$($_.sha256)`t$($_.bytes)" }) -join "`n"
-          $sha256 = [System.Security.Cryptography.SHA256]::Create()
-          try {
-            $contentDigest = ([BitConverter]::ToString($sha256.ComputeHash([Text.Encoding]::UTF8.GetBytes($contentLines)))).Replace("-", "").ToLowerInvariant()
-          } finally {
-            $sha256.Dispose()
-          }
-          $manifest.package_content_sha256 = $contentDigest
-          $manifest.files = $entries
-          [System.IO.File]::WriteAllText(
-            $manifestPath,
-            (($manifest | ConvertTo-Json -Depth 20) + [Environment]::NewLine),
-            [System.Text.UTF8Encoding]::new($false)
-          )
+          missing = [marker for marker in required if marker not in text]
+          if missing:
+              raise SystemExit('V3 production-safe gate is missing markers: ' + ', '.join(missing))
 
-          Remove-Item -LiteralPath $oldZip.FullName -Force
-          Remove-Item -LiteralPath $oldMetadata.FullName -Force
-          $newZip = Join-Path $pwd "dist\$newPackageName.zip"
-          Compress-Archive -LiteralPath $packageRoot.FullName -DestinationPath $newZip -CompressionLevel Optimal -Force
-          $zipHash = (Get-FileHash -LiteralPath $newZip -Algorithm SHA256).Hash.ToLowerInvariant()
-          $metadata = [ordered]@{
-            schema_version = "lolapisevers-safe-deployment-artifact.v1"
-            filename = [IO.Path]::GetFileName($newZip)
-            target_commit = $env:TARGET_COMMIT
-            zip_sha256 = $zipHash
-            bytes = [int64](Get-Item -LiteralPath $newZip).Length
-            package_content_sha256 = $contentDigest
-            supported_python_versions = @("3.11", "3.12", "3.13", "3.14")
-            package_revision = 2
-          }
-          $metadataPath = Join-Path $pwd "dist\$newPackageName.metadata.json"
-          [System.IO.File]::WriteAllText(
-            $metadataPath,
-            (($metadata | ConvertTo-Json -Depth 10) + [Environment]::NewLine),
-            [System.Text.UTF8Encoding]::new($false)
-          )
+          retired_target = 'TARGET_COMMIT: a28483eadb25986031d11ca40e0d26aa6f9e6dfa'
+          if retired_target in text:
+              raise SystemExit('V3 workflow unexpectedly uses the retired fixed target commit.')
 
-      - name: Verify generated package hashes and Python compatibility
-        shell: pwsh
+          print('Legacy check compatibility passed: current production-safe packaging is delegated to V3.')
+
+      - name: Explain manual compatibility run
+        if: github.event_name == 'workflow_dispatch'
         run: |
-          $metadataFile = Get-ChildItem dist -Filter *.metadata.json -File | Select-Object -First 1
-          $zipFile = Get-ChildItem dist -Filter *.zip -File | Select-Object -First 1
-          if (-not $metadataFile -or -not $zipFile) {
-            throw "Generated package files are missing."
-          }
-          $metadata = Get-Content $metadataFile.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
-          if ("$($metadata.target_commit)" -ne $env:TARGET_COMMIT) {
-            throw "Package target commit mismatch."
-          }
-          $zipHash = (Get-FileHash $zipFile.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($zipHash -ne "$($metadata.zip_sha256)".ToLowerInvariant()) {
-            throw "Package ZIP hash mismatch."
-          }
-          $extract = Join-Path $env:RUNNER_TEMP "full-bug-repair-package-final"
-          if (Test-Path -LiteralPath $extract) {
-            Remove-Item -LiteralPath $extract -Recurse -Force
-          }
-          Expand-Archive -LiteralPath $zipFile.FullName -DestinationPath $extract -Force
-          $manifestFile = Get-ChildItem $extract -Filter manifest.json -File -Recurse | Select-Object -First 1
-          if (-not $manifestFile) {
-            throw "Embedded manifest is missing."
-          }
-          $manifest = Get-Content $manifestFile.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
-          if ("$($manifest.target_commit)" -ne $env:TARGET_COMMIT) {
-            throw "Embedded target commit mismatch."
-          }
-          if ([int]$manifest.package_revision -ne 2) {
-            throw "Embedded package revision mismatch."
-          }
-          foreach ($version in @("3.11", "3.12", "3.13", "3.14")) {
-            if (@($manifest.deployment.supported_python_versions) -notcontains $version) {
-              throw "Embedded manifest is missing Python $version support."
-            }
-          }
-          foreach ($entry in @($manifest.files)) {
-            $path = Join-Path $manifestFile.Directory.FullName ("$($entry.path)".Replace("/", "\"))
-            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-              throw "Embedded package file missing: $($entry.path)"
-            }
-            $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
-            if ($actual -ne "$($entry.sha256)".ToLowerInvariant()) {
-              throw "Embedded package hash mismatch: $($entry.path)"
-            }
-            if ([int64](Get-Item -LiteralPath $path).Length -ne [int64]$entry.bytes) {
-              throw "Embedded package size mismatch: $($entry.path)"
-            }
-          }
-          Get-Content $metadataFile.FullName -Raw
-
-      - name: Upload production deployment package
-        uses: actions/upload-artifact@v4
-        with:
-          name: LOLDataSystem-full-bug-repair-safe-deploy-pycompat-v2
-          path: |
-            dist/*.zip
-            dist/*.metadata.json
-          if-no-files-found: error
-          retention-days: 14
+          echo "This workflow is a compatibility gate only."
+          echo "Use 'Build production safe deployment package V3' for current immutable deployment artifacts."

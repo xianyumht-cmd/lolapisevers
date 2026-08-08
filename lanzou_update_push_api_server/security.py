@@ -12,6 +12,15 @@ PUBLIC_PATHS = {
     "/",
     "/ui",
     "/legacy-ui",
+    "/main-config",
+    "/lanzou/config",
+    "/lanzou/watchers",
+    "/lanzou/targets",
+    "/target-file-watch",
+    "/api-debugger",
+    "/logs",
+    "/diagnostics",
+    "/system",
     "/health",
     "/security/status",
     "/docs",
@@ -19,6 +28,9 @@ PUBLIC_PATHS = {
     "/openapi.json",
     "/favicon.ico",
 }
+PUBLIC_PATH_PREFIXES = (
+    "/control-assets/",
+)
 
 
 def configured_admin_token() -> str:
@@ -69,6 +81,10 @@ def request_is_authorized(request: Request) -> tuple[bool, str]:
     return False, "configure WEBUI_ADMIN_TOKEN before using the control API over the network"
 
 
+def _is_public_path(path: str) -> bool:
+    return path in PUBLIC_PATHS or any(path.startswith(prefix) for prefix in PUBLIC_PATH_PREFIXES)
+
+
 def _audit(
     request: Request,
     *,
@@ -94,7 +110,7 @@ def _audit(
 
 async def control_api_guard(request: Request, call_next):
     path = request.url.path
-    if path in PUBLIC_PATHS:
+    if _is_public_path(path):
         return await call_next(request)
 
     allowed, reason = request_is_authorized(request)

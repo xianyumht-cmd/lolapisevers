@@ -14,7 +14,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 90
     env:
-      TARGET_COMMIT: 4a29a0a7c8bde8ef84093bc716761e2bcce483b1
+      TARGET_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
 
     steps:
       - name: Checkout V3 builder branch
@@ -121,6 +121,9 @@ jobs:
           if (-not [bool]$metadata.powershell_utf8_parse_input) {
             throw "V3 metadata is missing explicit UTF-8 parsing."
           }
+          if (-not [bool]$metadata.baseline_aware_readiness) {
+            throw "V3 metadata is missing baseline-aware readiness."
+          }
           $zipHash = (Get-FileHash $zipFile.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($zipHash -ne "$($metadata.zip_sha256)".ToLowerInvariant()) {
             throw "V3 ZIP SHA-256 mismatch."
@@ -146,7 +149,8 @@ jobs:
             "candidate_tests_before_stop",
             "automatic_rollback",
             "offline_dependencies",
-            "powershell_utf8_parse_input"
+            "powershell_utf8_parse_input",
+            "baseline_aware_readiness"
           )) {
             if (-not [bool]$manifest.deployment.$flag) {
               throw "V3 safety flag is missing: $flag"
@@ -178,10 +182,27 @@ jobs:
             "Get-Content -LiteralPath `$file.FullName -Raw -Encoding UTF8",
             "Production Python must be 3.11, 3.12, 3.13, or 3.14",
             "Production was not stopped or changed",
+            "Capture pre-switch production health baseline",
+            "pre-switch-health.json",
+            "BaselineHealthPath",
             "Automatic rollback is starting"
           )) {
             if (-not $deployText.Contains($marker)) {
               throw "V3 deployment marker is missing: $marker"
+            }
+          }
+
+          $verifyFile = Join-Path $manifestFile.Directory.FullName "Verify-FullBugRepairProduction.ps1"
+          $verifyText = Get-Content $verifyFile -Raw -Encoding UTF8
+          foreach ($marker in @(
+            "inherited_so1_session_degradation",
+            "pass_with_warning",
+            "Post-switch MySQL readiness regressed",
+            "Post-switch SO1 browser readiness regressed",
+            "does not match the pre-switch degradation baseline"
+          )) {
+            if (-not $verifyText.Contains($marker)) {
+              throw "V3 baseline-aware verifier marker is missing: $marker"
             }
           }
 

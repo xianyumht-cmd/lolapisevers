@@ -215,7 +215,19 @@ _THEME_CONTROLLER = r'''<script id="ios-glass-theme-controller">
   function resolved(mode){return mode==='system'?(media&&media.matches?'dark':'light'):mode}
   function syncButtons(mode){document.querySelectorAll('[data-ios-theme-mode]').forEach(function(button){button.setAttribute('aria-pressed',String(button.dataset.iosThemeMode===mode))})}
   function apply(mode,persist){if(!allowed[mode])mode='system';document.documentElement.dataset.themeMode=mode;document.documentElement.dataset.theme=resolved(mode);if(persist!==false){try{localStorage.setItem(key,mode)}catch(_error){}}syncButtons(mode);window.dispatchEvent(new CustomEvent('ios-theme-change',{detail:{mode:mode,resolved:resolved(mode)}}))}
+  function mountQueryConsoleLink(host){
+    if(document.querySelector('[data-query-console-lolban]'))return;
+    var button=document.createElement('button');
+    button.type='button';
+    button.dataset.queryConsoleLolban='1';
+    button.textContent='封号查询配置';
+    button.title='查看、修改和测试封号查询 Provider';
+    button.addEventListener('click',function(){window.location.href='/query-console/lolban'});
+    host.insertBefore(button,host.firstChild);
+  }
   function mount(){
+    var host=document.querySelector('.actions')||document.querySelector('.top')||document.body;
+    mountQueryConsoleLink(host);
     if(document.querySelector('.ios-theme-control')){syncButtons(getMode());return}
     var control=document.createElement('div');
     control.className='ios-theme-control';
@@ -224,7 +236,6 @@ _THEME_CONTROLLER = r'''<script id="ios-glass-theme-controller">
     [['light','☀ 日间'],['system','◐ 跟随'],['dark','☾ 夜间']].forEach(function(item){
       var button=document.createElement('button');button.type='button';button.dataset.iosThemeMode=item[0];button.textContent=item[1];button.title='切换到'+item[1]+'模式';button.addEventListener('click',function(){apply(item[0],true)});control.appendChild(button)
     });
-    var host=document.querySelector('.actions')||document.querySelector('.top')||document.body;
     host.insertBefore(control,host.firstChild);
     apply(getMode(),false);
   }

@@ -101,6 +101,88 @@
               "unknown": "账号封禁查询失败：第三方响应状态无法识别"
             }
           }
+        },
+        {
+          "id": "lolban-4png",
+          "name": "4PNG 收费备用接口",
+          "enabled": false,
+          "request": {
+            "method": "GET",
+            "url": "https://yun.4png.com/api/query.html",
+            "query": {
+              "qq": "$qq",
+              "token": "$secret:LOL_BAN_4PNG_TOKEN"
+            },
+            "timeout_seconds": 10
+          },
+          "parser": {
+            "success": {
+              "path": "code",
+              "op": "eq",
+              "value": 200
+            },
+            "error_message_paths": [
+              "msg",
+              "message",
+              "error"
+            ],
+            "outcomes": [
+              {
+                "name": "hit",
+                "when": {
+                  "path": "data.return",
+                  "op": "eq",
+                  "value": "封禁"
+                }
+              },
+              {
+                "name": "clear",
+                "when": {
+                  "path": "data.return",
+                  "op": "eq",
+                  "value": "正常"
+                }
+              }
+            ],
+            "default_outcome": "unknown",
+            "fields": {
+              "status": {
+                "paths": [
+                  "data.return"
+                ],
+                "required": true,
+                "string": true
+              },
+              "ban_time": {
+                "paths": [
+                  "data.banmsg"
+                ],
+                "string": true
+              },
+              "end_time": {
+                "paths": [
+                  "data.rammsg"
+                ],
+                "string": true
+              },
+              "ban_reason": {
+                "default": "第三方接口未提供封禁原因",
+                "string": true
+              },
+              "message": {
+                "paths": [
+                  "msg",
+                  "message"
+                ],
+                "string": true
+              }
+            },
+            "templates": {
+              "hit": "账号封禁查询结果\n\nQQ号码：{qq}\n账号状态：{status}\n封禁原因：{ban_reason|第三方接口未提供封禁原因}\n封禁时间：{ban_time|未提供}\n剩余时间：{end_time|未提供}",
+              "clear": "账号封禁查询结果\n\nQQ号码：{qq}\n账号状态：{status}",
+              "unknown": "账号封禁查询失败：第三方响应状态无法识别"
+            }
+          }
         }
       ]
     },
