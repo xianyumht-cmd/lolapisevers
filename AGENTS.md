@@ -79,3 +79,59 @@ For destructive Git operations, production deployment, service restart, branch d
 ## 8. Long-term branch budget
 
 The healthy persistent remote branch set for this repository is intentionally small: normally `master` plus the current production pointer. Temporary feature/fix branches should exist only while their task is active.
+
+## 9. Self-maintaining AI knowledge system
+
+The user should **not** need to remember or repeat project-history and documentation chores. When the user has authorized a repository-changing task, maintaining the repository knowledge files below is part of that task and does not require a separate reminder. Do not perform repository writes during a purely read-only request.
+
+### Knowledge takeover order
+
+After reading all applicable `AGENTS.md`, read the following canonical knowledge files when they exist, then verify important claims against current Git/Issue/PR/runtime evidence:
+
+1. `docs/AI_CONTEXT.md` — stable project purpose, boundaries, major modules, external dependencies, and terminology.
+2. `docs/PROJECT_STATE.md` — current verified development/production state, active Issues/PRs, accepted versions, incomplete work, and next actions.
+3. `docs/PITFALLS.md` — recurring mistakes, failed approaches, root causes, detection signals, and prevention rules.
+4. `docs/DECISIONS.md` — durable technical/product/operations decisions and why they were made.
+5. `docs/ARCHITECTURE.md` — components, ownership boundaries, data flow, contracts, and important integration relationships.
+6. `docs/OPERATIONS.md` — build, release, deployment, verification, recovery, rollback, and maintenance runbooks.
+7. `docs/AI_WORKSTYLE.md` — stable repository-relevant collaboration preferences that help AI work effectively with the user.
+
+Missing files are not an error. **Do not create empty boilerplate files.** Create a canonical file only when the first real piece of durable information belongs there.
+
+### Automatic routing rules
+
+- Put only durable mandatory AI behavior, safety constraints, and repository workflow rules in `AGENTS.md`.
+- Put stable project facts and vocabulary in `AI_CONTEXT.md`.
+- Put time-sensitive current state in `PROJECT_STATE.md`; keep it concise and remove/replace stale state instead of endlessly appending chat-style logs.
+- When an AI mistake, failed approach, or user correction could reasonably recur, record the lesson in `PITFALLS.md` with cause + prevention, not just the symptom.
+- When a durable choice is made between alternatives, record it in `DECISIONS.md` with date, decision, reason, consequences, and superseded decision when applicable.
+- When component boundaries, protocols, dependencies, or data flow materially change, update `ARCHITECTURE.md`.
+- When build/deploy/rollback/verification procedures materially change, update `OPERATIONS.md`.
+- Put stable collaboration preferences in `AI_WORKSTYLE.md` only when they are relevant to repository work; do not store unrelated personal profile information.
+- Do not create `*-v2.md`, `final-notes.md`, dated handoff duplicates, or parallel knowledge files when a canonical file can be updated.
+- Do not create a separate branch merely to write task handoff/knowledge updates; include them in the same authorized task branch/PR.
+
+### Automatic maintenance triggers
+
+During every substantive task, the agent must decide whether the work created knowledge worth preserving. Before declaring the task complete:
+
+1. reconcile documentation claims with the actual current Git/Issue/PR state and, when relevant, verified runtime evidence;
+2. update `PROJECT_STATE.md` if canonical branch, production state, accepted version, active task, blocker, or next action materially changed;
+3. update `PITFALLS.md` if a meaningful failure or correction produced a reusable prevention lesson;
+4. update `DECISIONS.md` if a durable decision was made;
+5. update `ARCHITECTURE.md` or `OPERATIONS.md` when their facts changed;
+6. update `AI_CONTEXT.md` / `AI_WORKSTYLE.md` only for stable facts/preferences, not temporary conversation details;
+7. update `AGENTS.md` itself only when a new long-lived mandatory rule is discovered.
+
+A task is **not fully closed** if repository knowledge is materially stale after the change.
+
+### Evidence and hygiene rules
+
+- Repository/runtime evidence is the source of truth; stale documentation must not override fresh evidence.
+- Clearly distinguish **verified current state**, **planned work**, and **inference**.
+- Prefer exact Issue/PR numbers, tags, commit SHAs, paths, service names, and dates when they make a record auditable.
+- Never store passwords, API tokens, cookies, private keys, session secrets, or credential-bearing diagnostics in these knowledge files.
+- Do not copy large logs or chat transcripts into the knowledge base; summarize the reusable conclusion and point to durable evidence when available.
+- If existing knowledge conflicts with reality, correct or mark it superseded as part of the current task instead of silently working around it.
+
+The goal is that a future ChatGPT/Codex session can enter the repository, read the canonical files, inspect live repository state, and continue safely **without relying on the user to remember previous instructions or retell project history**.
