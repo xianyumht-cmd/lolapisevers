@@ -4,7 +4,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import os
 from dataclasses import asdict, dataclass, replace
 from typing import Any, TYPE_CHECKING
 
@@ -24,10 +23,10 @@ if TYPE_CHECKING:
     from services.target_file_watch_runtime import SafeTargetFileWatchService
 
 
-TARGET_FILE_DIRECT_WER_ENDPOINT = (
-    str(os.getenv("TARGET_FILE_WATCH_WER_ENDPOINT") or "https://api2.wer.plus/api/lanz").strip()
-    or "https://api2.wer.plus/api/lanz"
-)
+# Target-file delivery is for ordinary Lanzou file share links.
+# Keep this independent from the shared 6178 WER configuration and from
+# service environment overrides such as TARGET_FILE_WATCH_WER_ENDPOINT.
+TARGET_FILE_DIRECT_WER_ENDPOINT = "https://api2.wer.plus/api/lanz"
 
 
 @dataclass(frozen=True)
