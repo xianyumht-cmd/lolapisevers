@@ -45,7 +45,9 @@ jobs:
           text = workflow.read_text(encoding='utf-8')
           required = (
               'name: Build production safe deployment package V3',
-              'TARGET_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}',
+              'TARGET_COMMIT:',
+              'github.event.pull_request.head.sha',
+              'github.sha',
               'Build-FullBugRepairPackageV3.ps1',
               'candidate_tests_before_stop',
               'automatic_rollback',
