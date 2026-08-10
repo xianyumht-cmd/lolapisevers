@@ -12,6 +12,7 @@ from services.aram_balance_service import _slug_candidates
 class FakeContext:
     def __init__(self):
         self.aram_augment_cache = TTLCache(ttl_seconds=120)
+        self.aram_image_cache = TTLCache(ttl_seconds=300, max_size=8)
         self.aram_image_cache_seconds = 300
         self._locks = {}
 
@@ -77,7 +78,7 @@ class AramBalanceDeliveryTests(unittest.TestCase):
                 return_value=balance,
             ) as balance_mock,
             patch(
-                "routers.aram_augments.build_aram_augment_image_with_balance",
+                "routers.aram_augments.build_aram_augment_image_response",
                 side_effect=fake_render,
             ),
         ):
