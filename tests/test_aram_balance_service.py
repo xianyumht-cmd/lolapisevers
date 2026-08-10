@@ -15,7 +15,7 @@ from services.persistent_snapshot_store import PersistentSnapshotStore
 SERAPHINE_HTML = """
 <html><body>
 <h1>Seraphine ARAM Build</h1>
-<div>Patch 16.13</div>
+<div>Patch 16.15</div>
 <section>
 Balance adjustment
 Damage dealt -
@@ -25,8 +25,27 @@ Cooldown reduction -20
 Healing -20%
 Tenacity -
 Shield amount -20%
+Energy regen -
 </section>
 <div>Build</div>
+</body></html>
+"""
+
+SERAPHINE_ZH_HTML = """
+<html><body>
+<div>16.15 版本</div>
+<section>
+平衡调整
+造成伤害 -
+承伤 +20%
+攻速 -
+技能加速 -20
+生命恢复 -20%
+韧性 -
+护盾吸收量 -20%
+法力回复 -
+</section>
+<div>出装</div>
 </body></html>
 """
 
@@ -38,12 +57,10 @@ class Context:
 
 
 class AramBalanceParserTests(unittest.TestCase):
-    def test_seraphine_returns_complete_non_neutral_state(self):
-        result = extract_aram_balance_state(SERAPHINE_HTML)
-
+    def assert_seraphine_complete(self, result):
         self.assertEqual(result["status"], "ok")
         self.assertTrue(result["complete"])
-        self.assertEqual(result["patch"], "16.13")
+        self.assertEqual(result["patch"], "16.15")
         self.assertEqual(
             [(item["key"], item["value"]) for item in result["items"]],
             [
@@ -56,6 +73,12 @@ class AramBalanceParserTests(unittest.TestCase):
         self.assertTrue(all(item["direction"] == "debuff" for item in result["items"]))
         self.assertIn("治疗 -20%", result["summary"])
         self.assertIn("护盾 -20%", result["summary"])
+
+    def test_seraphine_returns_complete_non_neutral_state(self):
+        self.assert_seraphine_complete(extract_aram_balance_state(SERAPHINE_HTML))
+
+    def test_current_chinese_opgg_labels_are_supported(self):
+        self.assert_seraphine_complete(extract_aram_balance_state(SERAPHINE_ZH_HTML))
 
     def test_direction_understands_inverse_damage_taken(self):
         html = """
@@ -80,12 +103,25 @@ class AramBalanceParserTests(unittest.TestCase):
         Cooldown reduction -
         Healing -
         Shield amount -
+        Energy regen -
         Summoner spells
         """
         result = extract_aram_balance_state(html)
         self.assertEqual(result["status"], "none")
         self.assertTrue(result["complete"])
         self.assertEqual(result["items"], [])
+
+    def test_unknown_signed_modifier_is_not_misreported_as_complete(self):
+        html = """
+        Balance adjustment
+        Damage dealt -
+        Future Modifier -15%
+        Summoner spells
+        """
+        result = extract_aram_balance_state(html)
+        self.assertEqual(result["status"], "unavailable")
+        self.assertFalse(result["complete"])
+        self.assertEqual(result["error_class"], "unparsed_balance_values")
 
     def test_missing_balance_section_is_not_reported_as_none(self):
         result = extract_aram_balance_state("Seraphine Build without balance data")
@@ -123,7 +159,7 @@ class AramBalanceFallbackTests(unittest.TestCase):
             with patch(
                 "services.aram_balance_service.request_opgg_html",
                 return_value=ok_response,
-            ):
+            ) as request_mock:
                 live = build_aram_balance_payload(
                     first,
                     "萨勒芬妮",
@@ -131,6 +167,10 @@ class AramBalanceFallbackTests(unittest.TestCase):
                 )
             self.assertEqual(live["status"], "ok")
             self.assertFalse(live["stale"])
+            self.assertEqual(
+                request_mock.call_args.kwargs["url"],
+                "https://op.gg/lol/modes/aram/seraphine/build",
+            )
 
             restarted = Context(temp)
             with patch(
