@@ -2,7 +2,7 @@ import io
 import logging
 from typing import Any, Dict, List
 
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import Response
 
 from renderers.aram_augments_image import build_aram_augment_image_response
 from renderers.image_utils import encode_png_limited, fit_text, load_image_font
@@ -61,7 +61,6 @@ def build_aram_augment_image_with_balance_response(ctx, payload: Dict[str, Any])
         green = (62, 211, 151)
         red = (239, 112, 122)
         gold = (247, 190, 76)
-        cyan = (63, 207, 225)
 
         title_font = load_image_font(max(12, int(round(15 * scale))), bold=True)
         body_font = load_image_font(max(11, int(round(13 * scale))), bold=True)
@@ -149,5 +148,7 @@ def build_aram_augment_image_with_balance_response(ctx, payload: Dict[str, Any])
             headers={"X-Image-Bytes": str(len(encoded)), "Cache-Control": "no-store"},
         )
     except Exception as exc:
-        logger.exception("aram balance image overlay failed: %s", exc)
-        return JSONResponse(status_code=500, content={"error": f"海符榜平衡信息制图失败: {exc}"})
+        # Balance is supplementary. Never turn a healthy sea-rune image into a
+        # 500 just because the overlay itself fails to render.
+        logger.exception("aram balance image overlay failed; returning base image: %s", exc)
+        return base_response
