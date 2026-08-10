@@ -38,6 +38,29 @@ class AramBalanceOverlayTests(unittest.TestCase):
                         "direction": "debuff",
                     },
                 ],
+                "base": {
+                    "status": "ok",
+                    "provider": "opgg",
+                    "scope": "aram_base",
+                    "patch": "16.15",
+                    "display_patch": "26.15",
+                    "current_patch_verified": True,
+                    "complete": True,
+                    "changes": [
+                        {
+                            "key": "healing",
+                            "label": "治疗",
+                            "value": "-20%",
+                            "direction": "debuff",
+                        },
+                        {
+                            "key": "shielding",
+                            "label": "护盾",
+                            "value": "-20%",
+                            "direction": "debuff",
+                        },
+                    ],
+                },
             }
         }
 
@@ -50,7 +73,8 @@ class AramBalanceOverlayTests(unittest.TestCase):
         self.assertEqual(result.status_code, 200)
         self.assertEqual(result.media_type, "image/png")
         image = Image.open(io.BytesIO(bytes(result.body)))
-        self.assertEqual(image.size, (900, 916))
+        self.assertEqual(image.width, 900)
+        self.assertGreater(image.height, 916)
 
     def test_syncing_patch_still_renders_panel_without_old_values(self):
         body = base_png()
@@ -62,6 +86,16 @@ class AramBalanceOverlayTests(unittest.TestCase):
                 "current_patch_verified": True,
                 "stale": False,
                 "changes": [],
+                "base": {
+                    "status": "syncing",
+                    "provider": "opgg",
+                    "scope": "aram_base",
+                    "patch": "16.14",
+                    "display_patch": "26.14",
+                    "current_patch_verified": True,
+                    "complete": False,
+                    "changes": [],
+                },
             }
         }
 
@@ -73,7 +107,8 @@ class AramBalanceOverlayTests(unittest.TestCase):
 
         self.assertEqual(result.status_code, 200)
         image = Image.open(io.BytesIO(bytes(result.body)))
-        self.assertEqual(image.size, (900, 916))
+        self.assertEqual(image.width, 900)
+        self.assertGreater(image.height, 916)
 
     def test_unavailable_balance_returns_original_image(self):
         body = base_png()
@@ -81,6 +116,10 @@ class AramBalanceOverlayTests(unittest.TestCase):
             "balance": {
                 "status": "unavailable",
                 "changes": [],
+                "base": {
+                    "status": "unavailable",
+                    "changes": [],
+                },
             }
         }
 
