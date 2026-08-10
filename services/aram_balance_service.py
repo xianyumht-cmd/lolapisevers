@@ -6,16 +6,18 @@ import re
 import time
 from typing import Any, Dict, List, Optional
 
-from services.aram_augments_service import find_champion_for_opgg
 from services.aram_upstream_state import (
     aram_snapshot_max_age_seconds,
+    load_champion_catalog,
     safe_error_class,
     safe_error_message,
     snapshot_store,
     upstream_client,
 )
+from utils.text_utils import normalize_search_text
 
 
+BALANCE_HTTP_SOURCE_ID = "aram-balance-page"
 BALANCE_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -153,6 +155,44 @@ def parse_balance_page(value: str) -> Dict[str, Any]:
     }
 
 
+def _champion_sources(ctx: Any) -> List[Dict[str, Any]]:
+    cached = ctx.aram_augment_cache.get("champions")
+    if isinstance(cached, list):
+        return copy.deepcopy(cached)
+    catalog = load_champion_catalog(ctx)
+    champions = catalog.get("champions") if isinstance(catalog, dict) else []
+    return copy.deepcopy(champions) if isinstance(champions, list) else []
+
+
+def find_champion_for_balance(ctx: Any, query: str) -> Optional[Dict[str, Any]]:
+    needle = normalize_search_text(query)
+    if not needle:
+        return None
+    champions = _champion_sources(ctx)
+    for hero in champions:
+        if not isinstance(hero, dict):
+            continue
+        if needle in {
+            normalize_search_text(hero.get("alias")),
+            normalize_search_text(hero.get("slug")),
+            normalize_search_text(hero.get("title")),
+            normalize_search_text(hero.get("name")),
+        }:
+            return hero
+    for hero in champions:
+        if not isinstance(hero, dict):
+            continue
+        haystack = normalize_search_text(
+            ",".join(
+                str(hero.get(key) or "")
+                for key in ("alias", "slug", "title", "name", "keywords")
+            )
+        )
+        if needle in haystack:
+            return hero
+    return None
+
+
 def _camel_slug(value: str) -> str:
     text = str(value or "").strip()
     if not text:
@@ -202,12 +242,15 @@ def _empty_balance(*, error_class: str = "", status: str = "unavailable") -> Dic
 def _fetch_balance(ctx: Any, hero: Dict[str, Any]) -> Dict[str, Any]:
     started = time.perf_counter()
     alias = str(hero.get("alias") or hero.get("name") or "unknown").strip().casefold()
-    source_id = "aram-balance-" + re.sub(r"[^a-z0-9_.-]+", "-", alias).strip("-")
-    if not source_id or source_id == "aram-balance-":
-        source_id = "aram-balance-unknown"
+    snapshot_source_id = "aram-balance-" + re.sub(r"[^a-z0-9_.-]+", "-", alias).strip("-")
+    if not snapshot_source_id or snapshot_source_id == "aram-balance-":
+        snapshot_source_id = "aram-balance-unknown"
 
     store = snapshot_store(ctx)
-    snapshot = store.load(source_id, max_age_seconds=aram_snapshot_max_age_seconds())
+    snapshot = store.load(
+        snapshot_source_id,
+        max_age_seconds=aram_snapshot_max_age_seconds(),
+    )
     last_error_class = "unavailable"
     last_error_message = ""
     attempts = 0
@@ -215,7 +258,7 @@ def _fetch_balance(ctx: Any, hero: Dict[str, Any]) -> Dict[str, Any]:
 
     for slug in _slug_candidates(hero):
         response = upstream_client(ctx).request(
-            source_id,
+            BALANCE_HTTP_SOURCE_ID,
             f"https://arammayhem.com/build/{slug}/",
             headers=BALANCE_HEADERS,
             attempts=1,
@@ -247,7 +290,7 @@ def _fetch_balance(ctx: Any, hero: Dict[str, Any]) -> Dict[str, Any]:
         }
         try:
             store.save(
-                source_id,
+                snapshot_source_id,
                 result,
                 {
                     "provider": "arammayhem",
@@ -271,7 +314,11 @@ def _fetch_balance(ctx: Any, hero: Dict[str, Any]) -> Dict[str, Any]:
         return result
 
     try:
-        store.record_refresh_error(source_id, last_error_class, last_error_message)
+        store.record_refresh_error(
+            snapshot_source_id,
+            last_error_class,
+            last_error_message,
+        )
     except Exception:
         pass
     result = _empty_balance(error_class=last_error_class)
@@ -282,7 +329,7 @@ def _fetch_balance(ctx: Any, hero: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def query_aram_balance(ctx: Any, hero_query: str) -> Dict[str, Any]:
-    hero = find_champion_for_opgg(ctx, hero_query)
+    hero = find_champion_for_balance(ctx, hero_query)
     if not hero:
         return _empty_balance(error_class="hero_not_found")
 
