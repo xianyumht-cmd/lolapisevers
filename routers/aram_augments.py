@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse, Response
@@ -11,10 +12,11 @@ from renderers.aram_balance_overlay import (
 )
 from services.aram_augments_service import query_aram_augments
 from services.aram_balance_service import query_aram_balance
+from services.aram_base_balance_service import query_aram_base_balance
 
 router = APIRouter()
 logger = logging.getLogger("LOLDataSystem")
-ARAM_IMAGE_RENDERER_VERSION = "3"
+ARAM_IMAGE_RENDERER_VERSION = "4"
 
 
 def _balance_unavailable(error_class: str = "unexpected_error") -> dict:
@@ -32,9 +34,67 @@ def _balance_unavailable(error_class: str = "unexpected_error") -> dict:
     }
 
 
+def _base_balance_unavailable(error_class: str = "unexpected_error") -> dict:
+    return {
+        "status": "unavailable",
+        "provider": "opgg",
+        "scope": "aram_base",
+        "patch": "",
+        "display_patch": "",
+        "current_patch_verified": False,
+        "complete": False,
+        "changes": [],
+        "summary": "",
+        "stale": False,
+        "snapshot_age_seconds": 0,
+        "error_class": error_class,
+    }
+
+
+def _safe_balance_query(ctx, hero_query: str) -> dict:
+    try:
+        return query_aram_balance(ctx, hero_query)
+    except Exception as exc:
+        logger.warning(
+            "海符榜 Mayhem 平衡查询降级 hero=%s error=%s",
+            hero_query,
+            exc.__class__.__name__,
+        )
+        return _balance_unavailable(exc.__class__.__name__)
+
+
+def _safe_base_balance_query(ctx, hero_query: str) -> dict:
+    try:
+        return query_aram_base_balance(ctx, hero_query)
+    except Exception as exc:
+        logger.warning(
+            "海符榜基础平衡查询降级 hero=%s error=%s",
+            hero_query,
+            exc.__class__.__name__,
+        )
+        return _base_balance_unavailable(exc.__class__.__name__)
+
+
+def _attach_base_balance(balance: dict, base_balance: dict) -> dict:
+    result = dict(balance) if isinstance(balance, dict) else _balance_unavailable()
+    result["base"] = (
+        dict(base_balance)
+        if isinstance(base_balance, dict)
+        else _base_balance_unavailable("invalid_base_balance")
+    )
+    return result
+
+
 def _payload_with_balance(ctx, payload: dict) -> dict:
-    if isinstance(payload.get("balance"), dict):
+    existing_balance = payload.get("balance") if isinstance(payload.get("balance"), dict) else None
+    existing_base = (
+        existing_balance.get("base")
+        if isinstance(existing_balance, dict) and isinstance(existing_balance.get("base"), dict)
+        else None
+    )
+    if existing_balance is not None and existing_base is not None:
         return payload
+
     hero = payload.get("hero") if isinstance(payload.get("hero"), dict) else {}
     hero_query = str(
         hero.get("alias")
@@ -45,17 +105,26 @@ def _payload_with_balance(ctx, payload: dict) -> dict:
     ).strip()
     enriched = dict(payload)
     if not hero_query:
-        enriched["balance"] = _balance_unavailable("hero_not_found")
-        return enriched
-    try:
-        enriched["balance"] = query_aram_balance(ctx, hero_query)
-    except Exception as exc:
-        logger.warning(
-            "海符榜图片英雄平衡查询降级 hero=%s error=%s",
-            hero_query,
-            exc.__class__.__name__,
+        enriched["balance"] = _attach_base_balance(
+            existing_balance or _balance_unavailable("hero_not_found"),
+            existing_base or _base_balance_unavailable("hero_not_found"),
         )
-        enriched["balance"] = _balance_unavailable(exc.__class__.__name__)
+        return enriched
+
+    if existing_balance is None:
+        # GroupGuard reaches this path after the normal sea-rune query. Fetch
+        # the two supplementary balance layers concurrently so the command's
+        # first uncached image does not pay their network latency serially.
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="aram-balance") as pool:
+            mayhem_future = pool.submit(_safe_balance_query, ctx, hero_query)
+            base_future = pool.submit(_safe_base_balance_query, ctx, hero_query)
+            balance = mayhem_future.result()
+            base_balance = base_future.result()
+    else:
+        balance = existing_balance
+        base_balance = existing_base or _safe_base_balance_query(ctx, hero_query)
+
+    enriched["balance"] = _attach_base_balance(balance, base_balance)
     return enriched
 
 
@@ -133,9 +202,10 @@ async def aram_augments(
     if ctx is None:
         return JSONResponse(status_code=503, content={"error": "应用上下文不可用"})
     try:
-        payload_result, balance_result = await asyncio.gather(
+        payload_result, balance_result, base_balance_result = await asyncio.gather(
             query_aram_augments(ctx, hero=hero),
             asyncio.to_thread(query_aram_balance, ctx, hero),
+            asyncio.to_thread(query_aram_base_balance, ctx, hero),
             return_exceptions=True,
         )
         if isinstance(payload_result, BaseException):
@@ -143,13 +213,23 @@ async def aram_augments(
         payload = dict(payload_result)
         if isinstance(balance_result, BaseException):
             logger.warning(
-                "海符榜英雄平衡查询降级 hero=%s error=%s",
+                "海符榜 Mayhem 平衡查询降级 hero=%s error=%s",
                 hero,
                 balance_result.__class__.__name__,
             )
-            payload["balance"] = _balance_unavailable(balance_result.__class__.__name__)
+            balance = _balance_unavailable(balance_result.__class__.__name__)
         else:
-            payload["balance"] = balance_result
+            balance = balance_result
+        if isinstance(base_balance_result, BaseException):
+            logger.warning(
+                "海符榜基础平衡查询降级 hero=%s error=%s",
+                hero,
+                base_balance_result.__class__.__name__,
+            )
+            base_balance = _base_balance_unavailable(base_balance_result.__class__.__name__)
+        else:
+            base_balance = base_balance_result
+        payload["balance"] = _attach_base_balance(balance, base_balance)
 
         if output_format == "image":
             return await asyncio.to_thread(
