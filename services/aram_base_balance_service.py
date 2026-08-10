@@ -31,6 +31,7 @@ BASE_BALANCE_HEADERS = {
     ),
     "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.7,zh;q=0.6",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Referer": "https://op.gg/lol/modes/aram",
 }
 
 _BASE_FIELDS = (
@@ -126,9 +127,11 @@ _END_MARKERS = (
 )
 _PATCH_PATTERNS = (
     re.compile(r"\bPatch\s*:?\s*(?P<patch>\d{1,2}\.\d{1,2})\b", re.IGNORECASE),
+    re.compile(r"\bVer(?:sion)?\s*:\s*(?P<patch>\d{1,2}\.\d{1,2})\b", re.IGNORECASE),
     re.compile(r"\b(?P<patch>\d{1,2}\.\d{1,2})\s*版本\b", re.IGNORECASE),
+    re.compile(r"版本(?:号)?\s*[:：]?\s*(?P<patch>\d{1,2}\.\d{1,2})\b", re.IGNORECASE),
 )
-_NUMERIC_MODIFIER_RE = re.compile(r"(?<![\d.])[+-]?\d+(?:\.\d+)?%?")
+_SIGNED_MODIFIER_RE = re.compile(r"(?<![\d.])[+-]\s*\d+(?:\.\d+)?%?")
 
 
 def _clean_visible_text(value: str) -> str:
@@ -185,11 +188,11 @@ def _extract_section(text: str) -> str:
 
 
 def _numeric_value(value: str) -> Optional[float]:
-    match = re.search(r"[+-]?\d+(?:\.\d+)?", str(value or ""))
+    match = re.search(r"[+-]?\s*\d+(?:\.\d+)?", str(value or ""))
     if not match:
         return None
     try:
-        return float(match.group(0))
+        return float(re.sub(r"\s+", "", match.group(0)))
     except ValueError:
         return None
 
@@ -217,22 +220,23 @@ def parse_base_balance_page(value: str) -> Dict[str, Any]:
         }
 
     changes: List[Dict[str, str]] = []
-    recognized_numeric_count = 0
+    recognized_signed_count = 0
     for key, label, aliases in _BASE_FIELDS:
         alias_pattern = "|".join(
             re.escape(alias) for alias in sorted(aliases, key=len, reverse=True)
         )
         match = re.search(
-            rf"(?:{alias_pattern})\s*[:：]?\s*(?P<value>[+-]?\d+(?:\.\d+)?%?|-)",
+            rf"(?:{alias_pattern})\s*[:：]?\s*(?P<value>(?:[+-]\s*)?\d+(?:\.\d+)?%?|-)",
             section,
             flags=re.IGNORECASE,
         )
         if not match:
             continue
         raw_value = str(match.group("value") or "").strip()
+        raw_value = re.sub(r"^([+-])\s+", r"\1", raw_value)
         numeric = _numeric_value(raw_value)
-        if numeric is not None:
-            recognized_numeric_count += 1
+        if len(raw_value) > 1 and raw_value[0] in "+-" and numeric is not None:
+            recognized_signed_count += 1
         if raw_value == "-" or (numeric is not None and abs(numeric) < 0.0001):
             continue
         changes.append(
@@ -244,8 +248,12 @@ def parse_base_balance_page(value: str) -> Dict[str, Any]:
             }
         )
 
-    numeric_tokens = _NUMERIC_MODIFIER_RE.findall(section)
-    if len(numeric_tokens) > recognized_numeric_count:
+    # The balance card can contain unrelated unsigned page statistics or ad text.
+    # Only unrecognized signed +X/-X values are strong evidence that OP.GG added a
+    # balance modifier field we do not understand yet. Keep those fail-closed while
+    # allowing harmless unsigned numbers to coexist with the card.
+    signed_tokens = _SIGNED_MODIFIER_RE.findall(section)
+    if len(signed_tokens) > recognized_signed_count:
         return {
             "complete": False,
             "patch": page_patch,
