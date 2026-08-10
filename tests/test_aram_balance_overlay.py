@@ -21,7 +21,8 @@ class AramBalanceOverlayTests(unittest.TestCase):
         payload = {
             "balance": {
                 "status": "ok",
-                "patch": "16.15",
+                "patch": "26.15",
+                "current_patch_verified": True,
                 "stale": False,
                 "changes": [
                     {
@@ -48,6 +49,29 @@ class AramBalanceOverlayTests(unittest.TestCase):
 
         self.assertEqual(result.status_code, 200)
         self.assertEqual(result.media_type, "image/png")
+        image = Image.open(io.BytesIO(bytes(result.body)))
+        self.assertEqual(image.size, (900, 916))
+
+    def test_syncing_patch_still_renders_panel_without_old_values(self):
+        body = base_png()
+        payload = {
+            "balance": {
+                "status": "syncing",
+                "patch": "26.15",
+                "page_patch": "26.14",
+                "current_patch_verified": True,
+                "stale": False,
+                "changes": [],
+            }
+        }
+
+        with patch(
+            "renderers.aram_balance_overlay.build_aram_augment_image_response",
+            return_value=Response(content=body, media_type="image/png"),
+        ):
+            result = build_aram_augment_image_with_balance(object(), payload)
+
+        self.assertEqual(result.status_code, 200)
         image = Image.open(io.BytesIO(bytes(result.body)))
         self.assertEqual(image.size, (900, 916))
 
