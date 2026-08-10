@@ -12,6 +12,7 @@ from renderers.query_text_card import build_query_text_card_response
 from renderers.shard_image import build_shard_image_response
 from routers.aram_augments import _build_cached_image_response
 from services.aram_augments_service import query_aram_augments
+from services.aram_balance_service import query_aram_balance
 from services.battle_delivery import battle_meta, format_battle_text
 from services.contact_risk_report_delivery import (
     contact_risk_report_meta,
@@ -307,7 +308,12 @@ async def groupguard_query(request: Request, body: Dict[str, Any]):
                 payload = await query_shard(ctx, hero=hero)
                 text = format_shard_text(payload)
             else:
-                payload = await query_aram_augments(ctx, hero=hero)
+                payload, balance = await asyncio.gather(
+                    query_aram_augments(ctx, hero=hero),
+                    query_aram_balance(ctx, hero=hero),
+                )
+                payload = dict(payload)
+                payload["balance"] = balance
                 text = format_aram_text(payload)
 
         wants_image = (
@@ -378,13 +384,16 @@ async def groupguard_query(request: Request, body: Dict[str, Any]):
                 feature,
                 server_request_id,
             )
-            detail = "查询服务暂不可用，请稍后再试"
-        elif not detail:
-            detail = "查询失败，请检查参数"
+        if status_code == 404 and detail:
+            message = detail[:160]
+        elif status_code == 400 and detail:
+            message = detail[:160]
+        else:
+            message = "查询服务暂不可用，请稍后再试"
         return _json_error(
             feature=feature,
             status_code=status_code,
-            message=detail,
+            message=message,
             client_request_id=client_request_id,
             server_request_id=server_request_id,
         )
@@ -394,16 +403,6 @@ async def groupguard_query(request: Request, body: Dict[str, Any]):
 async def groupguard_report(request: Request, body: Dict[str, Any]):
     server_request_id = request_id()
     body = body if isinstance(body, dict) else {}
-    try:
-        require_control_access(request)
-    except Exception as exc:
-        return _json_error(
-            feature="unknown",
-            status_code=int(getattr(exc, "status_code", 403) or 403),
-            message=str(getattr(exc, "detail", "") or "举报接口需要管理员凭据"),
-            client_request_id="",
-            server_request_id=server_request_id,
-        )
     try:
         client_request_id = safe_client_request_id(body.get("request_id"))
     except ValueError as exc:
@@ -416,93 +415,46 @@ async def groupguard_report(request: Request, body: Dict[str, Any]):
         )
     feature = _canonical_report_feature(body.get("feature"))
     parameters = body.get("parameters") if isinstance(body.get("parameters"), dict) else {}
-    capabilities = normalize_capabilities(body.get("capabilities"))
-    preferred = normalize_preferred(body.get("preferred"))
-
     if not feature:
         return _json_error(
             feature="unknown",
             status_code=400,
-            message="不支持的举报功能",
+            message="不支持的上报功能",
             client_request_id=client_request_id,
             server_request_id=server_request_id,
         )
-    if not client_request_id:
-        return _json_error(
-            feature=feature,
-            status_code=400,
-            message="举报请求必须提供 request_id",
-            client_request_id="",
-            server_request_id=server_request_id,
-        )
-
-    ctx = getattr(request.app.state, "ctx", None)
-    if ctx is None:
-        return _json_error(
-            feature=feature,
-            status_code=503,
-            message="举报服务暂不可用，请稍后再试",
-            client_request_id=client_request_id,
-            server_request_id=server_request_id,
-        )
-
     try:
-        identifier_type, identifier = _identifier_parameters(parameters)
-        category = "peer" if feature == "peer_report" else "scammer"
-        payload = await report_contact_risk(
-            ctx,
-            request_id=client_request_id,
-            category=category,
-            identifier_type=identifier_type,
-            identifier_value=identifier,
-            content=str(parameters.get("content") or parameters.get("evidence") or ""),
-            source=str(
-                body.get("client")
-                or parameters.get("source")
-                or "channel-client"
-            ),
-            actor_id=str(parameters.get("actor_id") or ""),
-            group_id=str(parameters.get("group_id") or ""),
+        require_control_access(request)
+    except Exception as exc:
+        status_code = int(getattr(exc, "status_code", 403) or 403)
+        return _json_error(
+            feature=feature,
+            status_code=status_code,
+            message="无权执行上报操作",
+            client_request_id=client_request_id,
+            server_request_id=server_request_id,
         )
-        text = format_contact_risk_report_text(payload)
-        delivery = _delivery_for_text(
-            text,
-            capabilities,
-            preferred if preferred != "image" else "auto",
-        )
+    try:
+        result = await report_contact_risk(ctx, feature, parameters)
+        text = format_contact_risk_report_text(result)
+        delivery = _delivery_for_text(text, normalize_capabilities(body.get("capabilities")), normalize_preferred(body.get("preferred")))
         return JSONResponse(
             content=success_envelope(
                 feature=feature,
                 delivery=delivery,
-                meta=contact_risk_report_meta(payload),
+                meta=contact_risk_report_meta(result),
                 client_request_id=client_request_id,
                 server_request_id=server_request_id,
             )
         )
-    except ValueError as exc:
-        return _json_error(
-            feature=feature,
-            status_code=406,
-            message=str(exc),
-            client_request_id=client_request_id,
-            server_request_id=server_request_id,
-        )
     except Exception as exc:
         status_code = int(getattr(exc, "status_code", 503) or 503)
         detail = str(getattr(exc, "detail", "") or "")
-        if status_code >= 500:
-            logger.exception(
-                "groupguard report failed feature=%s request_id=%s",
-                feature,
-                server_request_id,
-            )
-            detail = "举报服务暂不可用，请稍后再试"
-        elif not detail:
-            detail = "举报失败，请检查参数"
+        message = detail[:160] if status_code in {400, 404, 409} and detail else "上报服务暂不可用，请稍后再试"
         return _json_error(
             feature=feature,
             status_code=status_code,
-            message=detail,
+            message=message,
             client_request_id=client_request_id,
             server_request_id=server_request_id,
         )
