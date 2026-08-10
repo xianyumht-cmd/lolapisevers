@@ -153,13 +153,32 @@ def parse_balance_page(value: str) -> Dict[str, Any]:
     }
 
 
+def _camel_slug(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    text = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1-\2", text)
+    text = re.sub(r"([a-z0-9])([A-Z])", r"\1-\2", text)
+    text = text.replace("'", "").replace(".", "").replace("_", "-").replace(" ", "-")
+    text = re.sub(r"-+", "-", text)
+    return text.strip("-").lower()
+
+
 def _slug_candidates(hero: Dict[str, Any]) -> List[str]:
     values: List[str] = []
-    for raw in (hero.get("slug"), hero.get("alias")):
+
+    def add(raw: Any) -> None:
         slug = str(raw or "").strip().lower()
         if slug and slug not in values:
             values.append(slug)
-    if str(hero.get("alias") or "").casefold() == "monkeyking" and "wukong" not in values:
+
+    alias = str(hero.get("alias") or "").strip()
+    add(hero.get("slug"))
+    add(alias)
+    add(_camel_slug(alias))
+
+    if alias.casefold() == "monkeyking":
+        values = [value for value in values if value != "wukong"]
         values.insert(0, "wukong")
     return values
 
