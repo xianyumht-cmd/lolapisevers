@@ -15,6 +15,46 @@ logger = logging.getLogger("LOLDataSystem")
 ARAM_IMAGE_RENDERER_VERSION = "3"
 
 
+def _balance_unavailable(error_class: str = "unexpected_error") -> dict:
+    return {
+        "status": "unavailable",
+        "provider": "arammayhem",
+        "patch": "",
+        "changes": [],
+        "summary": "",
+        "stale": False,
+        "snapshot_age_seconds": 0,
+        "error_class": error_class,
+    }
+
+
+def _payload_with_balance(ctx, payload: dict) -> dict:
+    if isinstance(payload.get("balance"), dict):
+        return payload
+    hero = payload.get("hero") if isinstance(payload.get("hero"), dict) else {}
+    hero_query = str(
+        hero.get("alias")
+        or hero.get("name")
+        or hero.get("title")
+        or payload.get("query")
+        or ""
+    ).strip()
+    enriched = dict(payload)
+    if not hero_query:
+        enriched["balance"] = _balance_unavailable("hero_not_found")
+        return enriched
+    try:
+        enriched["balance"] = query_aram_balance(ctx, hero_query)
+    except Exception as exc:
+        logger.warning(
+            "海符榜图片英雄平衡查询降级 hero=%s error=%s",
+            hero_query,
+            exc.__class__.__name__,
+        )
+        enriched["balance"] = _balance_unavailable(exc.__class__.__name__)
+    return enriched
+
+
 def _aram_image_cache_key(payload: dict) -> tuple[str, str]:
     hero = payload.get("hero") if isinstance(payload.get("hero"), dict) else {}
     canonical_alias = str(hero.get("alias") or hero.get("name") or "unknown").strip().casefold()
@@ -50,6 +90,7 @@ def _image_response(body: bytes, etag: str, max_age: int, cache_status: str) -> 
 
 
 def _build_cached_image_response(ctx, payload: dict, if_none_match: str = "") -> Response:
+    payload = _payload_with_balance(ctx, payload)
     cache_key, etag = _aram_image_cache_key(payload)
     max_age = int(getattr(ctx, "aram_image_cache_seconds", 300))
     if if_none_match.strip() == etag:
@@ -72,19 +113,6 @@ def _build_cached_image_response(ctx, payload: dict, if_none_match: str = "") ->
         body = bytes(rendered.body)
         ctx.aram_image_cache.set(cache_key, body)
         return _image_response(body, etag, max_age, "miss")
-
-
-def _balance_unavailable(error_class: str = "unexpected_error") -> dict:
-    return {
-        "status": "unavailable",
-        "provider": "arammayhem",
-        "patch": "",
-        "changes": [],
-        "summary": "",
-        "stale": False,
-        "snapshot_age_seconds": 0,
-        "error_class": error_class,
-    }
 
 
 @router.get("/aram_augments")
