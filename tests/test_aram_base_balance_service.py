@@ -47,6 +47,43 @@ SERAPHINE_ZH_HTML = """
 </body></html>
 """
 
+YASUO_LIVE_SHAPE_HTML = """
+<html><body>
+<div>Ver: 16.15</div>
+<section>
+Balance adjustment
+Damage Dealt -
+Damage Taken -
+Attack Speed + 2.5%
+Cooldown Reduction -
+Healing -
+Tenacity -
+Shield Amount -
+Energy Regen -
+ADVERTISEMENT 300 250
+</section>
+<div>Summoner spells</div>
+</body></html>
+"""
+
+CORKI_VERSION_SELECTOR_HTML = """
+<html><body>
+<div>Version: 16.15</div>
+<section>
+Balance adjustment
+Damage Dealt -
+Damage Taken -10%
+Attack Speed -
+Cooldown Reduction -20
+Healing -
+Tenacity -
+Shield Amount -
+Energy Regen -
+</section>
+<div>Build</div>
+</body></html>
+"""
+
 
 class FakeContext:
     def __init__(self):
@@ -126,6 +163,24 @@ class BaseBalanceParserTests(unittest.TestCase):
     def test_current_chinese_opgg_labels_are_supported(self):
         self.assert_seraphine_complete(parse_base_balance_page(SERAPHINE_ZH_HTML))
 
+    def test_live_yasuo_shape_accepts_spaced_sign_and_unsigned_noise(self):
+        result = parse_base_balance_page(YASUO_LIVE_SHAPE_HTML)
+        self.assertTrue(result["complete"])
+        self.assertEqual(result["patch"], "16.15")
+        self.assertEqual(
+            [(item["key"], item["value"], item["direction"]) for item in result["changes"]],
+            [("attack_speed", "+2.5%", "buff")],
+        )
+
+    def test_version_selector_patch_is_extracted(self):
+        result = parse_base_balance_page(CORKI_VERSION_SELECTOR_HTML)
+        self.assertTrue(result["complete"])
+        self.assertEqual(result["patch"], "16.15")
+        self.assertEqual(
+            [(item["key"], item["value"]) for item in result["changes"]],
+            [("damage_taken", "-10%"), ("ability_haste", "-20")],
+        )
+
     def test_damage_taken_negative_is_buff(self):
         result = parse_base_balance_page(
             "Balance adjustment Damage Dealt +5% Damage Taken -10% Healing +10% Build"
@@ -196,6 +251,10 @@ class BaseBalanceQueryTests(unittest.TestCase):
         self.assertEqual(
             client.calls[0][1],
             "https://op.gg/lol/modes/aram/seraphine/build",
+        )
+        self.assertEqual(
+            client.calls[0][2]["headers"]["Referer"],
+            "https://op.gg/lol/modes/aram",
         )
         self.assertEqual(len(store.saved), 1)
 
