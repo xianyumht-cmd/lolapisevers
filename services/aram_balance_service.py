@@ -1,0 +1,468 @@
+from __future__ import annotations
+
+import copy
+import html
+import json
+import re
+import time
+from typing import Any, Dict, List, Optional
+
+from services.aram_upstream_state import (
+    aram_snapshot_max_age_seconds,
+    load_champion_catalog,
+    safe_error_class,
+    safe_error_message,
+    snapshot_store,
+    upstream_client,
+)
+from utils.text_utils import normalize_search_text
+
+
+BALANCE_HTTP_SOURCE_ID = "aram-balance-page"
+RIOT_VERSION_SOURCE_ID = "riot-ddragon-versions"
+RIOT_VERSION_URL = "https://ddragon.leagueoflegends.com/api/versions.json"
+BALANCE_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 Chrome/151 Safari/537.36"
+    ),
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.7",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+}
+RIOT_VERSION_HEADERS = {
+    "User-Agent": BALANCE_HEADERS["User-Agent"],
+    "Accept": "application/json,text/plain;q=0.9,*/*;q=0.8",
+}
+
+_BALANCE_FIELDS = {
+    "damage dealt": ("damage_dealt", "造成伤害"),
+    "damage taken": ("damage_taken", "承受伤害"),
+    "attack speed": ("attack_speed", "攻击速度"),
+    "ability haste": ("ability_haste", "技能急速"),
+    "cooldown reduction": ("ability_haste", "技能急速"),
+    "healing": ("healing", "治疗"),
+    "shielding": ("shielding", "护盾"),
+    "tenacity": ("tenacity", "韧性"),
+    "minion damage": ("minion_damage", "对小兵伤害"),
+}
+_BALANCE_PATTERN = re.compile(
+    r"(?P<name>Damage\s+Dealt|Damage\s+Taken|Attack\s+Speed|Ability\s+Haste|"
+    r"Cooldown\s+Reduction|Healing|Shielding|Tenacity|Minion\s+Damage)"
+    r"\s*(?P<value>[+-]?\d+(?:\.\d+)?%?)",
+    re.IGNORECASE,
+)
+_PATCH_PATTERNS = (
+    re.compile(r"Patch\s*:\s*(?P<patch>\d{1,2}\.\d{1,2})", re.IGNORECASE),
+    re.compile(r"\bpatch\s*(?P<patch>\d{1,2}\.\d{1,2})\b", re.IGNORECASE),
+)
+_MULTIPLIER_KEYS = {
+    "damage_dealt",
+    "damage_taken",
+    "attack_speed",
+    "healing",
+    "shielding",
+    "minion_damage",
+}
+
+
+def _normalize_escaped_html(value: str) -> str:
+    return (
+        str(value or "")
+        .replace("\\u003c", "<")
+        .replace("\\u003e", ">")
+        .replace("\\u0026", "&")
+        .replace('\\"', '"')
+        .replace("\\/", "/")
+    )
+
+
+def _clean_text(value: str) -> str:
+    text = _normalize_escaped_html(value)
+    text = re.sub(
+        r"<(script|style)[^>]*>.*?</\1>",
+        " ",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    text = re.sub(r"<[^>]+>", " ", text)
+    return re.sub(r"\s+", " ", html.unescape(text)).strip()
+
+
+def _patch_from_text(text: str) -> str:
+    for pattern in _PATCH_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            return str(match.group("patch") or "").strip()
+    return ""
+
+
+def _patch_tuple(value: str) -> Optional[tuple[int, int]]:
+    match = re.search(r"(?P<major>\d{1,2})\.(?P<minor>\d{1,2})", str(value or ""))
+    if not match:
+        return None
+    return int(match.group("major")), int(match.group("minor"))
+
+
+def _patches_match(first: str, second: str) -> bool:
+    a = _patch_tuple(first)
+    b = _patch_tuple(second)
+    return bool(a and b and a == b)
+
+
+def _riot_display_patch(version: str) -> str:
+    parsed = _patch_tuple(version)
+    if not parsed:
+        return ""
+    major, minor = parsed
+    # Riot's public patch-note labels use 25.x/26.x while Data Dragon keeps
+    # the client-data major as 15.x/16.x. Convert only the modern year-based era.
+    display_major = major + 10 if 15 <= major <= 40 else major
+    return f"{display_major}.{minor}"
+
+
+def _current_riot_patch(ctx: Any) -> str:
+    cached = ctx.aram_augment_cache.get("aram_current_riot_patch")
+    if isinstance(cached, dict):
+        patch = str(cached.get("patch") or "").strip()
+        if patch:
+            return patch
+
+    response = upstream_client(ctx).request(
+        RIOT_VERSION_SOURCE_ID,
+        RIOT_VERSION_URL,
+        headers=RIOT_VERSION_HEADERS,
+        attempts=1,
+        connect_timeout=2.0,
+        read_timeout=3.0,
+    )
+    if not response.ok:
+        return ""
+    try:
+        values = json.loads(response.text)
+    except Exception:
+        return ""
+    if not isinstance(values, list) or not values:
+        return ""
+    patch = _riot_display_patch(str(values[0] or ""))
+    if patch:
+        ctx.aram_augment_cache.set("aram_current_riot_patch", {"patch": patch})
+    return patch
+
+
+def _numeric_value(raw: str) -> Optional[float]:
+    match = re.search(r"[+-]?\d+(?:\.\d+)?", str(raw or ""))
+    if not match:
+        return None
+    try:
+        return float(match.group(0))
+    except ValueError:
+        return None
+
+
+def _balance_direction(key: str, raw_value: str) -> str:
+    numeric = _numeric_value(raw_value)
+    if numeric is None:
+        return "neutral"
+
+    stripped = str(raw_value or "").strip()
+    explicit_sign = stripped.startswith(("+", "-"))
+    if explicit_sign:
+        delta = numeric
+    elif key in _MULTIPLIER_KEYS and stripped.endswith("%"):
+        delta = numeric - 100.0
+    else:
+        delta = numeric
+
+    if key == "damage_taken":
+        delta = -delta
+    if abs(delta) < 0.0001:
+        return "neutral"
+    return "buff" if delta > 0 else "debuff"
+
+
+def parse_balance_page(value: str) -> Dict[str, Any]:
+    text = _clean_text(value)
+    changes: List[Dict[str, str]] = []
+    seen = set()
+    for match in _BALANCE_PATTERN.finditer(text):
+        normalized_name = re.sub(r"\s+", " ", match.group("name").strip().lower())
+        field = _BALANCE_FIELDS.get(normalized_name)
+        if field is None:
+            continue
+        key, label = field
+        raw_value = str(match.group("value") or "").strip()
+        dedupe_key = (key, raw_value.casefold())
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        changes.append(
+            {
+                "key": key,
+                "label": label,
+                "value": raw_value,
+                "direction": _balance_direction(key, raw_value),
+            }
+        )
+        if len(changes) >= 10:
+            break
+
+    return {
+        "patch": _patch_from_text(text),
+        "changes": changes,
+        "summary": " · ".join(
+            f"{item['label']} {item['value']}" for item in changes
+        ),
+    }
+
+
+def _champion_sources(ctx: Any) -> List[Dict[str, Any]]:
+    cached = ctx.aram_augment_cache.get("champions")
+    if isinstance(cached, list):
+        return copy.deepcopy(cached)
+    catalog = load_champion_catalog(ctx)
+    champions = catalog.get("champions") if isinstance(catalog, dict) else []
+    return copy.deepcopy(champions) if isinstance(champions, list) else []
+
+
+def find_champion_for_balance(ctx: Any, query: str) -> Optional[Dict[str, Any]]:
+    needle = normalize_search_text(query)
+    if not needle:
+        return None
+    champions = _champion_sources(ctx)
+    for hero in champions:
+        if not isinstance(hero, dict):
+            continue
+        if needle in {
+            normalize_search_text(hero.get("alias")),
+            normalize_search_text(hero.get("slug")),
+            normalize_search_text(hero.get("title")),
+            normalize_search_text(hero.get("name")),
+        }:
+            return hero
+    for hero in champions:
+        if not isinstance(hero, dict):
+            continue
+        haystack = normalize_search_text(
+            ",".join(
+                str(hero.get(key) or "")
+                for key in ("alias", "slug", "title", "name", "keywords")
+            )
+        )
+        if needle in haystack:
+            return hero
+    return None
+
+
+def _camel_slug(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    text = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1-\2", text)
+    text = re.sub(r"([a-z0-9])([A-Z])", r"\1-\2", text)
+    text = text.replace("'", "").replace(".", "").replace("_", "-").replace(" ", "-")
+    text = re.sub(r"-+", "-", text)
+    return text.strip("-").lower()
+
+
+def _slug_candidates(hero: Dict[str, Any]) -> List[str]:
+    values: List[str] = []
+
+    def add(raw: Any) -> None:
+        slug = str(raw or "").strip().lower()
+        if slug and slug not in values:
+            values.append(slug)
+
+    alias = str(hero.get("alias") or "").strip()
+    add(hero.get("slug"))
+    add(alias)
+    add(_camel_slug(alias))
+
+    if alias.casefold() == "monkeyking":
+        values = [value for value in values if value != "wukong"]
+        values.insert(0, "wukong")
+    return values
+
+
+def _empty_balance(*, error_class: str = "", status: str = "unavailable") -> Dict[str, Any]:
+    return {
+        "status": status,
+        "provider": "arammayhem",
+        "patch": "",
+        "page_patch": "",
+        "current_patch_verified": False,
+        "changes": [],
+        "summary": "",
+        "stale": False,
+        "snapshot_age_seconds": 0,
+        "error_class": str(error_class or ""),
+        "duration_ms": 0.0,
+        "attempts": 0,
+        "http_status": 0,
+    }
+
+
+def _syncing_balance(
+    *,
+    official_patch: str,
+    page_patch: str,
+    started: float,
+    attempts: int,
+    http_status: int,
+) -> Dict[str, Any]:
+    result = _empty_balance(error_class="patch_mismatch", status="syncing")
+    result.update(
+        {
+            "patch": official_patch,
+            "page_patch": page_patch,
+            "current_patch_verified": True,
+            "summary": (
+                f"官方版本 {official_patch}，平衡页仍为 {page_patch or '未知旧版本'}，"
+                "暂不展示旧 Buff / Debuff 数值。"
+            ),
+            "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+            "attempts": attempts,
+            "http_status": http_status,
+        }
+    )
+    return result
+
+
+def _fetch_balance(ctx: Any, hero: Dict[str, Any]) -> Dict[str, Any]:
+    started = time.perf_counter()
+    alias = str(hero.get("alias") or hero.get("name") or "unknown").strip().casefold()
+    snapshot_source_id = "aram-balance-" + re.sub(r"[^a-z0-9_.-]+", "-", alias).strip("-")
+    if not snapshot_source_id or snapshot_source_id == "aram-balance-":
+        snapshot_source_id = "aram-balance-unknown"
+
+    store = snapshot_store(ctx)
+    snapshot = store.load(
+        snapshot_source_id,
+        max_age_seconds=aram_snapshot_max_age_seconds(),
+    )
+    official_patch = _current_riot_patch(ctx)
+    last_error_class = "unavailable"
+    last_error_message = ""
+    attempts = 0
+    http_status = 0
+
+    for slug in _slug_candidates(hero):
+        response = upstream_client(ctx).request(
+            BALANCE_HTTP_SOURCE_ID,
+            f"https://arammayhem.com/build/{slug}/",
+            headers=BALANCE_HEADERS,
+            attempts=1,
+            connect_timeout=2.0,
+            read_timeout=4.0,
+        )
+        attempts = max(attempts, int(response.attempts or 0))
+        http_status = int(response.status_code or 0)
+        if not response.ok:
+            last_error_class = safe_error_class(response)
+            last_error_message = safe_error_message(response)
+            continue
+
+        parsed = parse_balance_page(response.text)
+        page_patch = str(parsed.get("patch") or "").strip()
+        if not page_patch and not parsed.get("changes"):
+            last_error_class = "validation_error"
+            last_error_message = "balance page contained no recognizable patch or adjustment data"
+            continue
+
+        if official_patch and page_patch and not _patches_match(page_patch, official_patch):
+            return _syncing_balance(
+                official_patch=official_patch,
+                page_patch=page_patch,
+                started=started,
+                attempts=int(response.attempts or 0),
+                http_status=int(response.status_code or 0),
+            )
+
+        result = {
+            **_empty_balance(status="ok"),
+            **parsed,
+            "status": "ok" if page_patch else "unverified",
+            "patch": page_patch or official_patch,
+            "page_patch": page_patch,
+            "current_patch_verified": bool(
+                official_patch and page_patch and _patches_match(page_patch, official_patch)
+            ),
+            "stale": False,
+            "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+            "attempts": int(response.attempts or 0),
+            "http_status": int(response.status_code or 0),
+            "error_class": "" if page_patch else "patch_unverified",
+        }
+        try:
+            store.save(
+                snapshot_source_id,
+                result,
+                {
+                    "provider": "arammayhem",
+                    "patch": str(result.get("patch") or ""),
+                    "page_patch": page_patch,
+                    "current_patch_verified": bool(result.get("current_patch_verified")),
+                    "http_status": int(response.status_code or 0),
+                },
+            )
+        except Exception:
+            pass
+        return result
+
+    if snapshot.ok and isinstance(snapshot.payload, dict):
+        snapshot_patch = str(snapshot.payload.get("patch") or "").strip()
+        if official_patch and (not snapshot_patch or not _patches_match(snapshot_patch, official_patch)):
+            return _syncing_balance(
+                official_patch=official_patch,
+                page_patch=snapshot_patch,
+                started=started,
+                attempts=attempts,
+                http_status=http_status,
+            )
+        result = copy.deepcopy(snapshot.payload)
+        result["status"] = "snapshot"
+        result["stale"] = True
+        result["snapshot_age_seconds"] = int(snapshot.age_seconds)
+        result["current_patch_verified"] = bool(
+            official_patch and snapshot_patch and _patches_match(snapshot_patch, official_patch)
+        )
+        result["error_class"] = last_error_class
+        result["duration_ms"] = round((time.perf_counter() - started) * 1000, 1)
+        result["attempts"] = attempts
+        result["http_status"] = http_status
+        return result
+
+    try:
+        store.record_refresh_error(
+            snapshot_source_id,
+            last_error_class,
+            last_error_message,
+        )
+    except Exception:
+        pass
+    result = _empty_balance(error_class=last_error_class)
+    result["patch"] = official_patch
+    result["current_patch_verified"] = bool(official_patch)
+    result["duration_ms"] = round((time.perf_counter() - started) * 1000, 1)
+    result["attempts"] = attempts
+    result["http_status"] = http_status
+    return result
+
+
+def query_aram_balance(ctx: Any, hero_query: str) -> Dict[str, Any]:
+    hero = find_champion_for_balance(ctx, hero_query)
+    if not hero:
+        return _empty_balance(error_class="hero_not_found")
+
+    alias = str(hero.get("alias") or hero.get("name") or "unknown").strip().casefold()
+    cache_key = f"aram_balance:{alias}"
+    cached = ctx.aram_augment_cache.get(cache_key)
+    if isinstance(cached, dict):
+        result = copy.deepcopy(cached)
+        result["cache_hit"] = True
+        return result
+
+    result = _fetch_balance(ctx, hero)
+    cached_result = copy.deepcopy(result)
+    cached_result["cache_hit"] = False
+    ctx.aram_augment_cache.set(cache_key, cached_result)
+    return copy.deepcopy(cached_result)
