@@ -47,6 +47,32 @@ ARAM_PAYLOAD = {
     "stale": False,
 }
 
+ARAM_BALANCE = {
+    "status": "ok",
+    "complete": True,
+    "scope": "aram",
+    "provider": "opgg",
+    "items": [
+        {
+            "key": "healing",
+            "label": "治疗",
+            "value": "-20%",
+            "direction": "debuff",
+        }
+    ],
+    "buffs": [],
+    "debuffs": [
+        {
+            "key": "healing",
+            "label": "治疗",
+            "value": "-20%",
+            "direction": "debuff",
+        }
+    ],
+    "summary": "治疗 -20%",
+    "stale": False,
+}
+
 
 class GroupGuardDeliveryRouterTests(unittest.IsolatedAsyncioTestCase):
     async def test_shard_auto_returns_final_image_segment(self):
@@ -80,10 +106,45 @@ class GroupGuardDeliveryRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["meta"]["hero"]["alias"], "Kalista")
         self.assertNotIn("rows", body)
 
+    async def test_aram_command_enriches_image_payload_with_balance(self):
+        image = b"\x89PNG\r\naram-image"
+        renderer = AsyncMock(return_value=Response(content=image, media_type="image/png"))
+        with patch(
+            "routers.groupguard_delivery.query_aram_augments",
+            new=AsyncMock(return_value=ARAM_PAYLOAD),
+        ), patch(
+            "routers.groupguard_delivery.query_aram_balance",
+            new=AsyncMock(return_value=ARAM_BALANCE),
+        ) as balance_query, patch(
+            "routers.groupguard_delivery._render_feature_image",
+            new=renderer,
+        ):
+            response = await groupguard_query(
+                request_with_ctx(),
+                {
+                    "feature": "aram",
+                    "parameters": {"hero": "阿狸"},
+                    "preferred": "image",
+                    "capabilities": {"image": True, "text": True, "forward": True},
+                },
+            )
+
+        body = decode(response)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["delivery"]["segments"][0]["type"], "image")
+        balance_query.assert_awaited_once()
+        rendered_payload = renderer.await_args.args[2]
+        self.assertEqual(rendered_payload["balance"]["summary"], "治疗 -20%")
+        self.assertEqual(rendered_payload["balance"]["scope"], "aram")
+
     async def test_aram_image_failure_falls_back_to_service_text(self):
         with patch(
             "routers.groupguard_delivery.query_aram_augments",
             new=AsyncMock(return_value=ARAM_PAYLOAD),
+        ), patch(
+            "routers.groupguard_delivery.query_aram_balance",
+            new=AsyncMock(return_value=ARAM_BALANCE),
         ), patch(
             "routers.groupguard_delivery._render_feature_image",
             new=AsyncMock(
