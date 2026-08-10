@@ -29,13 +29,19 @@ _BALANCE_RULES = (
     (
         "damage_taken",
         "承受伤害",
-        ("Damage Taken", "Damage Received", "承受伤害", "受到伤害"),
+        (
+            "Damage Taken",
+            "Damage Received",
+            "承受伤害",
+            "受到伤害",
+            "承伤",
+        ),
         True,
     ),
     (
         "attack_speed",
         "攻击速度",
-        ("Attack Speed", "攻击速度"),
+        ("Attack Speed", "攻击速度", "攻速"),
         False,
     ),
     (
@@ -45,6 +51,7 @@ _BALANCE_RULES = (
             "Ability Haste",
             "Cooldown Reduction",
             "技能急速",
+            "技能加速",
             "冷却缩减",
         ),
         False,
@@ -52,13 +59,26 @@ _BALANCE_RULES = (
     (
         "healing",
         "治疗",
-        ("Healing", "治疗效果", "治疗"),
+        (
+            "Healing",
+            "Healing Done",
+            "治疗效果",
+            "治疗",
+            "生命恢复",
+        ),
         False,
     ),
     (
         "shielding",
         "护盾",
-        ("Shield Amount", "Shielding", "护盾效果", "护盾量", "护盾"),
+        (
+            "Shield Amount",
+            "Shielding",
+            "护盾吸收量",
+            "护盾效果",
+            "护盾量",
+            "护盾",
+        ),
         False,
     ),
     (
@@ -70,7 +90,28 @@ _BALANCE_RULES = (
     (
         "minion_damage",
         "对小兵伤害",
-        ("Damage Dealt to Minions", "Minion Damage", "对小兵伤害"),
+        (
+            "Damage Dealt to Minions",
+            "Minion Damage",
+            "Damage to Minions",
+            "对小兵伤害",
+            "小兵伤害",
+        ),
+        False,
+    ),
+    (
+        "resource_regen",
+        "资源回复",
+        (
+            "Energy Regen",
+            "Energy Regeneration",
+            "Mana Regen",
+            "Mana Regeneration",
+            "能量回复",
+            "能量恢复",
+            "法力回复",
+            "法力恢复",
+        ),
         False,
     ),
 )
@@ -90,6 +131,7 @@ _BALANCE_END_MARKERS = (
     "Runes",
     "符文",
 )
+_SIGNED_VALUE_RE = re.compile(r"(?<![\d.])[+-]\d+(?:\.\d+)?%?")
 
 
 def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -224,7 +266,7 @@ def extract_aram_balance_state(html_text: str) -> Dict[str, Any]:
             for alias in sorted(aliases, key=len, reverse=True)
         )
         match = re.search(
-            rf"(?:{alias_pattern})\s*[:：]?\s*(?P<value>-|[+-]?\d+(?:\.\d+)?%?)",
+            rf"(?:{alias_pattern})\s*[:：]?\s*(?P<value>[+-]?\d+(?:\.\d+)?%?|-)",
             section,
             flags=re.I,
         )
@@ -243,6 +285,30 @@ def extract_aram_balance_state(html_text: str) -> Dict[str, Any]:
                 "direction": direction,
             }
         )
+
+    # Do not call the state "complete" when OP.GG adds a new signed modifier
+    # that this parser does not understand yet. This is the same class of bug
+    # that previously turned missing data into a false "no changes" result.
+    signed_values = _SIGNED_VALUE_RE.findall(section)
+    if len(signed_values) > len(items):
+        return {
+            "status": "unavailable",
+            "complete": False,
+            "patch": _parse_patch(visible),
+            "items": items,
+            "buffs": [
+                copy.deepcopy(item)
+                for item in items
+                if item["direction"] == "buff"
+            ],
+            "debuffs": [
+                copy.deepcopy(item)
+                for item in items
+                if item["direction"] == "debuff"
+            ],
+            "summary": "检测到未识别的英雄平衡字段，已拒绝把部分数据冒充完整状态",
+            "error_class": "unparsed_balance_values",
+        }
 
     buffs = [copy.deepcopy(item) for item in items if item["direction"] == "buff"]
     debuffs = [
@@ -266,20 +332,7 @@ def extract_aram_balance_state(html_text: str) -> Dict[str, Any]:
     }
 
 
-def _snapshot_fallback(
-    snapshot: Any,
-    *,
-    error_class: str,
-    source_url: str = "",
-) -> Dict[str, Any]:
-    if getattr(snapshot, "ok", False) and isinstance(snapshot.payload, dict):
-        result = copy.deepcopy(snapshot.payload)
-        result["status"] = "snapshot"
-        result["stale"] = True
-        result["snapshot_age_seconds"] = int(snapshot.age_seconds)
-        result["fallback_reason"] = error_class
-        result["error_class"] = error_class
-        return result
+def _unavailable_result(error_class: str, source_url: str = "") -> Dict[str, Any]:
     return {
         "status": "unavailable",
         "complete": False,
@@ -298,6 +351,23 @@ def _snapshot_fallback(
     }
 
 
+def _snapshot_fallback(
+    snapshot: Any,
+    *,
+    error_class: str,
+    source_url: str = "",
+) -> Dict[str, Any]:
+    if getattr(snapshot, "ok", False) and isinstance(snapshot.payload, dict):
+        result = copy.deepcopy(snapshot.payload)
+        result["status"] = "snapshot"
+        result["stale"] = True
+        result["snapshot_age_seconds"] = int(snapshot.age_seconds)
+        result["fallback_reason"] = error_class
+        result["error_class"] = error_class
+        return result
+    return _unavailable_result(error_class, source_url)
+
+
 def build_aram_balance_payload(
     ctx: Any,
     query: str,
@@ -307,17 +377,11 @@ def build_aram_balance_payload(
     started = time.perf_counter()
     hero = resolved_hero or find_champion_for_opgg(ctx, query)
     if not hero:
-        return _snapshot_fallback(
-            type("MissingSnapshot", (), {"ok": False})(),
-            error_class="champion_not_found",
-        )
+        return _unavailable_result("champion_not_found")
 
     alias = str(hero.get("alias") or "").strip()
     if not alias:
-        return _snapshot_fallback(
-            type("MissingSnapshot", (), {"ok": False})(),
-            error_class="champion_alias_missing",
-        )
+        return _unavailable_result("champion_alias_missing")
 
     cache_key = f"aram_balance:{alias.casefold()}"
     cached = ctx.aram_augment_cache.get(cache_key)
@@ -336,7 +400,9 @@ def build_aram_balance_payload(
     last_url = ""
 
     for slug in _slug_candidates(hero):
-        url = f"https://op.gg/zh-cn/lol/modes/aram/{slug}/build"
+        # Use OP.GG's locale-neutral ARAM page so field names remain stable for
+        # parsing; the UI still renders our own Chinese labels.
+        url = f"https://op.gg/lol/modes/aram/{slug}/build"
         last_url = url
         response = request_opgg_html(
             ctx,
@@ -412,20 +478,6 @@ async def query_aram_balance(ctx: Any, *, hero: str) -> Dict[str, Any]:
     except asyncio.CancelledError:
         raise
     except Exception as exc:
-        return {
-            "status": "unavailable",
-            "complete": False,
-            "scope": "aram",
-            "provider": "opgg",
-            "source_url": "",
-            "patch": "",
-            "items": [],
-            "buffs": [],
-            "debuffs": [],
-            "summary": "平衡数据暂不可用（不等于无修正）",
-            "stale": False,
-            "snapshot_age_seconds": 0,
-            "fallback_reason": exc.__class__.__name__,
-            "error_class": exc.__class__.__name__,
-            "cache_hit": False,
-        }
+        result = _unavailable_result(exc.__class__.__name__)
+        result["cache_hit"] = False
+        return result
