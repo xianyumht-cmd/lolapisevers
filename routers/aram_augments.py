@@ -22,6 +22,8 @@ def _balance_unavailable(error_class: str = "unexpected_error") -> dict:
         "status": "unavailable",
         "provider": "arammayhem",
         "patch": "",
+        "page_patch": "",
+        "current_patch_verified": False,
         "changes": [],
         "summary": "",
         "stale": False,
