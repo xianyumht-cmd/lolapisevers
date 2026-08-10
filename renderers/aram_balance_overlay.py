@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import io
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from fastapi.responses import Response
 
@@ -18,6 +18,8 @@ def _balance_is_renderable(balance: Dict[str, Any]) -> bool:
         "ok",
         "snapshot",
         "stale",
+        "syncing",
+        "unverified",
     }
 
 
@@ -79,8 +81,18 @@ def build_aram_augment_image_with_balance(ctx: Any, payload: Dict[str, Any]) -> 
             fill=text,
             font=title_font,
         )
+        status = str(balance.get("status") or "").strip().lower()
         patch = str(balance.get("patch") or "").strip()
-        source_label = "快照" if balance.get("stale") else "实时"
+        if status == "syncing":
+            source_label = "同步中"
+        elif balance.get("stale"):
+            source_label = "快照"
+        elif status == "unverified":
+            source_label = "未校验"
+        elif balance.get("current_patch_verified"):
+            source_label = "已校验"
+        else:
+            source_label = "来源页"
         patch_text = f"版本 {patch} · {source_label}" if patch else source_label
         draw.text(
             (width - outer - 20, panel_y + 18),
@@ -93,9 +105,16 @@ def build_aram_augment_image_with_balance(ctx: Any, payload: Dict[str, Any]) -> 
         changes = balance.get("changes") if isinstance(balance.get("changes"), list) else []
         changes = [item for item in changes[:8] if isinstance(item, dict)]
         if not changes:
+            if status == "syncing":
+                page_patch = str(balance.get("page_patch") or "旧版本").strip()
+                message = f"平衡页仍为 {page_patch}，旧 Buff / Debuff 已隐藏，等待当前版本同步"
+            elif status == "unverified":
+                message = "平衡页版本无法校验，当前未发现可展示的英雄专属修正"
+            else:
+                message = "当前版本未发现英雄专属平衡修正"
             draw.text(
                 (outer + 20, panel_y + 63),
-                "当前版本未发现英雄专属平衡修正",
+                fit_text(draw, message, body_font, width - outer * 2 - 40),
                 fill=muted,
                 font=body_font,
                 anchor="lm",
