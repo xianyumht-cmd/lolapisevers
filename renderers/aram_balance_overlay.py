@@ -77,7 +77,7 @@ def build_aram_augment_image_with_balance_response(ctx, payload: Dict[str, Any])
 
         title_x = outer + int(round(18 * scale))
         title_y = panel_top + int(round(14 * scale))
-        draw.text((title_x, title_y), "英雄平衡修正 · 完整状态", fill=text, font=title_font)
+        draw.text((title_x, title_y), "极地大乱斗基础平衡 · 完整状态", fill=text, font=title_font)
 
         patch = str(balance.get("patch") or "").strip()
         source_label = "OP.GG ARAM"
