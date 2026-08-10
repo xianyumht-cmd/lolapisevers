@@ -6,12 +6,13 @@ import logging
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse, Response
 
-from renderers.aram_augments_image import build_aram_augment_image_response
+from renderers.aram_balance_overlay import build_aram_augment_image_with_balance_response
 from services.aram_augments_service import query_aram_augments
+from services.aram_balance_service import query_aram_balance
 
 router = APIRouter()
 logger = logging.getLogger("LOLDataSystem")
-ARAM_IMAGE_RENDERER_VERSION = "2"
+ARAM_IMAGE_RENDERER_VERSION = "3"
 
 
 def _aram_image_cache_key(payload: dict) -> tuple[str, str]:
@@ -19,6 +20,7 @@ def _aram_image_cache_key(payload: dict) -> tuple[str, str]:
     canonical_alias = str(hero.get("alias") or hero.get("name") or "unknown").strip().casefold()
     projection = {
         "hero": hero,
+        "balance": payload.get("balance") or {},
         "rows": payload.get("rows") or [],
         "item_builds": payload.get("item_builds") or [],
         "starter_items": payload.get("starter_items") or [],
@@ -64,7 +66,7 @@ def _build_cached_image_response(ctx, payload: dict, if_none_match: str = "") ->
         cached = ctx.aram_image_cache.get(cache_key)
         if isinstance(cached, bytes):
             return _image_response(cached, etag, max_age, "hit")
-        rendered = build_aram_augment_image_response(ctx, payload)
+        rendered = build_aram_augment_image_with_balance_response(ctx, payload)
         if rendered.status_code >= 400 or not str(rendered.media_type or "").startswith("image/"):
             return rendered
         body = bytes(rendered.body)
@@ -86,7 +88,12 @@ async def aram_augments(
     if ctx is None:
         return JSONResponse(status_code=503, content={"error": "应用上下文不可用"})
     try:
-        payload = await query_aram_augments(ctx, hero=hero)
+        payload, balance = await asyncio.gather(
+            query_aram_augments(ctx, hero=hero),
+            query_aram_balance(ctx, hero=hero),
+        )
+        payload = dict(payload)
+        payload["balance"] = balance
         if output_format == "image":
             return await asyncio.to_thread(
                 _build_cached_image_response,
