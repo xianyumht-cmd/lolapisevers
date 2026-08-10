@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import html
+import json
 import re
 import time
 from typing import Any, Dict, List, Optional
@@ -18,6 +19,8 @@ from utils.text_utils import normalize_search_text
 
 
 BALANCE_HTTP_SOURCE_ID = "aram-balance-page"
+RIOT_VERSION_SOURCE_ID = "riot-ddragon-versions"
+RIOT_VERSION_URL = "https://ddragon.leagueoflegends.com/api/versions.json"
 BALANCE_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -25,6 +28,10 @@ BALANCE_HEADERS = {
     ),
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.7",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+}
+RIOT_VERSION_HEADERS = {
+    "User-Agent": BALANCE_HEADERS["User-Agent"],
+    "Accept": "application/json,text/plain;q=0.9,*/*;q=0.8",
 }
 
 _BALANCE_FIELDS = {
@@ -87,6 +94,59 @@ def _patch_from_text(text: str) -> str:
         if match:
             return str(match.group("patch") or "").strip()
     return ""
+
+
+def _patch_tuple(value: str) -> Optional[tuple[int, int]]:
+    match = re.search(r"(?P<major>\d{1,2})\.(?P<minor>\d{1,2})", str(value or ""))
+    if not match:
+        return None
+    return int(match.group("major")), int(match.group("minor"))
+
+
+def _patches_match(first: str, second: str) -> bool:
+    a = _patch_tuple(first)
+    b = _patch_tuple(second)
+    return bool(a and b and a == b)
+
+
+def _riot_display_patch(version: str) -> str:
+    parsed = _patch_tuple(version)
+    if not parsed:
+        return ""
+    major, minor = parsed
+    # Riot's public patch-note labels use 25.x/26.x while Data Dragon keeps
+    # the client-data major as 15.x/16.x. Convert only the modern year-based era.
+    display_major = major + 10 if 15 <= major <= 40 else major
+    return f"{display_major}.{minor}"
+
+
+def _current_riot_patch(ctx: Any) -> str:
+    cached = ctx.aram_augment_cache.get("aram_current_riot_patch")
+    if isinstance(cached, dict):
+        patch = str(cached.get("patch") or "").strip()
+        if patch:
+            return patch
+
+    response = upstream_client(ctx).request(
+        RIOT_VERSION_SOURCE_ID,
+        RIOT_VERSION_URL,
+        headers=RIOT_VERSION_HEADERS,
+        attempts=1,
+        connect_timeout=2.0,
+        read_timeout=3.0,
+    )
+    if not response.ok:
+        return ""
+    try:
+        values = json.loads(response.text)
+    except Exception:
+        return ""
+    if not isinstance(values, list) or not values:
+        return ""
+    patch = _riot_display_patch(str(values[0] or ""))
+    if patch:
+        ctx.aram_augment_cache.set("aram_current_riot_patch", {"patch": patch})
+    return patch
 
 
 def _numeric_value(raw: str) -> Optional[float]:
@@ -228,6 +288,8 @@ def _empty_balance(*, error_class: str = "", status: str = "unavailable") -> Dic
         "status": status,
         "provider": "arammayhem",
         "patch": "",
+        "page_patch": "",
+        "current_patch_verified": False,
         "changes": [],
         "summary": "",
         "stale": False,
@@ -237,6 +299,32 @@ def _empty_balance(*, error_class: str = "", status: str = "unavailable") -> Dic
         "attempts": 0,
         "http_status": 0,
     }
+
+
+def _syncing_balance(
+    *,
+    official_patch: str,
+    page_patch: str,
+    started: float,
+    attempts: int,
+    http_status: int,
+) -> Dict[str, Any]:
+    result = _empty_balance(error_class="patch_mismatch", status="syncing")
+    result.update(
+        {
+            "patch": official_patch,
+            "page_patch": page_patch,
+            "current_patch_verified": True,
+            "summary": (
+                f"官方版本 {official_patch}，平衡页仍为 {page_patch or '未知旧版本'}，"
+                "暂不展示旧 Buff / Debuff 数值。"
+            ),
+            "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+            "attempts": attempts,
+            "http_status": http_status,
+        }
+    )
+    return result
 
 
 def _fetch_balance(ctx: Any, hero: Dict[str, Any]) -> Dict[str, Any]:
@@ -251,6 +339,7 @@ def _fetch_balance(ctx: Any, hero: Dict[str, Any]) -> Dict[str, Any]:
         snapshot_source_id,
         max_age_seconds=aram_snapshot_max_age_seconds(),
     )
+    official_patch = _current_riot_patch(ctx)
     last_error_class = "unavailable"
     last_error_message = ""
     attempts = 0
@@ -273,20 +362,35 @@ def _fetch_balance(ctx: Any, hero: Dict[str, Any]) -> Dict[str, Any]:
             continue
 
         parsed = parse_balance_page(response.text)
-        if not parsed.get("patch") and not parsed.get("changes"):
+        page_patch = str(parsed.get("patch") or "").strip()
+        if not page_patch and not parsed.get("changes"):
             last_error_class = "validation_error"
             last_error_message = "balance page contained no recognizable patch or adjustment data"
             continue
 
+        if official_patch and page_patch and not _patches_match(page_patch, official_patch):
+            return _syncing_balance(
+                official_patch=official_patch,
+                page_patch=page_patch,
+                started=started,
+                attempts=int(response.attempts or 0),
+                http_status=int(response.status_code or 0),
+            )
+
         result = {
             **_empty_balance(status="ok"),
             **parsed,
-            "status": "ok",
+            "status": "ok" if page_patch else "unverified",
+            "patch": page_patch or official_patch,
+            "page_patch": page_patch,
+            "current_patch_verified": bool(
+                official_patch and page_patch and _patches_match(page_patch, official_patch)
+            ),
             "stale": False,
             "duration_ms": round((time.perf_counter() - started) * 1000, 1),
             "attempts": int(response.attempts or 0),
             "http_status": int(response.status_code or 0),
-            "error_class": "",
+            "error_class": "" if page_patch else "patch_unverified",
         }
         try:
             store.save(
@@ -295,6 +399,8 @@ def _fetch_balance(ctx: Any, hero: Dict[str, Any]) -> Dict[str, Any]:
                 {
                     "provider": "arammayhem",
                     "patch": str(result.get("patch") or ""),
+                    "page_patch": page_patch,
+                    "current_patch_verified": bool(result.get("current_patch_verified")),
                     "http_status": int(response.status_code or 0),
                 },
             )
@@ -303,10 +409,22 @@ def _fetch_balance(ctx: Any, hero: Dict[str, Any]) -> Dict[str, Any]:
         return result
 
     if snapshot.ok and isinstance(snapshot.payload, dict):
+        snapshot_patch = str(snapshot.payload.get("patch") or "").strip()
+        if official_patch and (not snapshot_patch or not _patches_match(snapshot_patch, official_patch)):
+            return _syncing_balance(
+                official_patch=official_patch,
+                page_patch=snapshot_patch,
+                started=started,
+                attempts=attempts,
+                http_status=http_status,
+            )
         result = copy.deepcopy(snapshot.payload)
         result["status"] = "snapshot"
         result["stale"] = True
         result["snapshot_age_seconds"] = int(snapshot.age_seconds)
+        result["current_patch_verified"] = bool(
+            official_patch and snapshot_patch and _patches_match(snapshot_patch, official_patch)
+        )
         result["error_class"] = last_error_class
         result["duration_ms"] = round((time.perf_counter() - started) * 1000, 1)
         result["attempts"] = attempts
@@ -322,6 +440,8 @@ def _fetch_balance(ctx: Any, hero: Dict[str, Any]) -> Dict[str, Any]:
     except Exception:
         pass
     result = _empty_balance(error_class=last_error_class)
+    result["patch"] = official_patch
+    result["current_patch_verified"] = bool(official_patch)
     result["duration_ms"] = round((time.perf_counter() - started) * 1000, 1)
     result["attempts"] = attempts
     result["http_status"] = http_status
