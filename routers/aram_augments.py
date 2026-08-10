@@ -14,6 +14,11 @@ router = APIRouter()
 logger = logging.getLogger("LOLDataSystem")
 ARAM_IMAGE_RENDERER_VERSION = "3"
 
+# Keep the historical router-level renderer seam. Existing tests and any
+# internal callers can continue patching this symbol while the implementation
+# now includes the balance overlay.
+build_aram_augment_image_response = build_aram_augment_image_with_balance_response
+
 
 def _aram_image_cache_key(payload: dict) -> tuple[str, str]:
     hero = payload.get("hero") if isinstance(payload.get("hero"), dict) else {}
@@ -66,7 +71,7 @@ def _build_cached_image_response(ctx, payload: dict, if_none_match: str = "") ->
         cached = ctx.aram_image_cache.get(cache_key)
         if isinstance(cached, bytes):
             return _image_response(cached, etag, max_age, "hit")
-        rendered = build_aram_augment_image_with_balance_response(ctx, payload)
+        rendered = build_aram_augment_image_response(ctx, payload)
         if rendered.status_code >= 400 or not str(rendered.media_type or "").startswith("image/"):
             return rendered
         body = bytes(rendered.body)
