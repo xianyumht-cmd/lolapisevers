@@ -6,7 +6,9 @@ import logging
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse, Response
 
-from renderers.aram_balance_overlay import build_aram_augment_image_with_balance
+from renderers.aram_balance_overlay import (
+    build_aram_augment_image_with_balance as build_aram_augment_image_response,
+)
 from services.aram_augments_service import query_aram_augments
 from services.aram_balance_service import query_aram_balance
 
@@ -107,7 +109,7 @@ def _build_cached_image_response(ctx, payload: dict, if_none_match: str = "") ->
         cached = ctx.aram_image_cache.get(cache_key)
         if isinstance(cached, bytes):
             return _image_response(cached, etag, max_age, "hit")
-        rendered = build_aram_augment_image_with_balance(ctx, payload)
+        rendered = build_aram_augment_image_response(ctx, payload)
         if rendered.status_code >= 400 or not str(rendered.media_type or "").startswith("image/"):
             return rendered
         body = bytes(rendered.body)
