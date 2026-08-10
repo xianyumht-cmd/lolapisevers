@@ -6,12 +6,13 @@ import logging
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse, Response
 
-from renderers.aram_augments_image import build_aram_augment_image_response
+from renderers.aram_balance_overlay import build_aram_augment_image_with_balance
 from services.aram_augments_service import query_aram_augments
+from services.aram_balance_service import query_aram_balance
 
 router = APIRouter()
 logger = logging.getLogger("LOLDataSystem")
-ARAM_IMAGE_RENDERER_VERSION = "2"
+ARAM_IMAGE_RENDERER_VERSION = "3"
 
 
 def _aram_image_cache_key(payload: dict) -> tuple[str, str]:
@@ -25,6 +26,7 @@ def _aram_image_cache_key(payload: dict) -> tuple[str, str]:
         "boots": payload.get("boots") or [],
         "summoner_spells": payload.get("summoner_spells") or [],
         "skill_order": payload.get("skill_order") or [],
+        "balance": payload.get("balance") or {},
         "total": payload.get("total") or 0,
         "renderer": ARAM_IMAGE_RENDERER_VERSION,
     }
@@ -64,12 +66,25 @@ def _build_cached_image_response(ctx, payload: dict, if_none_match: str = "") ->
         cached = ctx.aram_image_cache.get(cache_key)
         if isinstance(cached, bytes):
             return _image_response(cached, etag, max_age, "hit")
-        rendered = build_aram_augment_image_response(ctx, payload)
+        rendered = build_aram_augment_image_with_balance(ctx, payload)
         if rendered.status_code >= 400 or not str(rendered.media_type or "").startswith("image/"):
             return rendered
         body = bytes(rendered.body)
         ctx.aram_image_cache.set(cache_key, body)
         return _image_response(body, etag, max_age, "miss")
+
+
+def _balance_unavailable(error_class: str = "unexpected_error") -> dict:
+    return {
+        "status": "unavailable",
+        "provider": "arammayhem",
+        "patch": "",
+        "changes": [],
+        "summary": "",
+        "stale": False,
+        "snapshot_age_seconds": 0,
+        "error_class": error_class,
+    }
 
 
 @router.get("/aram_augments")
@@ -86,7 +101,24 @@ async def aram_augments(
     if ctx is None:
         return JSONResponse(status_code=503, content={"error": "应用上下文不可用"})
     try:
-        payload = await query_aram_augments(ctx, hero=hero)
+        payload_result, balance_result = await asyncio.gather(
+            query_aram_augments(ctx, hero=hero),
+            asyncio.to_thread(query_aram_balance, ctx, hero),
+            return_exceptions=True,
+        )
+        if isinstance(payload_result, BaseException):
+            raise payload_result
+        payload = dict(payload_result)
+        if isinstance(balance_result, BaseException):
+            logger.warning(
+                "海符榜英雄平衡查询降级 hero=%s error=%s",
+                hero,
+                balance_result.__class__.__name__,
+            )
+            payload["balance"] = _balance_unavailable(balance_result.__class__.__name__)
+        else:
+            payload["balance"] = balance_result
+
         if output_format == "image":
             return await asyncio.to_thread(
                 _build_cached_image_response,
