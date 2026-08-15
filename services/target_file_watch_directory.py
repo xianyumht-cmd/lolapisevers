@@ -103,10 +103,11 @@ class DirectoryLanzouResolver:
         )
 
     def resolve_snapshot(self, source_url: str) -> DirectorySnapshot:
-        provider_config = replace(
-            load_lanzou_provider_config(),
-            wer_api_endpoint=TARGET_FILE_DIRECT_WER_ENDPOINT,
-        )
+        # Folder snapshots must keep the shared Provider configuration so that
+        # lanzou_web anti-bot failures can fall back to the configured /api/lanzpro
+        # directory provider. The single-file /api/lanz endpoint is reserved for
+        # concrete file delivery in resolve_for_delivery().
+        provider_config = load_lanzou_provider_config()
         watcher = self._watcher(source_url)
         snapshot = ProviderChain(provider_config).fetch(watcher)
         if not snapshot.files:
