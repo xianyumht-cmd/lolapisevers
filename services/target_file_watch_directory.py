@@ -103,10 +103,11 @@ class DirectoryLanzouResolver:
         )
 
     def resolve_snapshot(self, source_url: str) -> DirectorySnapshot:
-        provider_config = replace(
-            load_lanzou_provider_config(),
-            wer_api_endpoint=TARGET_FILE_DIRECT_WER_ENDPOINT,
-        )
+        # Folder snapshots must keep the shared Provider configuration so that
+        # lanzou_web anti-bot failures can fall back to the configured /api/lanzpro
+        # directory provider. The single-file /api/lanz endpoint is reserved for
+        # concrete file delivery in resolve_for_delivery().
+        provider_config = load_lanzou_provider_config()
         watcher = self._watcher(source_url)
         snapshot = ProviderChain(provider_config).fetch(watcher)
         if not snapshot.files:
@@ -221,6 +222,16 @@ def _baseline_files(value: Any) -> dict[str, dict[str, Any]]:
 def _provider_switch_guard(service: "SafeTargetFileWatchService", baseline: dict[str, Any], current: DirectorySnapshot) -> dict[str, Any] | None:
     previous_provider = str(baseline.get("provider") or "").strip()
     if not previous_provider or previous_provider == current.provider:
+        service._state.pop("provider_switch_guard", None)
+        return None
+
+    previous_keys = set(_baseline_files(baseline))
+    current_keys = {item.key for item in current.files}
+    if len(previous_keys) == 1 and len(current_keys) == 1 and previous_keys != current_keys:
+        # A one-file folder whose canonical filename changed is an unambiguous
+        # rotation even when the provider changed at the same time. Do not wait
+        # for a second identical snapshot: fast rotating folders may never show
+        # the same filename twice and would otherwise remain guarded forever.
         service._state.pop("provider_switch_guard", None)
         return None
 
