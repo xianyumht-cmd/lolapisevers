@@ -225,6 +225,16 @@ def _provider_switch_guard(service: "SafeTargetFileWatchService", baseline: dict
         service._state.pop("provider_switch_guard", None)
         return None
 
+    previous_keys = set(_baseline_files(baseline))
+    current_keys = {item.key for item in current.files}
+    if len(previous_keys) == 1 and len(current_keys) == 1 and previous_keys != current_keys:
+        # A one-file folder whose canonical filename changed is an unambiguous
+        # rotation even when the provider changed at the same time. Do not wait
+        # for a second identical snapshot: fast rotating folders may never show
+        # the same filename twice and would otherwise remain guarded forever.
+        service._state.pop("provider_switch_guard", None)
+        return None
+
     previous_signature = str(baseline.get("signature") or "").strip()
     if previous_signature and previous_signature == current.signature:
         # Equivalent contents from a different provider are safe to accept.
