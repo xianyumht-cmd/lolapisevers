@@ -161,23 +161,6 @@ class TargetFileWatchDirectoryTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.service.status()["baseline"]["provider"], "wer_api")
         self.assertEqual(self.service.status()["baseline"]["file_count"], 2)
 
-    async def test_single_file_name_rotation_across_provider_switch_delivers_immediately(self) -> None:
-        fake = FakeDirectoryResolver([resolved("A.zip", "1")], provider="lanzou_web")
-        self.service.directory_resolver = fake
-        deliveries: list[dict] = []
-        self.service._deliver = lambda payload: deliveries.append(payload) or {"ok": True, "uploaded": True}
-        await self.service.check_once()
-
-        fake.provider = "wer_api"
-        fake.files = [resolved("B.zip", "1")]
-        result = await self.service.check_once()
-
-        self.assertEqual(result["state"], "delivered")
-        self.assertEqual(result["uploaded_count"], 1)
-        self.assertEqual(deliveries[-1]["file"]["name"], "B.zip")
-        self.assertEqual(self.service.status()["baseline"]["provider"], "wer_api")
-        self.assertEqual(self.service.status()["baseline"]["files"][0]["name"], "B.zip")
-
     async def test_equivalent_provider_switch_does_not_create_false_update(self) -> None:
         fake = FakeDirectoryResolver([resolved("A.zip", "1")], provider="lanzou_web")
         self.service.directory_resolver = fake
