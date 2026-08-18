@@ -1,13 +1,47 @@
 # lolapisevers
 
-`lolapisevers` 是一个在 Windows 本地运行的英雄联盟数据 API 服务，基于 `FastAPI + MySQL + Playwright`。当前主要提供 so1 跨区查询、英雄碎片、极地大乱斗强化符文和 LOL 封禁查询，并可在实时抓取失败时使用 MySQL 快照回退。
+`lolapisevers` 是一个在 Windows 本地长期运行的英雄联盟数据接口与运维控制系统，核心由 **FastAPI + MySQL + Playwright** 组成。
 
-仓库还包含一个独立的蓝奏云更新监控服务，默认运行在 `6178` 端口。详细配置见 `lanzou_update_push_api_server/README.md`。
+当前仓库不是只有一个 `5001` 查询 API：正式运行结构同时包含 **5001 业务接口** 与 **6178 蓝奏监控 / 管理控制台**。README 以 `master` 当前代码为准，历史部署状态和具体修复记录请结合 `CHANGELOG.md`、`PROJECT_INDEX.md` 与 `SERVICE_RUNBOOK.md` 查看。
+
+## 当前能力
+
+### 5001 业务接口
+
+- so1 跨区查询，实时抓取失败时可回退到 MySQL 最近成功快照；
+- 英雄碎片查询；
+- 极地大乱斗强化符文与基础 Buff / Debuff 数据查询；
+- LOL 封禁查询，多 Provider 编排、缓存和降级；
+- JSON、文本、PNG、SVG 等输出形式；
+- `health / livez / readyz / build-info` 运行与发布追溯接口。
+
+### 6178 管理与蓝奏监控
+
+- 蓝奏云更新监控、文件变化快照、事件记录与 SnowLuma 通知；
+- 专业化控制台 Shell、侧栏导航、管理令牌 Dialog、状态卡与本地 SVG 资源；
+- 封号 Provider 独立配置与实时诊断；
+- 接口与解析中心、Secret 管理、备份与回滚；
+- 日志、诊断、安全与系统管理独立页面；
+- 蓝奏全局配置、监控项目、通知目标独立页面；
+- 独立接口调试器。
+
+## 当前运行拓扑
+
+正式长期运行推荐只保留 `LOLDataSystem` Windows 服务作为唯一入口：
+
+```text
+LOLDataSystem / NSSM
+  -> powershell.exe -> ops/run_service.ps1
+       -> python app.py                            (5001)
+       -> python -m lanzou_update_push_api_server (6178)
+```
+
+`ops/run_service.ps1` 会加载本机配置并启动两个进程。不要同时使用 Windows 服务、`run_server.bat`、`start_hidden.vbs` 启动多套实例，否则容易造成 5001 / 6178 端口冲突。
 
 ## 环境要求
 
-- Python 3.10+
 - Windows
+- Python 3.10+
 - MySQL 8+
 - Playwright Chromium
 
@@ -22,19 +56,17 @@ $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $PWD "ms-playwright"
 .\.venv\Scripts\python.exe -m playwright install chromium
 ```
 
-使用虚拟环境里的 Python 安装 Chromium，可避免浏览器被装到错误的 Python 环境。
-
 ## 本机配置
 
-先复制安全模板：
+复制安全模板：
 
 ```powershell
 Copy-Item .\ops\app_env.example.ps1 .\ops\app_env.local.ps1
 ```
 
-然后只在本机编辑 `ops/app_env.local.ps1`。该文件已被 Git 忽略，不要把真实密码、token、cookie 或登录状态提交到仓库。
+只在本机编辑 `ops/app_env.local.ps1`。该文件已被 Git 忽略，不要把真实密码、Token、Cookie、API Key 或登录态提交到仓库。
 
-关键配置示例：
+常见基础配置：
 
 ```powershell
 # MySQL
@@ -51,70 +83,78 @@ $env:SO1_HEADLESS = "1"
 $env:SO1_TIMEOUT_MS = "20000"
 $env:SO1_MAX_CONCURRENT_PAGES = "2"
 
-# API
+# 主 API
 $env:APP_HOST = "0.0.0.0"
 $env:APP_PORT = "5001"
-
-# LOL 封禁查询 Provider（示例；真实 URL/凭据仅放在本机文件）
-$env:LOL_BAN_PROVIDERS_JSON = '[{"name":"primary","url":"http://INTRANET_PROVIDER/ban?qq={qq}","method":"GET","timeout_seconds":8}]'
-$env:LOL_BAN_NORMAL_CACHE_SECONDS = "60"
-$env:LOL_BAN_BANNED_CACHE_SECONDS = "300"
-$env:LOL_BAN_STALE_CACHE_SECONDS = "86400"
 ```
 
-## 启动服务
+6178 蓝奏监控自身配置使用：
 
-推荐使用统一启动入口，它会先加载 `ops/app_env.local.ps1`，再启动主 API 和蓝奏云监控：
+```text
+lanzou_update_push_api_server/config.json
+```
+
+安全模板为：
+
+```text
+lanzou_update_push_api_server/config.example.json
+```
+
+第三方蓝奏解析 API Key 应使用环境变量（例如 `LANZOU_API_KEY`），不要写进仓库。
+
+## 启动
+
+推荐统一入口：
 
 ```powershell
 .\run_server.bat
 ```
 
-也可以直接运行服务脚本：
+或：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\ops\run_service.ps1
 ```
 
-需要隐藏窗口时可双击 `start_hidden.vbs`。正式长期运行建议使用项目已有的 `LOLDataSystem` Windows 服务配置。
+需要隐藏窗口的手动运行场景可使用：
 
-直接执行 `python app.py` 不会自动加载 `ops/app_env.local.ps1`；只有在当前终端已经手动设置好全部环境变量时才应这样启动。
+```text
+start_hidden.vbs
+```
 
-## 健康检查
+> 直接执行 `python app.py` 不会自动加载 `ops/app_env.local.ps1`。只有当前终端已经手动设置好全部所需环境变量时才应这样运行。
+
+## 5001 健康与发布追溯
 
 ```powershell
 Invoke-RestMethod "http://127.0.0.1:5001/health"
 Invoke-RestMethod "http://127.0.0.1:5001/livez"
 Invoke-RestMethod "http://127.0.0.1:5001/readyz"
+Invoke-RestMethod "http://127.0.0.1:5001/build-info"
 ```
 
-完全就绪时返回：
+语义：
 
-```json
-{
-  "status": "ok",
-  "liveness": "up",
-  "ready": true,
-  "mysql": "up",
-  "mysql_error": "",
-  "so1_browser": "up",
-  "so1_max_concurrent_pages": 2
-}
-```
+- `/health`：兼容健康状态，进程可响应时保持 HTTP 可访问；
+- `/livez`：只判断 API 进程是否存活；
+- `/readyz`：检查 MySQL 与 so1 浏览器等必要依赖，未就绪时返回 503；
+- `/build-info`：返回部署源码身份，用于确认生产实例对应哪个 Git 提交。
 
-兼容端 `/health` 始终用 HTTP 200 表示 API 进程仍能响应，并通过字段区分状态。`/livez` 只检查进程存活；`/readyz` 会执行真实 MySQL `SELECT 1` 和浏览器状态检查，未就绪时返回 HTTP 503：
-
-- `liveness=up`：API 进程存活，健康端可访问。
-- `ready=true` 且 `status=ok`：MySQL 与 so1 浏览器均可用，可以接管业务流量。
-- `ready=false` 且 `status=degraded`：进程仍存活，但至少一个必要依赖不可用，不应判定为接管成功。
-
-完整只读诊断：
+完整只读体检：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\ops\health_check.ps1
 ```
 
-## 当前接口
+生成部署追溯元数据：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Generate-BuildInfo.ps1
+```
+
+部署包应包含生成的 `build-info.json`，但该运行产物不提交到 Git。生产部署状态应以目标机器的 `/build-info` 和部署验证报告为准，不应只根据仓库里某个历史 Changelog 条目推断。
+
+## 5001 当前主要接口
 
 ### 跨区查询
 
@@ -122,11 +162,7 @@ powershell -ExecutionPolicy Bypass -File .\ops\health_check.ps1
 GET /cross_query?name={召唤师名}&region={大区}&output=pretty|raw|image|svg
 ```
 
-示例：
-
-```powershell
-Invoke-RestMethod "http://127.0.0.1:5001/cross_query?name=testplayer%2312345&region=HN1&output=pretty"
-```
+实时抓取失败时可返回 MySQL 快照，并在结果中标明回退原因。
 
 ### 人工初始化 so1 会话
 
@@ -134,91 +170,109 @@ Invoke-RestMethod "http://127.0.0.1:5001/cross_query?name=testplayer%2312345&reg
 POST /cross_session_init?wait_seconds=180
 ```
 
-当 so1 出现验证码或自动登录失效时使用。接口会打开可视浏览器，等待人工完成登录和验证，并保存会话。
+so1 出现验证码或自动登录失效时使用，可打开可视浏览器等待人工完成登录与验证并保存会话。
 
-### 英雄碎片查询
+### 英雄碎片
 
 ```http
 GET /shard_query?hero={英雄名}&output=image|json
 ```
 
-### 极地大乱斗强化查询
+### 极地大乱斗强化 / 基础平衡数据
 
 ```http
 GET /aram_augments?hero={英雄名}&output=image|json
 ```
 
-英雄别名会先归一到 canonical alias；并发相同查询会合并为一次上游请求。图片成品带 `ETag` 和短期 `Cache-Control`，同一数据不会重复下载素材和重新编码 PNG。
+当前实现包含英雄别名归一、并发相同查询合并、图片缓存与实时 ARAM 页面解析。具体解析修复与上游变化记录见 `CHANGELOG.md`。
 
-### LOL 封禁查询
+### LOL 封禁
 
 ```http
 GET /lolban?qq={QQ号}&output=text|json
 GET /api/v2/lolban?qq={QQ号}&output=text|json
 ```
 
-插件对接使用 `/api/v2/lolban?qq=...&output=json&compat=napcat`。Provider 顺序完全由 `LOL_BAN_PROVIDERS_JSON` 配置；代码不再内置第三方地址。实时 Provider 全部失败时，可在 `LOL_BAN_STALE_CACHE_SECONDS` 窗口内返回最近一次成功结果，响应的 `source` 会明确标为 `stale`。
+机器人/插件接入主要使用 v2 兼容接口。实时 Provider 全部失败时，可在配置的 stale cache 窗口内返回最近一次成功结果。
 
-## 构建与部署追踪
+## 6178 控制台
 
-提交并确认工作树干净后生成部署元数据：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Generate-BuildInfo.ps1
-```
-
-部署产物必须包含生成的 `build-info.json`，但该文件不提交到 Git。以下接口会返回完整 40 位源码提交：
+`master` 当前包含以下独立页面：
 
 ```text
-GET /build-info
-GET /health
-GET /readyz
+/                         控制台总览
+/query-console/lolban     封号 Provider 配置与实时诊断
+/parser-center            接口与解析中心
+/parser-center/secrets    Secret 管理
+/parser-center/advanced   解析中心高级能力
+/main-config              主接口配置
+/lanzou/config            蓝奏全局配置
+/lanzou/watchers          蓝奏监控项目
+/lanzou/targets           通知目标
+/api-debugger             接口调试器
+/logs                     日志中心
+/diagnostics              诊断中心
+/system                   安全、服务与回滚
 ```
 
-若 `commit_complete=false`，该实例不可通过发布追溯门禁。
+旧 `/?tab=...` 入口保留兼容重定向，但新开发和运维应优先使用独立页面。
 
-FastAPI 自动接口文档：
+页面壳可公开加载；涉及配置、Secret、服务控制、回滚等管理 API 时，继续受本机回环限制或 `WEBUI_ADMIN_TOKEN` 保护。真实 Secret 不应回显到页面、Provider JSON、日志或诊断结果。
 
-- `http://127.0.0.1:5001/docs`
-- `http://127.0.0.1:5001/redoc`
+## LOL 封禁 Provider 与 Secret
 
-## 常见问题
+当前控制台支持多 Provider，核心规则是：
 
-### 健康端无法访问
+- 主接口：使用 `LOLMAP_API_TOKEN`；
+- LOL2099：免费备用，不需要 Token；
+- 4PNG：收费备用，使用 `LOL_BAN_4PNG_TOKEN`；
+- 两个备用 Provider 默认关闭，避免无意消耗次数；
+- 推荐顺序：主接口 → LOL2099 → 4PNG；
+- Secret 在对应 Provider 卡片附近管理，保存时不回显真实值；
+- 支持受控热加载到 5001，避免“磁盘已保存但运行进程未加载”的假成功状态；
+- Provider 返回广告、次数上限、未知业务状态等内容时，不应当作正常查询结果发送给用户。
 
-依次检查服务、端口和日志：
+具体管理 API、Schema、备份与回滚行为以当前控制台实现和 `CHANGELOG.md` 为准。
 
-```powershell
-Get-Service LOLDataSystem
-Get-NetTCPConnection -LocalPort 5001 -State Listen
-Get-Content .\logs\service.stderr.log -Tail 80
+## 6178 蓝奏监控接口
+
+基础接口包括：
+
+```text
+GET  /health
+GET  /watchers
+GET  /events
+POST /scan
+POST /scan?watcher_id={id}
+POST /notify/test
 ```
 
-不要同时通过 `run_server.bat`、`start_hidden.vbs` 和 Windows 服务启动多套 `app.py`，否则会出现端口占用。
+详细配置与 SnowLuma 回调格式见：
 
-### `mysql=down`
-
-- 确认 MySQL 服务已经启动。
-- 检查 `ops/app_env.local.ps1` 中的主机、端口、账号、密码和库名。
-- 确认 `3306` 端口可达。
-
-### `so1_browser=down`
-
-- 重启服务并查看 `logs/service.stderr.log`。
-- 确认 Playwright Chromium 安装到了 `PLAYWRIGHT_BROWSERS_PATH` 指向的位置。
-- 必要时重新运行：
-
-```powershell
-$env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $PWD "ms-playwright"
-.\.venv\Scripts\python.exe -m playwright install chromium
+```text
+lanzou_update_push_api_server/README.md
 ```
-
-### `cross_query` 返回 `source=snapshot`
-
-这表示实时抓取失败，系统回退到了 MySQL 中最近一次成功快照。先查看返回中的 `fallback_reason` 和服务日志；若是验证码问题，再调用 `/cross_session_init`。
 
 ## 测试
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
+
+发布或部署前还应执行仓库当前 CI / PowerShell / WebUI JavaScript 检查，不能只以单个接口能打开作为“部署成功”。
+
+## 维护资料
+
+- `CHANGELOG.md`：生产功能与重要修复时间线；
+- `PROJECT_INDEX.md`：项目结构、运维入口和 AI 接手索引；
+- `SERVICE_RUNBOOK.md`：Windows 服务与故障处理手册；
+- `lanzou_update_push_api_server/README.md`：6178 蓝奏监听服务说明；
+- `AGENTS.md`：仓库开发与 AI 执行约定。
+
+## 维护原则
+
+- `master` 是当前默认开发分支；
+- 真实运行状态以目标机器健康端、`/build-info` 和部署验证报告为准；
+- 不提交账号、密码、Token、Cookie、浏览器登录态和本机运行数据；
+- 不同时启动多套 5001 / 6178 实例；
+- Provider、上游页面和第三方接口随时可能变化，涉及生产判断时优先查看最新代码、测试和 `CHANGELOG.md`，不要沿用旧截图或旧接口假设。
