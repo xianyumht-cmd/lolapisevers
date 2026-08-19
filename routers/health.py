@@ -5,6 +5,7 @@ from fastapi import APIRouter, Request, Response, status
 
 from core.build_info import load_build_info
 from services.lolban_service import get_lolban_health
+from services.so1_readiness_service import ensure_so1_readiness
 
 
 router = APIRouter()
@@ -26,19 +27,20 @@ async def _so1_dependency(so1_client: Any) -> dict[str, Any]:
             "max_concurrent_pages": 0,
         }
     try:
-        probe = getattr(so1_client, "check_readiness", None)
-        if not callable(probe):
-            raise RuntimeError("session_probe_unavailable")
-        result = await asyncio.wait_for(probe(), timeout=12.0)
+        result = await asyncio.wait_for(
+            ensure_so1_readiness(so1_client),
+            timeout=20.0,
+        )
         browser_up = bool(result.get("browser_up"))
         authenticated = bool(result.get("session_authenticated"))
         reason = str(result.get("reason") or "")
-        error_class = ""
+        error_class = str(result.get("error_class") or "")
     except Exception as exc:
         browser_up = False
         authenticated = False
         reason = "probe_failed"
         error_class = type(exc).__name__
+        result = {}
     payload = {
         "required": True,
         "status": "up" if browser_up and authenticated else "down",
@@ -49,6 +51,13 @@ async def _so1_dependency(so1_client: Any) -> dict[str, Any]:
     }
     if error_class:
         payload["error_class"] = error_class
+    for key in (
+        "recovery",
+        "recovery_retry_after_seconds",
+        "original_reason",
+    ):
+        if key in result:
+            payload[key] = result[key]
     return payload
 
 
