@@ -118,10 +118,12 @@ class FakeClient:
             with open(self._state_path, "r", encoding="utf-8") as handle:
                 json.load(handle)
         except Exception:
+            # Mirrors Playwright rejecting an invalid storage_state file:
+            # the legacy readiness probe exposes only the exception class.
             return {
                 "browser_up": True,
                 "session_authenticated": False,
-                "reason": "session_expired_or_challenge",
+                "reason": "Error",
             }
         return {
             "browser_up": True,
@@ -222,6 +224,17 @@ class So1ReadinessRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["reason"], "credentials_missing")
         self.assertEqual(result["recovery"], "not_attempted")
         self.assertEqual(client.login_calls, 0)
+
+    async def test_missing_state_uses_blank_context_and_recovers(self):
+        client = FakeClient(self.state_path)
+
+        result = await ensure_so1_readiness(client)
+
+        self.assertTrue(result["session_authenticated"])
+        self.assertEqual(result["recovery"], "auto_recovered")
+        self.assertEqual(client.login_calls, 1)
+        self.assertTrue(client._browser.context_calls)
+        self.assertEqual(client._browser.context_calls[0], {})
 
     async def test_invalid_state_uses_blank_context_and_recovers(self):
         with open(self.state_path, "w", encoding="utf-8") as handle:
