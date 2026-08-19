@@ -227,10 +227,16 @@ async def _recover_or_refine(
     if not bool(baseline.get("browser_up")):
         return baseline
 
-    baseline_reason = str(baseline.get("reason") or "")
-    if baseline_reason not in _RECOVERABLE_REASONS:
-        return baseline
     if not _supports_recovery(client):
+        return baseline
+
+    state_status = _state_status(client)
+    baseline_reason = str(baseline.get("reason") or "")
+    if state_status == "invalid":
+        baseline_reason = "session_state_invalid"
+    elif state_status == "missing":
+        baseline_reason = "session_missing"
+    if baseline_reason not in _RECOVERABLE_REASONS:
         return baseline
 
     lock = _get_recovery_lock(client)
@@ -243,7 +249,12 @@ async def _recover_or_refine(
             _clear_recovery_state(client)
             return fresh
 
+        state_status = _state_status(client)
         fresh_reason = str(fresh.get("reason") or baseline_reason)
+        if state_status == "invalid":
+            fresh_reason = "session_state_invalid"
+        elif state_status == "missing":
+            fresh_reason = "session_missing"
         if fresh_reason not in _RECOVERABLE_REASONS:
             return fresh or baseline
 
@@ -263,12 +274,6 @@ async def _recover_or_refine(
                 recovery="not_attempted",
                 original_reason=fresh_reason,
             )
-
-        state_status = _state_status(client)
-        if state_status == "invalid":
-            fresh_reason = "session_state_invalid"
-        elif state_status == "missing":
-            fresh_reason = "session_missing"
 
         context = None
         try:
