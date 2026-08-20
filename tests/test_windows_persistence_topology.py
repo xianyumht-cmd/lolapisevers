@@ -44,6 +44,15 @@ class WindowsPersistenceTopologyTests(unittest.TestCase):
         self.assertLess(task_index, topology_index)
         self.assertLess(topology_index, retire_index)
 
+    def test_persistence_installer_queries_nssm_appexit_with_default_subparameter(self):
+        script = read_text("ops/install_persistence.ps1")
+
+        self.assertIn("& $nssmExe get $serviceName AppExit Default", script)
+        self.assertIn("$saved['AppExitDefault']", script)
+        self.assertIn("& $nssmExe set $serviceName AppExit Default $oldAppExitDefault", script)
+        self.assertNotIn("& $nssmExe get $serviceName AppExit 2>$null", script)
+        self.assertNotIn("'Start','AppExit','AppStdout'", script)
+
     def test_health_check_reports_runtime_topology_without_redefining_http_readiness(self):
         script = read_text("ops/health_check.ps1")
 
