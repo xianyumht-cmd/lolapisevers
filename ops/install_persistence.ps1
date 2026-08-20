@@ -7,6 +7,13 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$projectRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+$runtimeTopologyScript = Join-Path $projectRoot "ops\runtime_topology.ps1"
+if (!(Test-Path -LiteralPath $runtimeTopologyScript -PathType Leaf)) {
+  throw "runtime topology helper not found: $runtimeTopologyScript"
+}
+. $runtimeTopologyScript
+
 function Assert-Admin {
   $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
   if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -169,22 +176,51 @@ function Install-KeepAliveTask([string]$projectRoot, [string]$taskName) {
   }
 }
 
-$projectRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-
 if (-not $Apply) {
+  $legacyEntries = @(Get-LolDataLegacyStartupEntries -ProjectRoot $projectRoot)
   Write-Output "Validation passed. Planned persistent setup:"
   Write-Output "1) Windows service: $ServiceName"
   Write-Output "2) Keepalive task: $TaskName (every 10 minutes)"
+  Write-Output "3) Retire legacy Startup entries for this project: $($legacyEntries.Count)"
+  foreach ($entry in $legacyEntries) {
+    Write-Output "   - $($entry.EntryPath) -> $($entry.MatchedValue)"
+  }
   Write-Output "Run command:"
   Write-Output "powershell -ExecutionPolicy Bypass -File `"$($MyInvocation.MyCommand.Path)`" -Apply"
   exit 0
 }
 
 Assert-Admin
-Ensure-PlaywrightRuntime -projectRoot $projectRoot
-Install-ServiceWithNssm -projectRoot $projectRoot -serviceName $ServiceName -expectedZipSha256 $NssmZipSha256
-Install-KeepAliveTask -projectRoot $projectRoot -taskName $TaskName
+$retiredStartupEntries = @()
+try {
+  # Remove the confirmed legacy Startup route before changing the service. The
+  # entries are moved to logs\retired-startup, never deleted. If persistence
+  # setup fails, restore them automatically so the previous startup behavior is
+  # not lost.
+  $retiredStartupEntries = @(Move-LolDataLegacyStartupEntries -ProjectRoot $projectRoot)
+  foreach ($entry in $retiredStartupEntries) {
+    Write-Output "Retired legacy Startup entry: $($entry.OriginalPath)"
+    Write-Output "Backup: $($entry.BackupPath)"
+  }
+
+  Ensure-PlaywrightRuntime -projectRoot $projectRoot
+  Install-ServiceWithNssm -projectRoot $projectRoot -serviceName $ServiceName -expectedZipSha256 $NssmZipSha256
+  Install-KeepAliveTask -projectRoot $projectRoot -taskName $TaskName
+} catch {
+  $failure = $_
+  if ($retiredStartupEntries.Count -gt 0) {
+    Write-Warning "Persistence setup failed; restoring retired legacy Startup entries."
+    Restore-LolDataLegacyStartupEntries -RetiredEntries $retiredStartupEntries
+  }
+  throw $failure
+}
+
+$remainingLegacyEntries = @(Get-LolDataLegacyStartupEntries -ProjectRoot $projectRoot)
+if ($remainingLegacyEntries.Count -gt 0) {
+  throw "Persistence setup finished but legacy Startup entries still exist for this project. Run ops\health_check.ps1 and inspect Runtime topology."
+}
 
 Write-Output "Persistence setup completed"
 Write-Output "Service: $ServiceName"
 Write-Output "Task: $TaskName"
+Write-Output "Retired legacy Startup entries: $($retiredStartupEntries.Count)"
