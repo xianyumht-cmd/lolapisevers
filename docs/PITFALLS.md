@@ -21,3 +21,15 @@
   3. 登录失败必须限频/冷却，避免高频 health 探测反复打登录接口触发风控；健康响应只暴露安全的 reason/error class，不暴露账号、密码、Cookie 或上游响应正文。
   4. 回归测试至少覆盖并发单飞、失败冷却、challenge 阻断、状态文件损坏、缺少凭据和 `ERR_UNAUTHORIZED` 精确分类。
   5. 生产验收应主动制造一个失效 Session，确认仅访问 health/readiness 即可安全自愈，无需再用虚假召唤师触发 `/cross_query`。
+
+## 2026-08-20 — 从登录自启迁移到 NSSM 时必须退休旧 Startup 链
+
+- **现象**：机器已经由 `LOLDataSystem` / NSSM 自动启动 `ops\run_service.ps1`，但用户 Startup 目录仍残留指向同一项目 `start_hidden.vbs` 的快捷方式。登录时旧链会再次执行 `start_hidden.vbs -> run_server.bat -> powershell -> run_service.ps1`，与正式服务形成第二条启动入口，可能造成 5001/6178 端口冲突、额外 PowerShell/Python 进程和误导性的 CPU/进程排查结果。
+- **根因**：早期使用登录 Startup 隐藏启动，后续新增 `install_persistence.ps1` 创建 NSSM 服务和 KeepAlive 任务时，只增加了新持久化入口，没有把旧 Startup 入口纳入迁移/验收条件；文档还曾把 `run_server.bat` 写成“推荐统一入口”，与“正式长期运行只保留服务”相互矛盾。
+- **防止复发**：
+  1. 正式长期运行的唯一入口是 `LOLDataSystem`；`run_server.bat` / `start_hidden.vbs` 只允许临时手动调试。
+  2. 持久化安装前检查是否存在非服务拥有的 `run_service.ps1` supervisor；发现时先报 PID 并停止迁移，不自动杀进程。
+  3. 服务和 KeepAlive 建立并验证“恰好一个 service-owned supervisor”后，再扫描所有可见用户 Startup 与 Common Startup。
+  4. 只处理明确指向当前项目 `start_hidden.vbs`、`run_server.bat` 或 `ops\run_service.ps1` 的启动项；命中项移动到 `logs\retired-startup\<时间戳>` 并保存 manifest，不直接删除。
+  5. `health_check.ps1` 必须持续报告 supervisor 数量、父进程归属和旧 Startup 残留，避免端口正常就误判拓扑正常。
+  6. 看到 PowerShell 每几秒在任务管理器排序中上浮时，先区分“同一常驻 PID 周期性活动”和“不断创建新 PID”；不能仅凭 `run_service.ps1` 的 5 秒轮询就断言它是高 CPU 根因。

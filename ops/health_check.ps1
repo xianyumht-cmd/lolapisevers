@@ -17,6 +17,13 @@ $LanzouStderrLog = Join-Path $LogsDir "lanzou_monitor.stderr.log"
 $LanzouStdoutLog = Join-Path $LogsDir "lanzou_monitor.stdout.log"
 $MainApiReady = $false
 $LanzouHealthy = $false
+$TopologyWarningCount = 0
+$TopologyHelperAvailable = $false
+$RuntimeTopologyScript = Join-Path $ProjectRoot "ops\runtime_topology.ps1"
+if (Test-Path -LiteralPath $RuntimeTopologyScript -PathType Leaf) {
+  . $RuntimeTopologyScript
+  $TopologyHelperAvailable = $true
+}
 
 Write-Host "==== lolapisevers health check ====" -ForegroundColor Cyan
 
@@ -58,8 +65,55 @@ try {
 }
 
 Show-Section "Windows service"
-Get-Service $ServiceName -ErrorAction SilentlyContinue | Format-List Name,Status,StartType
+$WindowsService = Get-Service $ServiceName -ErrorAction SilentlyContinue
+$WindowsService | Format-List Name,Status,StartType
 sc.exe queryex $ServiceName
+
+Show-Section "Runtime topology"
+if (-not $TopologyHelperAvailable) {
+  $TopologyWarningCount += 1
+  Write-Host "runtime topology helper not found: $RuntimeTopologyScript" -ForegroundColor Red
+} else {
+  $supervisors = @(Get-LolDataSupervisorProcesses -ProjectRoot $ProjectRoot -ServiceName $ServiceName)
+  $legacyStartupEntries = @(Get-LolDataLegacyStartupEntries -ProjectRoot $ProjectRoot)
+
+  if ($supervisors.Count -gt 0) {
+    $supervisors |
+      Select-Object ProcessId,ParentProcessId,ParentName,IsServiceChild,ServiceProcessId,ExecutablePath,CommandLine |
+      Format-List
+  } else {
+    Write-Host "No run_service.ps1 supervisor process found."
+  }
+
+  if ($WindowsService -and $WindowsService.Status -eq "Running") {
+    $serviceSupervisors = @($supervisors | Where-Object { $_.IsServiceChild })
+    $nonServiceSupervisors = @($supervisors | Where-Object { -not $_.IsServiceChild })
+
+    if ($serviceSupervisors.Count -eq 1 -and $nonServiceSupervisors.Count -eq 0) {
+      Write-Host "runtime supervisor topology: healthy (exactly one service-owned supervisor)" -ForegroundColor Green
+    } else {
+      $TopologyWarningCount += 1
+      Write-Host "runtime supervisor topology: WARNING" -ForegroundColor Red
+      Write-Host "expected exactly one service-owned supervisor; service=$($serviceSupervisors.Count), non-service=$($nonServiceSupervisors.Count)" -ForegroundColor Red
+    }
+  } elseif ($supervisors.Count -gt 0) {
+    $TopologyWarningCount += 1
+    Write-Host "runtime supervisor topology: service is not running but project supervisor process still exists" -ForegroundColor Red
+  } else {
+    Write-Host "runtime supervisor topology: service is not running and no supervisor exists"
+  }
+
+  if ($legacyStartupEntries.Count -gt 0) {
+    $TopologyWarningCount += 1
+    Write-Host "legacy Startup entries detected for this project: $($legacyStartupEntries.Count)" -ForegroundColor Red
+    $legacyStartupEntries |
+      Select-Object EntryPath,Kind,TargetPath,Arguments,MatchedValue |
+      Format-List
+    Write-Host "Run ops\install_persistence.ps1 -Apply to retire these entries safely into logs\retired-startup." -ForegroundColor Yellow
+  } else {
+    Write-Host "legacy Startup entries: none" -ForegroundColor Green
+  }
+}
 
 Show-Section "Port $Port listener"
 Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | ForEach-Object {
@@ -122,6 +176,11 @@ if (Test-Path $LanzouStdoutLog) {
   Get-Content $LanzouStdoutLog -Tail 20
 } else {
   Write-Host "lanzou stdout log not found: $LanzouStdoutLog"
+}
+
+if ($TopologyWarningCount -gt 0) {
+  Write-Host "`nRuntime topology warnings: $TopologyWarningCount" -ForegroundColor Yellow
+  Write-Host "Topology warnings are reported separately and do not change the HTTP readiness exit code." -ForegroundColor Yellow
 }
 
 if ($MainApiReady -and $LanzouHealthy) {

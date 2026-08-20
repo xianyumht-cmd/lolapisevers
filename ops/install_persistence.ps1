@@ -7,6 +7,13 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$projectRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+$runtimeTopologyScript = Join-Path $projectRoot "ops\runtime_topology.ps1"
+if (!(Test-Path -LiteralPath $runtimeTopologyScript -PathType Leaf)) {
+  throw "runtime topology helper not found: $runtimeTopologyScript"
+}
+. $runtimeTopologyScript
+
 function Assert-Admin {
   $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
   if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -169,22 +176,79 @@ function Install-KeepAliveTask([string]$projectRoot, [string]$taskName) {
   }
 }
 
-$projectRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+function Assert-NoNonServiceSupervisor([string]$projectRoot, [string]$serviceName) {
+  $conflicts = @(Get-LolDataSupervisorProcesses -ProjectRoot $projectRoot -ServiceName $serviceName | Where-Object { -not $_.IsServiceChild })
+  if ($conflicts.Count -eq 0) {
+    return
+  }
+
+  $details = @($conflicts | ForEach-Object {
+    "PID=$($_.ProcessId) parent=$($_.ParentName)($($_.ParentProcessId))"
+  }) -join "; "
+  throw "Non-service run_service.ps1 supervisor already exists for this project: $details. Stop the manual/legacy instance before applying persistence."
+}
+
+function Assert-SingleServiceSupervisor([string]$projectRoot, [string]$serviceName) {
+  for ($i = 0; $i -lt 20; $i++) {
+    $supervisors = @(Get-LolDataSupervisorProcesses -ProjectRoot $projectRoot -ServiceName $serviceName)
+    $serviceOwned = @($supervisors | Where-Object { $_.IsServiceChild })
+    $nonService = @($supervisors | Where-Object { -not $_.IsServiceChild })
+    if ($serviceOwned.Count -eq 1 -and $nonService.Count -eq 0) {
+      return
+    }
+    Start-Sleep -Milliseconds 500
+  }
+
+  $final = @(Get-LolDataSupervisorProcesses -ProjectRoot $projectRoot -ServiceName $serviceName)
+  $summary = @($final | ForEach-Object {
+    "PID=$($_.ProcessId) serviceChild=$($_.IsServiceChild) parent=$($_.ParentName)($($_.ParentProcessId))"
+  }) -join "; "
+  if ([string]::IsNullOrWhiteSpace($summary)) { $summary = "none" }
+  throw "Managed runtime topology validation failed. Expected exactly one service-owned run_service.ps1 supervisor; observed: $summary"
+}
 
 if (-not $Apply) {
+  $legacyEntries = @(Get-LolDataLegacyStartupEntries -ProjectRoot $projectRoot)
+  $supervisors = @(Get-LolDataSupervisorProcesses -ProjectRoot $projectRoot -ServiceName $ServiceName)
   Write-Output "Validation passed. Planned persistent setup:"
   Write-Output "1) Windows service: $ServiceName"
   Write-Output "2) Keepalive task: $TaskName (every 10 minutes)"
+  Write-Output "3) Validate exactly one service-owned run_service.ps1 supervisor"
+  Write-Output "4) Retire legacy Startup entries for this project: $($legacyEntries.Count)"
+  foreach ($entry in $legacyEntries) {
+    Write-Output "   - $($entry.EntryPath) -> $($entry.MatchedValue)"
+  }
+  Write-Output "Current supervisors: $($supervisors.Count)"
+  foreach ($supervisor in $supervisors) {
+    Write-Output "   - PID=$($supervisor.ProcessId) serviceChild=$($supervisor.IsServiceChild) parent=$($supervisor.ParentName)"
+  }
   Write-Output "Run command:"
   Write-Output "powershell -ExecutionPolicy Bypass -File `"$($MyInvocation.MyCommand.Path)`" -Apply"
   exit 0
 }
 
 Assert-Admin
+Assert-NoNonServiceSupervisor -projectRoot $projectRoot -serviceName $ServiceName
 Ensure-PlaywrightRuntime -projectRoot $projectRoot
 Install-ServiceWithNssm -projectRoot $projectRoot -serviceName $ServiceName -expectedZipSha256 $NssmZipSha256
 Install-KeepAliveTask -projectRoot $projectRoot -taskName $TaskName
+Assert-SingleServiceSupervisor -projectRoot $projectRoot -serviceName $ServiceName
+
+# Retire old login-startup routes only after the managed service and keepalive
+# task are established successfully. Entries are moved, not deleted, and the
+# helper rolls back partial moves if the retirement itself fails.
+$retiredStartupEntries = @(Move-LolDataLegacyStartupEntries -ProjectRoot $projectRoot)
+foreach ($entry in $retiredStartupEntries) {
+  Write-Output "Retired legacy Startup entry: $($entry.OriginalPath)"
+  Write-Output "Backup: $($entry.BackupPath)"
+}
+
+$remainingLegacyEntries = @(Get-LolDataLegacyStartupEntries -ProjectRoot $projectRoot)
+if ($remainingLegacyEntries.Count -gt 0) {
+  throw "Persistence setup finished but legacy Startup entries still exist for this project. Run ops\health_check.ps1 and inspect Runtime topology."
+}
 
 Write-Output "Persistence setup completed"
 Write-Output "Service: $ServiceName"
 Write-Output "Task: $TaskName"
+Write-Output "Retired legacy Startup entries: $($retiredStartupEntries.Count)"
