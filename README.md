@@ -27,7 +27,7 @@
 
 ## 当前运行拓扑
 
-正式长期运行推荐只保留 `LOLDataSystem` Windows 服务作为唯一入口：
+正式长期运行只保留 `LOLDataSystem` Windows 服务作为唯一入口：
 
 ```text
 LOLDataSystem / NSSM
@@ -37,6 +37,8 @@ LOLDataSystem / NSSM
 ```
 
 `ops/run_service.ps1` 会加载本机配置并启动两个进程。不要同时使用 Windows 服务、`run_server.bat`、`start_hidden.vbs` 启动多套实例，否则容易造成 5001 / 6178 端口冲突。
+
+`ops/install_persistence.ps1 -Apply` 会把指向当前项目 `start_hidden.vbs`、`run_server.bat` 或 `ops/run_service.ps1` 的旧 Startup 启动项安全移出启动目录并备份到 `logs/retired-startup/`，避免从旧的“登录自启”方案迁移到 NSSM 后仍留下第二条启动链。
 
 ## 环境要求
 
@@ -104,7 +106,27 @@ lanzou_update_push_api_server/config.example.json
 
 ## 启动
 
-推荐统一入口：
+### 正式长期运行
+
+持久化安装或修复时使用管理员 PowerShell：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\ops\install_persistence.ps1 -Apply
+```
+
+之后日常只通过 Windows 服务管理：
+
+```powershell
+Start-Service LOLDataSystem
+Restart-Service LOLDataSystem
+Stop-Service LOLDataSystem
+```
+
+持久化安装器会检查当前项目的旧 Startup 启动项；命中项不会直接删除，而是移动到 `logs/retired-startup/<时间戳>/` 并写入 `manifest.json`。如果持久化安装失败，脚本会尝试恢复刚移走的旧启动项。
+
+### 手动调试
+
+需要前台/手动调试时可以临时使用：
 
 ```powershell
 .\run_server.bat
@@ -116,11 +138,13 @@ lanzou_update_push_api_server/config.example.json
 powershell -NoProfile -ExecutionPolicy Bypass -File .\ops\run_service.ps1
 ```
 
-需要隐藏窗口的手动运行场景可使用：
+需要隐藏窗口的临时手动运行场景可使用：
 
 ```text
 start_hidden.vbs
 ```
+
+**不要**在已经启用 `LOLDataSystem` 自动服务时，再把 `run_server.bat` 或 `start_hidden.vbs` 放进 Windows Startup、Run 注册表或其它开机/登录自启位置。
 
 > 直接执行 `python app.py` 不会自动加载 `ops/app_env.local.ps1`。只有当前终端已经手动设置好全部所需环境变量时才应这样运行。
 
@@ -145,6 +169,8 @@ Invoke-RestMethod "http://127.0.0.1:5001/build-info"
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\ops\health_check.ps1
 ```
+
+体检会额外输出 `Runtime topology`：确认 `run_service.ps1` 是否只有一个由 `LOLDataSystem` 服务拥有的实例，并检查是否还残留指向当前项目的旧 Startup 启动项。拓扑告警目前单独报告，不改变 HTTP readiness 的退出码。
 
 生成部署追溯元数据：
 
