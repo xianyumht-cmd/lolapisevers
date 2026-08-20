@@ -27,6 +27,14 @@ class WindowsPersistenceTopologyTests(unittest.TestCase):
         self.assertIn("retired-startup", script)
         self.assertIn("manifest.json", script)
 
+    def test_runtime_topology_avoids_new_object_list_array_binder_bug(self):
+        script = read_text("ops/runtime_topology.ps1")
+
+        self.assertIn("$retired = [System.Collections.Generic.List[object]]::new()", script)
+        self.assertNotIn("$retired = New-Object System.Collections.Generic.List[object]", script)
+        self.assertIn("@($retired) | ConvertTo-Json", script)
+        self.assertIn("return @($retired)", script)
+
     def test_persistence_installer_validates_unique_supervisor_before_retiring_startup(self):
         script = read_text("ops/install_persistence.ps1")
 

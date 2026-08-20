@@ -193,7 +193,10 @@ function Move-LolDataLegacyStartupEntries {
     $backupDir = Join-Path $root ("logs\retired-startup\" + $stamp)
     New-Item -Path $backupDir -ItemType Directory -Force | Out-Null
 
-    $retired = New-Object System.Collections.Generic.List[object]
+    # Creating List[object] through New-Object can trigger PowerShell's array
+    # subexpression binder bug when @($retired) is evaluated. The CLR
+    # constructor avoids that wrapper while preserving the same list type.
+    $retired = [System.Collections.Generic.List[object]]::new()
     try {
         $index = 0
         foreach ($entry in $entries) {
