@@ -74,10 +74,18 @@ function Install-ServiceWithNssm([string]$projectRoot, [string]$serviceName, [st
   $wasRunning = $serviceExisted -and $svc.Status -eq 'Running'
   $created = $false
   $saved = @{}
-  $keys = @('Application','AppParameters','AppDirectory','Start','AppExit','AppStdout','AppStderr','AppRotateFiles','AppRotateOnline','AppRotateBytes')
+  $keys = @('Application','AppParameters','AppDirectory','Start','AppStdout','AppStderr','AppRotateFiles','AppRotateOnline','AppRotateBytes')
   if ($serviceExisted) {
     foreach ($key in $keys) {
       $saved[$key] = ((& $nssmExe get $serviceName $key 2>$null) -join "`n").Trim()
+    }
+
+    # AppExit is a parameter family in NSSM and requires an exit-code
+    # subparameter. Querying it without one prints an error and, under
+    # $ErrorActionPreference=Stop, aborts persistence before any service change.
+    $saved['AppExitDefault'] = ((& $nssmExe get $serviceName AppExit Default 2>$null) -join "`n").Trim()
+    if ([string]::IsNullOrWhiteSpace([string]$saved['AppExitDefault'])) {
+      throw "Unable to capture NSSM AppExit Default action before service update"
     }
   }
 
@@ -122,12 +130,16 @@ function Install-ServiceWithNssm([string]$projectRoot, [string]$serviceName, [st
         $oldValue = [string]$saved[$key]
         if ([string]::IsNullOrWhiteSpace($oldValue)) {
           & $nssmExe reset $serviceName $key | Out-Null
-        } elseif ($key -eq 'AppExit') {
-          & $nssmExe set $serviceName AppExit Default $oldValue | Out-Null
         } else {
           & $nssmExe set $serviceName $key $oldValue | Out-Null
         }
       }
+
+      $oldAppExitDefault = [string]$saved['AppExitDefault']
+      if (-not [string]::IsNullOrWhiteSpace($oldAppExitDefault)) {
+        & $nssmExe set $serviceName AppExit Default $oldAppExitDefault | Out-Null
+      }
+
       if ($wasRunning) { Start-Service -Name $serviceName -ErrorAction SilentlyContinue }
     }
     throw $failure
