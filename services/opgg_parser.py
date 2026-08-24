@@ -1,5 +1,6 @@
 import html
 import json
+import math
 import re
 from typing import Any, Dict, List
 
@@ -51,6 +52,44 @@ def _first_present(item: Dict[str, Any], *keys: str) -> Any:
     return None
 
 
+def normalize_opgg_ratio(value: Any) -> float | None:
+    """Normalize OP.GG ratio/percentage values to a 0..1 ratio.
+
+    OP.GG has exposed the same metrics as either decimal ratios (0.918) or
+    percentage-point values (91.8).  Strings with an explicit percent sign are
+    also accepted.  Invalid/negative/>100 values are rejected instead of being
+    allowed to leak impossible percentages into ranking and rendering.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+
+    explicit_percent = False
+    raw = value
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        if raw.endswith("%"):
+            explicit_percent = True
+            raw = raw[:-1].strip()
+            if not raw:
+                return None
+
+    try:
+        number = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number) or number < 0:
+        return None
+    if explicit_percent or number > 1:
+        if number > 100:
+            return None
+        number /= 100.0
+    if number < 0 or number > 1:
+        return None
+    return number
+
+
 def extract_opgg_augments(html_text: str) -> List[Dict[str, Any]]:
     scripts = re.findall(r"self\.__next_f\.push\(\[1,\"(.*?)\"\]\)</script>", html_text, re.S)
     for raw_script in scripts:
@@ -79,8 +118,8 @@ def extract_opgg_augments(html_text: str) -> List[Dict[str, Any]]:
                     "name": name,
                     "icon": icon,
                     "rarity": item.get("rarity"),
-                    "performance": item.get("performance"),
-                    "popular": item.get("popular"),
+                    "performance": normalize_opgg_ratio(item.get("performance")),
+                    "popular": normalize_opgg_ratio(item.get("popular")),
                     "games": _first_present(
                         item,
                         "games",
