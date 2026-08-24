@@ -70,3 +70,15 @@
   4. Popen 后短暂检查 `poll()`，立即退出直接记录 `deployment_launch_failed`，禁止展示“部署已启动”假成功。
   5. 部署阶段禁止 reset/reconnect 删除已验证包或启动第二条升级链；WebUI 必须继续轮询到明确的 complete/failed。
   6. 状态向前推进时必须清除历史 `error`，避免“100% + 部署中 + 旧 ConnectTimeout”同时出现。
+
+## 2026-08-25 — Release 新旧关系不能只用 `target != current` 判断
+
+- **现象**：生产已成功部署到 `3f209e...`，但 WebUI 仍把旧失败任务 `a446dab9...` 显示成“最新 Release / 可恢复目标”。实际上 `3f209e...` 是 `a446dab9...` 之后的前向提交，恢复旧任务会把生产代码降级。
+- **根因**：controller 将 `failed` / resumable 状态视为本地短路状态，后续 status 不再查询 GitHub；同时更新判断只比较 SHA 是否不同，没有判断 Git 提交祖先关系，无法区分“目标比当前新”“目标比当前旧”和“双方已分叉”。
+- **防止复发**：
+  1. 持久化失败/中断状态只能作为历史或可恢复断点证据，不能永久覆盖空闲状态下重新获取的 `releases/latest`。
+  2. 一键升级必须判断提交关系，而不是只判断 SHA 不同。对 GitHub Release 使用官方 Compare API：`current...target` 的 `ahead` 才是安全前向更新；`behind` 表示 Release 落后于当前，必须禁止降级；`diverged` 或无法确认时 fail-closed。
+  3. 相同关系守卫必须覆盖 start、resume、reconnect、reset；不能只在前端禁用按钮，因为旧 API 调用仍可能启动任务。
+  4. 活跃 worker / detached deploy 的进度轮询继续只读本地状态；空闲状态再刷新 GitHub，避免对活动任务引入竞态和额外网络请求。
+  5. 手动检查空闲状态避免重复请求：一次 Release/metadata + 一次 compare 足够，不应先由旧 controller 请求一轮、guard 再请求一轮。
+  6. 若无法证明 Release 是当前提交之后的前向目标，宁可显示“不可安全升级”也不能自动猜测或降级。

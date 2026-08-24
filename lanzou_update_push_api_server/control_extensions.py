@@ -35,7 +35,7 @@ from .maintenance import (
 )
 from .parser_center_retry_admin import install_parser_center_retry_routes
 from .parser_center_ui_guard import render_parser_center_page as render_guarded_parser_center_page
-from .release_update_controller import (
+from .release_update_guard import (
     ReleaseUpdateError,
     pause_release_update,
     reconnect_release_update,
