@@ -19,6 +19,28 @@ Future WebUI self-updates use GitHub Releases containing the existing V3 product
 - Private-repository production machines need a GitHub token with only the permissions required to read Releases/contents. The real token is never returned by the WebUI.
 - The updater rejects unknown package names, mismatched target commits, invalid SHA-256 values, non-V3 metadata, missing safety flags, path-traversal ZIPs, or embedded manifests that do not match the release target.
 
+## 2026-08-24 — Release download control uses a background worker, not a long-lived request
+
+**Decision**
+
+The 6178 Release updater runs download/verification as a process-local background worker. The start API only accepts the task and returns; WebUI progress/control requests are separate short HTTP calls. Persisted state is not treated as proof that a worker is alive.
+
+Windows service restart verification is likewise based on an observed service PID replacement, not on whether `Restart-Service` was successfully launched or whether the WebUI quickly became reachable again.
+
+**Reasons**
+
+- A long-lived `/admin/update/start` request couples browser/network lifetime to an 80+ MiB download and makes pause/reconnect semantics awkward.
+- `update-state.json` survives process restarts, while Python download threads do not. Therefore a persisted `downloading` value can become false evidence after service restart.
+- Socket read timeout does not detect a connection that continually trickles data below a useful throughput.
+- NSSM can stop and restart the service and both child servers in a few seconds, so browser reachability cannot distinguish “never restarted” from “already restarted”.
+
+**Consequences**
+
+- Active update state includes worker PID, run id and heartbeat. A new process that sees an orphaned active state converts it to `interrupted` and offers breakpoint resume.
+- WebUI exposes pause, resume, reconnect and explicit reset-from-zero controls.
+- Download progress/control checks use smaller chunks plus a low-speed time window; low-speed reconnect keeps `.part` and never bypasses SHA-256/manifest validation.
+- Service restart is only marked `verified` after `Running` is observed with a new non-zero PID; timeout leaves the result `unverified`.
+
 ## 2026-08-24 — ARAM recommendations must not invent combination win rates
 
 **Decision**
