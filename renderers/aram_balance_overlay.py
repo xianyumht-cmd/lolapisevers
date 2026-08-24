@@ -7,7 +7,12 @@ from typing import Any, Dict, List
 
 from fastapi.responses import Response
 
-from renderers.aram_augments_rich_image import build_aram_augment_image_response
+from renderers.aram_augments_rich_image import (
+    ARAM_IMAGE_MAX_BYTES,
+    ARAM_IMAGE_MAX_HEIGHT,
+    ARAM_IMAGE_WIDTH,
+    build_aram_augment_image_response,
+)
 from renderers.image_utils import encode_png_limited, fit_text, load_image_font
 
 
@@ -63,9 +68,7 @@ def _patch_label(layer: Dict[str, Any]) -> str:
 def _empty_message(layer: Dict[str, Any], *, kind: str) -> str:
     status = str(layer.get("status") or "").strip().lower()
     if status == "syncing":
-        page_patch = str(
-            layer.get("page_patch") or layer.get("patch") or "旧版本"
-        ).strip()
+        page_patch = str(layer.get("page_patch") or layer.get("patch") or "旧版本").strip()
         return f"{page_patch} 数据仍在同步，旧数值已隐藏"
     if status == "unavailable":
         return f"{kind}数据暂不可用（不等于无修正）"
@@ -79,7 +82,7 @@ def _empty_message(layer: Dict[str, Any], *, kind: str) -> str:
 def _layer_height(layer: Dict[str, Any]) -> int:
     changes = _layer_changes(layer)
     rows = max(1, math.ceil(len(changes) / 4))
-    return 28 + rows * 32
+    return 22 + rows * 28
 
 
 def build_aram_augment_image_with_balance(ctx: Any, payload: Dict[str, Any]) -> Response:
@@ -100,15 +103,15 @@ def build_aram_augment_image_with_balance(ctx: Any, payload: Dict[str, Any]) -> 
         if width < 500 or old_height < 220:
             return base_response
 
-        outer = 22
-        hero_height = 154
-        gap = 12
+        outer = 16
+        hero_height = 118
+        gap = 8
         top_cut = outer + hero_height + gap
-        header_height = 42
-        layer_gap = 8
+        header_height = 30
+        layer_gap = 6
         base_height = _layer_height(base_balance)
         mayhem_height = _layer_height(balance)
-        panel_height = header_height + base_height + layer_gap + mayhem_height + 10
+        panel_height = header_height + base_height + layer_gap + mayhem_height + 8
         insert_height = panel_height + gap
         panel_y = top_cut
         remainder_y = top_cut + insert_height
@@ -129,38 +132,38 @@ def build_aram_augment_image_with_balance(ctx: Any, payload: Dict[str, Any]) -> 
         image.paste(source.crop((0, top_cut, width, old_height)), (0, remainder_y))
         draw = ImageDraw.Draw(image)
 
-        title_font = load_image_font(15, bold=True)
-        body_font = load_image_font(13, bold=True)
-        small_font = load_image_font(11)
-        tiny_font = load_image_font(10, bold=True)
+        title_font = load_image_font(13, bold=True)
+        body_font = load_image_font(11, bold=True)
+        small_font = load_image_font(9)
+        tiny_font = load_image_font(8, bold=True)
 
         draw.rounded_rectangle(
             (outer, panel_y, width - outer, panel_y + panel_height),
-            radius=14,
+            radius=12,
             fill=panel,
             outline=line,
         )
         draw.text(
-            (outer + 20, panel_y + 17),
-            "英雄平衡修正 · 完整状态",
+            (outer + 14, panel_y + 15),
+            "英雄平衡修正",
             fill=text,
             font=title_font,
+            anchor="lm",
         )
-        note = "基础 ARAM / Mayhem 分层展示，不做数值相加"
         draw.text(
-            (width - outer - 20, panel_y + 18),
-            note,
+            (width - outer - 14, panel_y + 15),
+            "基础 ARAM / Mayhem 分层 · 不做数值相加",
             fill=muted,
             font=small_font,
-            anchor="ra",
+            anchor="rm",
         )
 
-        available_width = width - outer * 2 - 40
+        available_width = width - outer * 2 - 28
         columns = 4
-        column_gap = 8
+        column_gap = 6
         pill_width = (available_width - column_gap * (columns - 1)) // columns
-        pill_height = 26
-        start_x = outer + 20
+        pill_height = 22
+        start_x = outer + 14
 
         def draw_layer(
             layer: Dict[str, Any],
@@ -170,14 +173,14 @@ def build_aram_augment_image_with_balance(ctx: Any, payload: Dict[str, Any]) -> 
             empty_kind: str,
         ) -> None:
             draw.text(
-                (start_x, layer_y + 10),
+                (start_x, layer_y + 8),
                 title,
                 fill=cyan if empty_kind == "基础平衡" else gold,
                 font=body_font,
                 anchor="lm",
             )
             draw.text(
-                (width - outer - 20, layer_y + 10),
+                (width - outer - 14, layer_y + 8),
                 _patch_label(layer),
                 fill=muted,
                 font=small_font,
@@ -186,56 +189,56 @@ def build_aram_augment_image_with_balance(ctx: Any, payload: Dict[str, Any]) -> 
             changes = _layer_changes(layer)
             if not changes:
                 draw.text(
-                    (start_x, layer_y + 38),
-                    fit_text(
-                        draw,
-                        _empty_message(layer, kind=empty_kind),
-                        small_font,
-                        available_width,
-                    ),
+                    (start_x, layer_y + 31),
+                    fit_text(draw, _empty_message(layer, kind=empty_kind), small_font, available_width),
                     fill=muted,
                     font=small_font,
                     anchor="lm",
                 )
                 return
 
-            start_y = layer_y + 24
+            start_y = layer_y + 19
             for index, item in enumerate(changes):
                 row = index // columns
                 col = index % columns
                 x = start_x + col * (pill_width + column_gap)
-                y = start_y + row * 32
+                y = start_y + row * 28
                 direction = str(item.get("direction") or "neutral").lower()
                 accent = green if direction == "buff" else red if direction == "debuff" else cyan
-                kind = "增益" if direction == "buff" else "削弱" if direction == "debuff" else "调整"
+                kind = "增" if direction == "buff" else "削" if direction == "debuff" else "调"
                 draw.rounded_rectangle(
                     (x, y, x + pill_width, y + pill_height),
-                    radius=8,
+                    radius=7,
                     fill=pill,
                     outline=line,
                 )
-                label = fit_text(draw, str(item.get("label") or "调整"), small_font, 72)
-                value = fit_text(draw, str(item.get("value") or "-"), body_font, 58)
-                draw.text((x + 8, y + 13), label, fill=text, font=small_font, anchor="lm")
-                draw.text((x + pill_width - 47, y + 13), value, fill=accent, font=body_font, anchor="mm")
-                draw.text((x + pill_width - 7, y + 13), kind, fill=accent, font=tiny_font, anchor="rm")
+                label = fit_text(draw, str(item.get("label") or "调整"), small_font, 66)
+                value = fit_text(draw, str(item.get("value") or "-"), body_font, 54)
+                draw.text((x + 7, y + 11), label, fill=text, font=small_font, anchor="lm")
+                draw.text((x + pill_width - 35, y + 11), value, fill=accent, font=body_font, anchor="mm")
+                draw.text((x + pill_width - 6, y + 11), kind, fill=accent, font=tiny_font, anchor="rm")
 
         base_y = panel_y + header_height
         draw_layer(
             base_balance,
             layer_y=base_y,
-            title="基础 ARAM（完整）",
+            title="基础 ARAM",
             empty_kind="基础平衡",
         )
         mayhem_y = base_y + base_height + layer_gap
         draw_layer(
             balance,
             layer_y=mayhem_y,
-            title="Mayhem 专属状态",
+            title="Mayhem 专属",
             empty_kind="Mayhem 专属",
         )
 
-        encoded = encode_png_limited(image)
+        encoded = encode_png_limited(
+            image,
+            max_bytes=ARAM_IMAGE_MAX_BYTES,
+            max_width=ARAM_IMAGE_WIDTH,
+            max_height=ARAM_IMAGE_MAX_HEIGHT,
+        )
         return Response(
             content=encoded,
             media_type="image/png",
