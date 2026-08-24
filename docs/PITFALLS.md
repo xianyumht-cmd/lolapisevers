@@ -82,3 +82,14 @@
   4. 活跃 worker / detached deploy 的进度轮询继续只读本地状态；空闲状态再刷新 GitHub，避免对活动任务引入竞态和额外网络请求。
   5. 手动检查空闲状态避免重复请求：一次 Release/metadata + 一次 compare 足够，不应先由旧 controller 请求一轮、guard 再请求一轮。
   6. 若无法证明 Release 是当前提交之后的前向目标，宁可显示“不可安全升级”也不能自动猜测或降级。
+
+## 2026-08-25 — NSSM 服务中的 detached grandchild 不是可靠的部署所有权边界
+
+- **现象**：状态机和 `launch.log` 都已补齐后，生产从 `4a4a210...` 在线升级 `02bf948e...`：83 MB ZIP 100% 下载并校验成功，但 `powershell.exe` PID 在真正创建 `update.log` 前退出；`launch.log` 文件由父进程创建成功却仍是空文件。
+- **根因**：`CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS` 只改变控制台/进程组语义，不等价于把进程生命周期转交给一个独立的系统托管者。在 NSSM/Windows 服务/作业对象环境中，grandchild 仍可能在 helper 获得稳定执行机会前消失。单纯“再多等几秒”或“再多重定向一个日志”不能解决进程所有权问题。
+- **防止复发**：
+  1. 会主动停止/替换自身宿主服务的部署器，必须由宿主进程树之外的稳定系统组件托管；Windows 使用 Task Scheduler/SYSTEM，而不是依赖 service child 的 DETACHED_PROCESS。
+  2. 任务真正启动的证据必须是 helper 自己写出的 handshake/PID，而不是 `CreateProcess`、`schtasks /Run` 或任务注册命令返回 0。
+  3. helper 在任何延时或正式部署前先写 `deployment.pid`，随后写 `launch.log` 首行；未出现握手应立即判定启动失败。
+  4. Task Scheduler action 只引用已通过 SHA-256/manifest 校验的本地 staging helper，禁止把 GitHub Token、下载 URL 凭据或动态未校验脚本放进任务参数。
+  5. 已完整校验的 V3 ZIP 与部署托管失败是两个不同层次；托管失败时应复用 staging，不得默认重新下载 80+ MiB 包。

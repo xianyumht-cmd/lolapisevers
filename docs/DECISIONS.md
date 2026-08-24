@@ -79,3 +79,26 @@ Idle updater status refreshes the latest Release instead of letting an old faile
 - `diverged` or an unavailable/unknown relationship is fail-closed; automatic update is blocked rather than guessed.
 - The same guard applies to start, resume, reconnect, and reset paths, not only to the WebUI button state.
 - Active download/deployment polling remains local-only; GitHub Release and compare calls are made only while idle/reconciling so progress polling does not create API traffic or race the running state machine.
+
+## 2026-08-25 — Release deployer is owned by Windows Task Scheduler
+
+**Decision**
+
+After a V3 Release has passed metadata, SHA-256, safe-extraction and manifest validation, the production helper is launched through a fixed Windows Task Scheduler task (`LOLDataSystem-ReleaseDeploy`) running as `SYSTEM` with highest privileges. `DETACHED_PROCESS` from the NSSM-hosted 6178 process is no longer the intended ownership boundary for the deployer.
+
+The Task Scheduler launcher must write its real PowerShell PID to `deployment.pid` before the updater considers the deployment started. It also writes `launch.log` itself before invoking `Start-VerifiedReleaseUpdate.ps1`.
+
+**Reasons**
+
+- Production twice demonstrated that `CreateProcess` can return a PID for a detached PowerShell which disappears before `Start-Transcript` or any helper output, even though the V3 ZIP was fully downloaded and validated.
+- A deployer that intentionally stops/replaces its own host service needs a lifecycle owner outside that service process tree. Task Scheduler is a Windows system service designed to own such independent jobs.
+- Process creation success, task registration success, and task-run acceptance are not sufficient liveness proof; a helper-originated PID handshake is observable evidence that the intended PowerShell actually started.
+
+**Consequences**
+
+- The task action contains only local staging paths and never includes the GitHub Token.
+- A fixed task name is overwritten on later updates, avoiding unbounded scheduled-task accumulation.
+- `deployment.pid`, `launch.log`, and `update.log` form separate evidence layers: startup handshake, launcher/helper diagnostics, and formal V3 deployment transcript.
+- The existing status machine continues to use the real deployment PID plus current production commit to decide `deploying`, `complete`, or `failed`.
+- Failure to register/run Task Scheduler or receive the PID handshake is a launch failure and must not be shown as `scheduled`.
+- A deployment-launch failure does not invalidate an already verified V3 ZIP; retry should reuse staging rather than redownload the asset.

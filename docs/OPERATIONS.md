@@ -20,13 +20,15 @@ If the installed updater itself is blocked by a known download-control bug, use 
 8. During download, use **暂停下载** to preserve the `.part` file, **继续下载** to resume it, **重新连接** to close the current HTTP connection and reconnect from the same breakpoint, or **清空断点重下** to intentionally delete the current target package/partial and restart from byte 0.
 9. The downloader uses 64 KiB chunks for responsive progress/control checks. In addition to socket read timeout, a low-speed window prevents trickle traffic from remaining fake-alive forever. Defaults are about 30 seconds below 32 KiB/s; `LOLAPI_UPDATE_LOW_SPEED_WINDOW` and `LOLAPI_UPDATE_MIN_BPS` can tune this.
 10. The updater verifies metadata, target commit, package revision, SHA-256, safe ZIP paths and embedded manifest safety flags before starting the deployer.
-11. An external PowerShell process runs the existing V3 deployer. Its stdout/stderr are captured in `launch.log`; the deployer's PowerShell transcript remains `update.log`. The WebUI connection may drop while the service is switched.
-12. `scheduled` is only a transition state. `/admin/update/status` checks the detached deployment PID and the current production commit: live PID => `deploying`; dead PID + target commit active => `complete`; dead PID + old commit => `failed`. The WebUI keeps polling through `scheduled/deploying` instead of stopping at “process started”.
-13. If the PowerShell process exits before `Start-Transcript`, `launch.log` is the startup diagnostic. If it entered the deployer, use `update.log` for the full deployment transcript. Both paths are shown by the WebUI when available.
+11. On Windows, the verified `Start-VerifiedReleaseUpdate.ps1` helper is owned by Windows Task Scheduler rather than relying only on a `DETACHED_PROCESS` grandchild of the NSSM service. The updater creates/overwrites the fixed task `LOLDataSystem-ReleaseDeploy`, runs it as `SYSTEM` with highest privileges, and starts it immediately.
+12. The Task Scheduler launcher writes its real PowerShell PID to `deployment.pid` before doing deployment work. The updater waits for this handshake; no PID means the deployment was not actually started and the state is failed rather than scheduled.
+13. After the handshake, the launcher writes the first `launch.log` line and redirects helper output there. The deployer's PowerShell transcript remains `update.log`. The launcher process is owned by Task Scheduler, so it survives 6178/NSSM service-tree replacement during the V3 switch.
+14. `scheduled` is only a transition state. `/admin/update/status` checks the deployment PowerShell PID and the current production commit: live PID => `deploying`; dead PID + target commit active => `complete`; dead PID + old commit => `failed`. The WebUI keeps polling through `scheduled/deploying` instead of stopping at “process started”.
+15. If the helper fails before `Start-Transcript`, use `launch.log`; if it entered the deployer, use `update.log`. A valid Task Scheduler start must never leave both the PID handshake and launch diagnostics absent.
 
 ### Release freshness and downgrade guard
 
-Idle updater state is not allowed to trust a persisted `failed`, `interrupted`, `stalled` or old completed target as the newest release forever. When there is no live worker or detached deployment process, **检查更新** refreshes GitHub `releases/latest` and its metadata, then checks the commit relationship using GitHub's official Compare API.
+Idle updater state is not allowed to trust a persisted `failed`, `interrupted`, `stalled` or old completed target as the newest release forever. When there is no live worker or deployment process, **检查更新** refreshes GitHub `releases/latest` and its metadata, then checks the commit relationship using GitHub's official Compare API.
 
 The relation is evaluated as `current...target`:
 
@@ -40,7 +42,7 @@ A previous failed task remains available only as `last_update_state` diagnostic 
 
 The same relationship guard applies before **一键升级**, **继续下载**, **重新连接**, and **清空断点重下**. A stale `.part` or verified ZIP is never a reason to install a target that is behind the current production commit. If the saved target is behind, diverged, or cannot be verified, recovery actions are blocked until a safe forward Release exists.
 
-Active worker and detached deployment polling remain local-only. The updater does not call GitHub Compare on every 1.2-second progress poll; GitHub refresh/compare happens only when the updater is idle or reconciling a finished task.
+Active worker and deployment polling remain local-only. The updater does not call GitHub Compare on every 1.2-second progress poll; GitHub refresh/compare happens only when the updater is idle or reconciling a finished task.
 
 ### Interrupted update recovery
 
@@ -50,7 +52,9 @@ When a newly started 6178 process finds an old active download state whose worke
 
 A live worker whose heartbeat becomes unexpectedly stale is surfaced as `stalled` so the UI offers reconnect/recovery instead of indefinitely presenting a healthy-looking download.
 
-Detached deployment is different from interrupted download. While the deployment PID is alive, download reset/reconnect controls are disabled so the verified package cannot be deleted and a second upgrade chain cannot be started underneath the active deployer.
+Deployment is different from interrupted download. While the Task Scheduler-owned deployment PID is alive, download reset/reconnect controls are disabled so the verified package cannot be deleted and a second upgrade chain cannot be started underneath the active deployer.
+
+A failed deployment does not invalidate an already verified final ZIP. If `downloaded_bytes == package_bytes`, SHA-256/manifest verification previously succeeded, and the saved target is still a safe forward target, retrying the deployment launcher should reuse the existing staging package rather than downloading the same 80+ MiB asset again.
 
 ### Production-machine updater state
 
@@ -61,8 +65,10 @@ Default Windows directory:
 Files include:
 
 - `github-release-token.txt` — private-repository Release token; never committed or returned by the API.
-- `update-state.json` — update state, worker identity, heartbeat, detached deployment PID and download progress without the token.
-- `release-<id>-<sha>/` — verified staging directory, `.part` breakpoint, final ZIP, `Start-VerifiedReleaseUpdate.ps1`, `launch.log` and `update.log`.
+- `update-state.json` — update state, worker identity, heartbeat, deployment PID and download progress without the token.
+- `release-<id>-<sha>/` — verified staging directory, `.part` breakpoint/final ZIP, `Start-VerifiedReleaseUpdate.ps1`, `Task-VerifiedReleaseUpdate.ps1`, `deployment.pid`, `launch.log` and `update.log`.
+
+Task Scheduler uses the fixed task name `LOLDataSystem-ReleaseDeploy`; a later update replaces that task definition instead of creating an unbounded number of tasks.
 
 `LOLAPI_UPDATE_HOME` can override the updater directory. `LOLAPI_UPDATE_GITHUB_TOKEN` can supply the token from the environment instead of the token file.
 
@@ -97,7 +103,10 @@ The WebUI updater refuses to schedule deployment when any of these checks fail:
 - ZIP path traversal;
 - embedded manifest target/revision mismatch;
 - missing candidate-test, automatic-rollback, offline-dependency, UTF-8 or baseline-readiness manifest flags;
-- deployment script missing or introducing mandatory parameters the updater cannot resolve.
+- deployment script missing or introducing mandatory parameters the updater cannot resolve;
+- Windows Task Scheduler cannot register/run the verified helper or no `deployment.pid` handshake is observed.
+
+The Task Scheduler action contains only local verified staging paths; the GitHub token is never placed in task arguments, task files or launch logs.
 
 Resetting a partial download is confined to the updater home and a strictly validated V3 package filename. Pause/reconnect/resume never weaken the package integrity or commit-relationship gates.
 
