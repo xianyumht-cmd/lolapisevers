@@ -27,18 +27,15 @@ class ReleaseUpdateGuardTests(unittest.TestCase):
             "package": "old.zip",
             "error": "old failure",
         }
-        local = {
-            "update_state": previous,
-            "worker_alive": False,
-            "status": "failed",
-        }
         with (
-            patch.object(guard.controller, "release_update_status", return_value=local),
+            patch.object(guard.core, "_read_state", return_value=previous),
             patch.object(guard.core, "release_update_status", return_value=self._fresh()),
             patch.object(guard, "_compare_release_relation", return_value="release_behind"),
+            patch.object(guard.controller, "release_update_status") as local,
         ):
             result = guard.release_update_status()
 
+        local.assert_not_called()
         self.assertEqual(result["status"], "current")
         self.assertFalse(result["available"])
         self.assertEqual(result["release_relation"], "release_behind")
@@ -53,10 +50,9 @@ class ReleaseUpdateGuardTests(unittest.TestCase):
             "target_commit": "b" * 40,
             "package": "older.zip",
         }
-        local = {"update_state": previous, "worker_alive": False, "status": "failed"}
         fresh = self._fresh(target="c" * 40)
         with (
-            patch.object(guard.controller, "release_update_status", return_value=local),
+            patch.object(guard.core, "_read_state", return_value=previous),
             patch.object(guard.core, "release_update_status", return_value=fresh),
             patch.object(guard, "_compare_release_relation", return_value="forward"),
         ):
@@ -75,6 +71,7 @@ class ReleaseUpdateGuardTests(unittest.TestCase):
             "status": "updating",
         }
         with (
+            patch.object(guard.core, "_read_state", return_value={"status": "downloading"}),
             patch.object(guard.controller, "release_update_status", return_value=local),
             patch.object(guard.core, "release_update_status") as remote,
         ):
@@ -96,6 +93,16 @@ class ReleaseUpdateGuardTests(unittest.TestCase):
             with self.assertRaises(guard.ReleaseUpdateError):
                 guard.start_release_update()
         start.assert_not_called()
+
+    def test_unknown_saved_target_relation_blocks_reset_fail_closed(self):
+        with (
+            patch.object(guard, "_saved_target_relation", return_value="unknown"),
+            patch.object(guard.controller, "reset_release_update") as reset,
+        ):
+            result = guard.reset_release_update()
+        self.assertFalse(result["ok"])
+        self.assertIn("禁止", result["error"])
+        reset.assert_not_called()
 
     def test_compare_api_maps_github_status(self):
         class Response:
