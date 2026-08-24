@@ -180,13 +180,26 @@ def start_release_update() -> dict[str, Any]:
     return controller.start_release_update()
 
 
-def _saved_target_is_behind_current() -> bool:
+def _saved_target_relation() -> str:
     state = core._read_state()
     target = str(state.get("target_commit") or "").strip().lower()
     current = str(load_build_info().get("commit_sha") or "").strip().lower()
     if not target or not current:
-        return False
-    return _compare_release_relation(current, target, core._read_token()) == "release_behind"
+        return "unknown"
+    return _compare_release_relation(current, target, core._read_token())
+
+
+def _guard_saved_action(action: str) -> dict[str, Any] | None:
+    relation = _saved_target_relation()
+    if relation == "forward":
+        return None
+    if relation == "same":
+        return {"ok": False, "error": f"旧任务目标已经是当前生产版本，无需{action}。"}
+    if relation == "release_behind":
+        return {"ok": False, "error": f"旧任务目标落后于当前生产版本，禁止{action}以避免降级。"}
+    if relation == "diverged":
+        return {"ok": False, "error": f"旧任务与当前生产版本发生分叉，禁止{action}。"}
+    return {"ok": False, "error": f"无法确认旧任务与当前生产版本的提交关系，禁止{action}。"}
 
 
 def pause_release_update() -> dict[str, Any]:
@@ -194,21 +207,18 @@ def pause_release_update() -> dict[str, Any]:
 
 
 def resume_release_update() -> dict[str, Any]:
-    if _saved_target_is_behind_current():
-        return {"ok": False, "error": "旧断点目标落后于当前生产版本，禁止继续以避免降级。"}
-    return controller.resume_release_update()
+    blocked = _guard_saved_action("继续下载")
+    return blocked if blocked is not None else controller.resume_release_update()
 
 
 def reconnect_release_update() -> dict[str, Any]:
-    if _saved_target_is_behind_current():
-        return {"ok": False, "error": "旧任务目标落后于当前生产版本，禁止重连以避免降级。"}
-    return controller.reconnect_release_update()
+    blocked = _guard_saved_action("重新连接")
+    return blocked if blocked is not None else controller.reconnect_release_update()
 
 
 def reset_release_update() -> dict[str, Any]:
-    if _saved_target_is_behind_current():
-        return {"ok": False, "error": "旧任务目标落后于当前生产版本；等待新的 GitHub Release，不启动降级任务。"}
-    return controller.reset_release_update()
+    blocked = _guard_saved_action("清空断点重下")
+    return blocked if blocked is not None else controller.reset_release_update()
 
 
 __all__ = [
