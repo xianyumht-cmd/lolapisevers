@@ -3,11 +3,15 @@ name: Build production safe deployment package V3
 on:
   push:
     branches:
+      - master
       - release/full-bug-repair-safe-deploy-winps51-v3-20260801
   pull_request:
     branches:
       - master
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build-package-v3:
@@ -60,6 +64,8 @@ jobs:
             python tests/check_ui_assets.py
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             node --check ui_control.generated.js
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            node --check lanzou_update_push_api_server/control_ui/assets/release-update.js
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           } finally {
             Pop-Location
@@ -217,3 +223,28 @@ jobs:
             dist-v3/*.metadata.json
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish verified V3 assets as latest Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $short = $env:TARGET_COMMIT.Substring(0, 12)
+          $tag = "lolapi-$short"
+          $zipFile = Get-ChildItem dist-v3 -Filter *.zip -File | Select-Object -First 1
+          $metadataFile = Get-ChildItem dist-v3 -Filter *.metadata.json -File | Select-Object -First 1
+          if (-not $zipFile -or -not $metadataFile) {
+            throw "Verified V3 release assets are missing."
+          }
+          $notes = "Verified LOLDataSystem V3 production package for commit $env:TARGET_COMMIT. WebUI updater must verify the metadata and SHA-256 before deployment."
+          gh release view $tag --repo "${{ github.repository }}" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $zipFile.FullName $metadataFile.FullName --clobber --repo "${{ github.repository }}"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            gh release edit $tag --latest --title "LOLDataSystem $short" --notes $notes --repo "${{ github.repository }}"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } else {
+            gh release create $tag $zipFile.FullName $metadataFile.FullName --target $env:TARGET_COMMIT --latest --title "LOLDataSystem $short" --notes $notes --repo "${{ github.repository }}"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
