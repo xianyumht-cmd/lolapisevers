@@ -32,18 +32,24 @@ from .maintenance import (
     list_config_backups,
     read_audit,
     rollback_config,
-    schedule_windows_service_restart,
-    windows_service_status,
 )
 from .parser_center_retry_admin import install_parser_center_retry_routes
 from .parser_center_ui_guard import render_parser_center_page as render_guarded_parser_center_page
-from .release_updater import (
+from .release_update_controller import (
     ReleaseUpdateError,
+    pause_release_update,
+    reconnect_release_update,
     release_update_status,
-    save_release_token,
+    reset_release_update,
+    resume_release_update,
     start_release_update,
 )
+from .release_updater import save_release_token
 from .security import security_status
+from .service_restart_controller import (
+    schedule_windows_service_restart,
+    windows_service_status,
+)
 from .state_recovery import recover_state_file
 from .target_file_watch_admin import (
     TargetFileWatchAdminError,
@@ -346,3 +352,19 @@ def install_control_extensions(app: FastAPI, service) -> None:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"一键升级启动失败：{exc.__class__.__name__}") from exc
+
+    @app.post("/admin/update/pause")
+    async def admin_update_pause() -> dict[str, Any]:
+        return await asyncio.to_thread(pause_release_update)
+
+    @app.post("/admin/update/resume")
+    async def admin_update_resume() -> dict[str, Any]:
+        return await asyncio.to_thread(resume_release_update)
+
+    @app.post("/admin/update/reconnect")
+    async def admin_update_reconnect() -> dict[str, Any]:
+        return await asyncio.to_thread(reconnect_release_update)
+
+    @app.post("/admin/update/reset")
+    async def admin_update_reset() -> dict[str, Any]:
+        return await asyncio.to_thread(reset_release_update)
