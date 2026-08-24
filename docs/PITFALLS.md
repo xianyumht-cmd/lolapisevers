@@ -48,3 +48,25 @@
   3. WebUI 的“暂停/继续/重连/重下”应是显式控制面，不使用“重启整个服务”代替下载控制。
   4. Windows 服务重启成功必须观察到 `Running` 且服务 PID 从旧值变为新值；页面是否很快恢复访问不能作为成功/失败判断。
   5. 任何“scheduled/accepted”类响应在 UI 中都只能显示为“已安排/等待验证”，不得直接显示为最终成功。
+
+## 2026-08-25 — 第三方百分比字段必须在数据边界统一单位
+
+- **现象**：OP.GG 海符榜实测图片出现 `9180%`、`9826%`、`684%` 等明显不可能的胜率/热度；同一份结构中上游实际值是 91.80、98.26、6.84。
+- **根因**：`utils.formatters.pct()` 的契约是输入 0~1 比例并乘 100 输出百分号，而 OP.GG `performance` / `popular` 曾直接透传上游值；上游当前可能返回 0~100 百分点，也可能返回 0~1 比例，导致渲染层重复乘 100。
+- **防止复发**：
+  1. 外部来源的比例/百分比只能在 parser/service 边界做一次单位归一化，业务层和 renderer 不允许再猜单位。
+  2. OP.GG 规则固定为：0~1 视为比例；大于 1 且不超过 100 视为百分点并除以 100；显式 `%` 字符串按百分点处理；负值、非有限数和 >100 视为异常数据。
+  3. 排序、推荐、JSON 和图片必须共享同一个规范化字段，不能只在图片上临时 `/100`。
+  4. 回归测试至少覆盖 `0.918`、`91.8`、`91.8%`、`6.84` 和非法值，最终通过统一 `pct()` 验证不会再输出 >100% 的误值。
+
+## 2026-08-25 — detached 部署的 `Popen` 成功不是部署成功
+
+- **现象**：83 MB Release ZIP 已下载到 100%，WebUI 显示 `scheduled / 独立部署进程已启动` 数分钟不变；staging 中有 ZIP、`extracted` 和 `Start-VerifiedReleaseUpdate.ps1`，却没有 `update.log`。生产 commit 仍停在旧版本。
+- **根因**：旧状态机在 `subprocess.Popen()` 成功返回 PID 后立即把 `scheduled` 当作终态；worker 随后退出，WebUI 也停止轮询。它既不检查 detached PowerShell PID，也不检查生产 commit 是否切换；stdout/stderr 被送到 `DEVNULL`，所以 PowerShell 如果在 `Start-Transcript` 之前退出会完全没有诊断证据。
+- **防止复发**：
+  1. `scheduled` 只能是过渡态，后续 status 必须同时检查 detached PID 与当前生产 commit。
+  2. PID 存活时显示 `deploying`；PID 退出且 commit 已切到目标才标记 `complete`；PID 退出且 commit 未切换必须标记 `failed`。
+  3. 外部 PowerShell stdout/stderr 写入 staging `launch.log`，`update.log` 继续记录正式部署 transcript；启动前失败也必须可诊断。
+  4. Popen 后短暂检查 `poll()`，立即退出直接记录 `deployment_launch_failed`，禁止展示“部署已启动”假成功。
+  5. 部署阶段禁止 reset/reconnect 删除已验证包或启动第二条升级链；WebUI 必须继续轮询到明确的 complete/failed。
+  6. 状态向前推进时必须清除历史 `error`，避免“100% + 部署中 + 旧 ConnectTimeout”同时出现。
