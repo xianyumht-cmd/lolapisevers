@@ -43,6 +43,14 @@ def extract_json_array_after(decoded: str, marker: str) -> List[Dict[str, Any]]:
         return []
 
 
+def _first_present(item: Dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = item.get(key)
+        if value is not None and value != "":
+            return value
+    return None
+
+
 def extract_opgg_augments(html_text: str) -> List[Dict[str, Any]]:
     scripts = re.findall(r"self\.__next_f\.push\(\[1,\"(.*?)\"\]\)</script>", html_text, re.S)
     for raw_script in scripts:
@@ -61,14 +69,27 @@ def extract_opgg_augments(html_text: str) -> List[Dict[str, Any]]:
             icon = str(item.get("largeIcon") or item.get("smallIcon") or "").strip()
             if not name or not icon:
                 continue
+            description = html.unescape(
+                re.sub(r"<[^>]+>", "", str(item.get("desc") or ""))
+            ).strip()
             rows.append(
                 {
+                    "id": item.get("id"),
+                    "rank": len(rows) + 1,
                     "name": name,
                     "icon": icon,
                     "rarity": item.get("rarity"),
                     "performance": item.get("performance"),
                     "popular": item.get("popular"),
-                    "desc": re.sub(r"<[^>]+>", "", str(item.get("desc") or "")).strip(),
+                    "games": _first_present(
+                        item,
+                        "games",
+                        "gameCount",
+                        "sampleCount",
+                        "totalGames",
+                        "count",
+                    ),
+                    "desc": description,
                 }
             )
         if rows:
