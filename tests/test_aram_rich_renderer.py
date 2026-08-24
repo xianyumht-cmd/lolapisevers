@@ -8,13 +8,14 @@ from services.opgg_parser import extract_opgg_augments
 class AramRichRendererTests(unittest.TestCase):
     def test_decision_routes_are_distinct_and_keep_single_augment_semantics(self):
         rows = [
-            {"name": "稳健", "performance": 0.60, "popular": 0.60},
+            {"name": "稳健", "performance": 0.65, "popular": 0.70},
             {"name": "高胜", "performance": 0.70, "popular": 0.20},
             {"name": "热门", "performance": 0.52, "popular": 0.90},
         ]
         routes = _decision_routes(rows)
         self.assertEqual(len(routes), 3)
         self.assertEqual(len({route[1] for route in routes}), 3)
+        self.assertEqual(routes[0][1], "稳健")
         self.assertEqual(routes[1][1], "高胜")
         self.assertEqual(routes[2][1], "热门")
 
