@@ -2,7 +2,7 @@ import json
 import os
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -88,6 +88,115 @@ class ReleaseUpdateControllerTests(unittest.TestCase):
         self.assertEqual(result["status"], "updating")
         self.assertTrue(result["controls"]["can_pause"])
         self.assertFalse(result["controls"]["can_resume"])
+
+    def test_scheduled_deployment_with_live_pid_becomes_deploying_without_github_poll(self):
+        state = {
+            "status": "scheduled",
+            "phase": "scheduled",
+            "release": "lolapi-new",
+            "target_commit": "a" * 40,
+            "package": "package.zip",
+            "package_bytes": 100,
+            "downloaded_bytes": 100,
+            "progress_percent": 100.0,
+            "deployment_pid": 321,
+            "scheduled_at": (datetime.now(timezone.utc) - timedelta(seconds=20)).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "error": "Release 资产下载失败：ConnectTimeout",
+        }
+        with (
+            patch.object(controller.core, "_read_state", return_value=state),
+            patch.object(controller, "_process_alive", return_value=True),
+            patch.object(controller, "_worker_alive", return_value=False),
+            patch.object(
+                controller,
+                "load_build_info",
+                return_value={"commit_sha": "b" * 40, "release": "old"},
+            ),
+            patch.object(controller.core, "_request_json") as request_json,
+        ):
+            result = controller.release_update_status()
+
+        request_json.assert_not_called()
+        self.assertEqual(result["status"], "updating")
+        self.assertEqual(result["update_state"]["status"], "deploying")
+        self.assertTrue(result["update_state"]["deployment_process_alive"])
+        self.assertEqual(result["update_state"]["error"], "")
+        self.assertFalse(result["controls"]["can_reset"])
+        self.assertFalse(result["controls"]["can_reconnect"])
+
+    def test_dead_deployment_pid_with_unchanged_commit_becomes_failed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            state_path = root / "update-state.json"
+            token_path = root / "github-release-token.txt"
+            state = {
+                "status": "scheduled",
+                "phase": "scheduled",
+                "release": "lolapi-new",
+                "target_commit": "a" * 40,
+                "package": "package.zip",
+                "package_bytes": 100,
+                "downloaded_bytes": 100,
+                "deployment_pid": 321,
+                "scheduled_at": (datetime.now(timezone.utc) - timedelta(minutes=2)).isoformat(),
+                "updated_at": (datetime.now(timezone.utc) - timedelta(minutes=2)).isoformat(),
+                "log": str(root / "update.log"),
+            }
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            with (
+                patch.object(controller.core, "_STATE_PATH", state_path),
+                patch.object(controller.core, "_TOKEN_PATH", token_path),
+                patch.object(controller, "_process_alive", return_value=False),
+                patch.object(controller, "_worker_alive", return_value=False),
+                patch.object(
+                    controller,
+                    "load_build_info",
+                    return_value={"commit_sha": "b" * 40, "release": "old"},
+                ),
+                patch.object(controller.core, "_request_json") as request_json,
+            ):
+                result = controller.release_update_status()
+
+            request_json.assert_not_called()
+            self.assertEqual(result["status"], "failed")
+            self.assertEqual(result["update_state"]["status"], "failed")
+            self.assertIn("update.log", result["update_state"]["error"])
+            persisted = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(persisted["status"], "failed")
+
+    def test_dead_deployment_pid_after_commit_switch_becomes_complete_and_clears_error(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            state_path = root / "update-state.json"
+            state = {
+                "status": "scheduled",
+                "phase": "scheduled",
+                "release": "lolapi-new",
+                "target_commit": "a" * 40,
+                "package": "package.zip",
+                "deployment_pid": 321,
+                "scheduled_at": (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(),
+                "updated_at": (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(),
+                "error": "old ConnectTimeout",
+            }
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            with (
+                patch.object(controller.core, "_STATE_PATH", state_path),
+                patch.object(controller, "_process_alive", return_value=False),
+                patch.object(
+                    controller,
+                    "load_build_info",
+                    return_value={"commit_sha": "a" * 40, "release": "new"},
+                ),
+            ):
+                reconciled = controller._reconcile_deployment_state(state)
+
+            self.assertEqual(reconciled["status"], "complete")
+            self.assertEqual(reconciled["error"], "")
+            persisted = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(persisted["status"], "complete")
+            self.assertEqual(persisted["error"], "")
 
     def test_pause_and_reconnect_set_cooperative_worker_events(self):
         with patch.object(controller, "_worker_alive", return_value=True):

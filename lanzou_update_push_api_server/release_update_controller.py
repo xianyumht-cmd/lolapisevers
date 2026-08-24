@@ -28,8 +28,20 @@ _ACTIVE_STATUSES = {
     "reconnecting",
     "resetting",
 }
+_DEPLOY_STATUSES = {"scheduled", "deploying"}
 _RESUMABLE_STATUSES = {"paused", "interrupted", "stalled", "failed"}
-_TERMINAL_STATUSES = {"current", "scheduled", "complete"}
+_TERMINAL_STATUSES = {"current", "complete"}
+_RESETTABLE_STATUSES = {
+    "queued",
+    "running",
+    "downloading",
+    "reconnecting",
+    "resetting",
+    "paused",
+    "interrupted",
+    "stalled",
+    "failed",
+}
 
 _LOCK = threading.RLock()
 _WORKER: threading.Thread | None = None
@@ -61,22 +73,89 @@ def _worker_alive() -> bool:
         return bool(worker is not None and worker.is_alive())
 
 
-def _state_age_seconds(state: dict[str, Any]) -> float | None:
-    raw = str(state.get("updated_at") or "").strip()
-    if not raw:
+def _iso_age_seconds(raw: Any) -> float | None:
+    text = str(raw or "").strip()
+    if not text:
         return None
     try:
-        value = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        value = datetime.fromisoformat(text.replace("Z", "+00:00"))
         if value.tzinfo is None:
             value = value.replace(tzinfo=timezone.utc)
-        return max(0.0, (datetime.now(timezone.utc) - value.astimezone(timezone.utc)).total_seconds())
+        return max(
+            0.0,
+            (datetime.now(timezone.utc) - value.astimezone(timezone.utc)).total_seconds(),
+        )
     except (TypeError, ValueError):
         return None
 
 
-def _write_runtime_state(*, status: str, phase: str, message: str = "", **fields: Any) -> dict[str, Any]:
+def _state_age_seconds(state: dict[str, Any]) -> float | None:
+    return _iso_age_seconds(state.get("updated_at"))
+
+
+def _process_alive(pid: int) -> bool:
+    try:
+        process_id = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if process_id <= 0:
+        return False
+
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            process_query_limited_information = 0x1000
+            still_active = 259
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.OpenProcess(
+                process_query_limited_information,
+                False,
+                process_id,
+            )
+            if not handle:
+                return False
+            try:
+                exit_code = ctypes.c_ulong()
+                if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                    return False
+                return int(exit_code.value) == still_active
+            finally:
+                kernel32.CloseHandle(handle)
+        except Exception:
+            return False
+
+    try:
+        os.kill(process_id, 0)
+    except (OSError, ProcessLookupError, PermissionError):
+        return False
+    return True
+
+
+def _file_exists(value: Any) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    try:
+        return Path(text).is_file()
+    except OSError:
+        return False
+
+
+def _write_runtime_state(
+    *,
+    status: str,
+    phase: str,
+    message: str = "",
+    **fields: Any,
+) -> dict[str, Any]:
     with _LOCK:
         run_id = _WORKER_RUN_ID
+    if status != "failed" and "error" not in fields:
+        # _update_state intentionally preserves old fields.  Explicitly clear an
+        # earlier failure once the state machine has made forward progress so a
+        # successful 100%/deploying state can never keep a stale ConnectTimeout.
+        fields["error"] = ""
     return core._update_state(
         status=status,
         phase=phase,
@@ -86,6 +165,89 @@ def _write_runtime_state(*, status: str, phase: str, message: str = "", **fields
         heartbeat_at=_utc_now(),
         **fields,
     )
+
+
+def _reconcile_deployment_state(state: dict[str, Any]) -> dict[str, Any]:
+    status = str(state.get("status") or "").lower()
+    if status not in _DEPLOY_STATUSES:
+        return state
+
+    target = str(state.get("target_commit") or "").strip().lower()
+    current_info = load_build_info()
+    current_commit = str(current_info.get("commit_sha") or "unknown").strip().lower()
+    pid = int(state.get("deployment_pid") or state.get("pid") or 0)
+    process_alive = _process_alive(pid)
+    scheduled_age = _iso_age_seconds(state.get("scheduled_at"))
+    log_exists = _file_exists(state.get("log"))
+    launch_log_exists = _file_exists(state.get("launch_log"))
+
+    reconciled = dict(state)
+    reconciled.update(
+        {
+            "deployment_pid": pid,
+            "deployment_process_alive": process_alive,
+            "deployment_log_exists": log_exists,
+            "deployment_launch_log_exists": launch_log_exists,
+        }
+    )
+
+    if process_alive:
+        reconciled["status"] = "deploying"
+        if target and current_commit == target:
+            reconciled["phase"] = "post_switch_verification"
+            reconciled["message"] = "生产代码已切到目标提交，独立部署进程正在执行后置验证。"
+        else:
+            reconciled["phase"] = "deploying"
+            reconciled["message"] = "独立部署进程运行中，正在执行候选验证与生产切换。"
+        reconciled["error"] = ""
+        return reconciled
+
+    if target and current_commit == target:
+        reconciled.update(
+            {
+                "status": "complete",
+                "phase": "complete",
+                "message": "独立部署进程已结束，当前生产提交已切换到目标版本。",
+                "completed_at": _utc_now(),
+                "updated_at": _utc_now(),
+                "error": "",
+            }
+        )
+        core._write_state(reconciled)
+        return reconciled
+
+    # Give Windows a short process-table visibility grace period immediately
+    # after Popen.  After that, a dead PID + unchanged commit is a real failed
+    # deployment, not a perpetual "scheduled" success state.
+    if scheduled_age is None or scheduled_age < 8.0:
+        reconciled.update(
+            {
+                "status": "deploying",
+                "phase": "deployment_starting",
+                "message": "独立部署进程已启动，正在等待进程状态与生产提交确认。",
+                "error": "",
+            }
+        )
+        return reconciled
+
+    if launch_log_exists:
+        diagnostic = "独立部署进程已退出且生产提交未切换；请查看启动日志和升级日志。"
+    elif log_exists:
+        diagnostic = "独立部署进程已退出且生产提交未切换；请查看升级日志。"
+    else:
+        diagnostic = "独立部署进程在 update.log 初始化前退出，未检测到生产版本切换。"
+    reconciled.update(
+        {
+            "status": "failed",
+            "phase": "deployment_failed",
+            "message": "独立部署进程已结束，但生产提交仍不是目标版本。",
+            "deployment_failed_at": _utc_now(),
+            "updated_at": _utc_now(),
+            "error": diagnostic,
+        }
+    )
+    core._write_state(reconciled)
+    return reconciled
 
 
 def _interrupt_or_stall_persisted_state(state: dict[str, Any]) -> dict[str, Any]:
@@ -126,15 +288,18 @@ def _controls_for(state: dict[str, Any], worker_alive: bool) -> dict[str, bool]:
     status = str(state.get("status") or "").lower()
     has_target = bool(state.get("target_commit") or state.get("package"))
     return {
-        "can_pause": worker_alive and status in _ACTIVE_STATUSES and status not in {"scheduling"},
+        "can_pause": worker_alive
+        and status in _ACTIVE_STATUSES
+        and status not in {"scheduling"},
         "can_resume": (worker_alive and status == "paused")
         or (not worker_alive and has_target and status in _RESUMABLE_STATUSES),
         "can_reconnect": has_target
+        and status not in _DEPLOY_STATUSES
         and (
             (worker_alive and status in (_ACTIVE_STATUSES | {"paused", "stalled"}))
             or (not worker_alive and status in _RESUMABLE_STATUSES)
         ),
-        "can_reset": has_target and status not in _TERMINAL_STATUSES,
+        "can_reset": has_target and status in _RESETTABLE_STATUSES,
     }
 
 
@@ -146,8 +311,10 @@ def _local_status_base(state: dict[str, Any]) -> dict[str, Any]:
     age = _state_age_seconds(state)
     status = str(state.get("status") or "").lower()
     public_status = status
-    if status in _ACTIVE_STATUSES:
+    if status in _ACTIVE_STATUSES or status in _DEPLOY_STATUSES:
         public_status = "updating"
+    elif status in _TERMINAL_STATUSES:
+        public_status = "current"
     return {
         "ok": True,
         "repository": core.REPOSITORY,
@@ -166,7 +333,7 @@ def _local_status_base(state: dict[str, Any]) -> dict[str, Any]:
         "target_commit": str(state.get("target_commit") or ""),
         "package_name": str(state.get("package") or ""),
         "package_bytes": int(state.get("package_bytes") or 0),
-        "available": status not in _TERMINAL_STATUSES,
+        "available": status not in _TERMINAL_STATUSES and status not in _DEPLOY_STATUSES,
         "status": public_status,
         "worker_alive": worker_alive,
         "heartbeat_age_seconds": round(age, 1) if age is not None else None,
@@ -175,9 +342,15 @@ def _local_status_base(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def release_update_status() -> dict[str, Any]:
-    state = _interrupt_or_stall_persisted_state(core._read_state())
+    state = _reconcile_deployment_state(core._read_state())
+    state = _interrupt_or_stall_persisted_state(state)
     status = str(state.get("status") or "").lower()
-    if status in (_ACTIVE_STATUSES | _RESUMABLE_STATUSES | {"paused"}):
+    if status in (
+        _ACTIVE_STATUSES
+        | _DEPLOY_STATUSES
+        | _RESUMABLE_STATUSES
+        | {"paused"}
+    ):
         return _local_status_base(state)
 
     result = core.release_update_status()
@@ -456,6 +629,21 @@ def _controlled_download_zip(
     )
 
 
+def _powershell_executable() -> str:
+    if os.name == "nt":
+        system_root = Path(os.getenv("SystemRoot") or r"C:\Windows")
+        candidate = (
+            system_root
+            / "System32"
+            / "WindowsPowerShell"
+            / "v1.0"
+            / "powershell.exe"
+        )
+        if candidate.is_file():
+            return str(candidate)
+    return "powershell.exe"
+
+
 def _run_update() -> dict[str, Any]:
     if os.name != "nt":
         raise ReleaseUpdateError("一键升级只允许在 Windows 生产机执行")
@@ -581,6 +769,7 @@ def _run_update() -> dict[str, Any]:
     deployer = core._find_deployer(extract_root, manifest_path)
     helper = staging / "Start-VerifiedReleaseUpdate.ps1"
     log_path = staging / "update.log"
+    launch_log_path = staging / "launch.log"
     helper.write_text(core._helper_script(deployer, log_path), encoding="utf-8-sig")
 
     _write_runtime_state(
@@ -589,43 +778,69 @@ def _run_update() -> dict[str, Any]:
         message="校验全部通过，正在启动独立部署进程",
         staging=str(staging),
         log=str(log_path),
+        launch_log=str(launch_log_path),
     )
     creationflags = 0
     for flag_name in ["CREATE_NEW_PROCESS_GROUP", "DETACHED_PROCESS"]:
         creationflags |= int(getattr(subprocess, flag_name, 0))
-    process = subprocess.Popen(
-        [
-            "powershell.exe",
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(helper),
-        ],
-        cwd=str(staging),
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        creationflags=creationflags,
-        close_fds=True,
-    )
+
+    with launch_log_path.open("ab", buffering=0) as launch_stream:
+        process = subprocess.Popen(
+            [
+                _powershell_executable(),
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(helper),
+            ],
+            cwd=str(staging),
+            stdin=subprocess.DEVNULL,
+            stdout=launch_stream,
+            stderr=subprocess.STDOUT,
+            creationflags=creationflags,
+            close_fds=True,
+        )
+        deployment_pid = int(process.pid)
+        # Catch the exact production failure we observed: CreateProcess succeeds
+        # but PowerShell exits before Start-Transcript/update.log is created.
+        time.sleep(0.25)
+        immediate_exit_code = process.poll()
+
+    common_state = {
+        "release": release_name,
+        "target_commit": target,
+        "package": zip_name,
+        "package_bytes": expected_bytes,
+        "package_sha256": actual_sha,
+        "download_source": download_source,
+        "download_errors": download_errors,
+        "downloaded_bytes": zip_path.stat().st_size,
+        "progress_percent": 100.0,
+        "staging": str(staging),
+        "log": str(log_path),
+        "launch_log": str(launch_log_path),
+        "pid": deployment_pid,
+        "deployment_pid": deployment_pid,
+    }
+    if immediate_exit_code is not None:
+        return _write_runtime_state(
+            status="failed",
+            phase="deployment_launch_failed",
+            message="独立部署进程启动后立即退出，生产版本未切换。",
+            scheduled_at=_utc_now(),
+            error=f"PowerShell 部署进程立即退出：ExitCode={immediate_exit_code}；请查看 launch.log。",
+            deployment_process_alive=False,
+            **common_state,
+        )
+
     return _write_runtime_state(
         status="scheduled",
         phase="scheduled",
-        message="独立部署进程已启动",
+        message="独立部署进程已启动，正在等待进程终态与生产提交切换。",
         scheduled_at=_utc_now(),
-        release=release_name,
-        target_commit=target,
-        package=zip_name,
-        package_bytes=expected_bytes,
-        package_sha256=actual_sha,
-        download_source=download_source,
-        download_errors=download_errors,
-        downloaded_bytes=zip_path.stat().st_size,
-        progress_percent=100.0,
-        staging=str(staging),
-        log=str(log_path),
-        pid=int(process.pid),
+        deployment_process_alive=True,
+        **common_state,
     )
 
 
@@ -633,7 +848,11 @@ def _worker_main(run_id: str) -> None:
     try:
         _run_update()
     except Exception as exc:
-        message = str(exc) if isinstance(exc, ReleaseUpdateError) else f"{type(exc).__name__}: {exc}"
+        message = (
+            str(exc)
+            if isinstance(exc, ReleaseUpdateError)
+            else f"{type(exc).__name__}: {exc}"
+        )
         _write_runtime_state(
             status="failed",
             phase="failed",
@@ -656,6 +875,16 @@ def start_release_update() -> dict[str, Any]:
         raise ReleaseUpdateError("一键升级只允许在 Windows 生产机执行")
     with _LOCK:
         global _WORKER, _WORKER_RUN_ID
+        deployment_state = _reconcile_deployment_state(core._read_state())
+        if str(deployment_state.get("status") or "").lower() in _DEPLOY_STATUSES:
+            return {
+                "ok": True,
+                "started": False,
+                "background": True,
+                "message": "独立部署进程仍在运行，等待部署终态确认",
+                "worker_alive": False,
+                **deployment_state,
+            }
         if _WORKER is not None and _WORKER.is_alive():
             state = core._read_state()
             return {
@@ -670,6 +899,7 @@ def start_release_update() -> dict[str, Any]:
         _RECONNECT_EVENT.clear()
         run_id = f"{int(time.time())}-{os.getpid()}-{threading.get_ident()}"
         _WORKER_RUN_ID = run_id
+        previous_state = core._read_state()
         core._update_state(
             status="queued",
             phase="queued",
@@ -679,7 +909,8 @@ def start_release_update() -> dict[str, Any]:
             heartbeat_at=_utc_now(),
             worker_pid=os.getpid(),
             run_id=run_id,
-            downloaded_bytes=int(core._read_state().get("downloaded_bytes") or 0),
+            downloaded_bytes=int(previous_state.get("downloaded_bytes") or 0),
+            error="",
         )
         worker = threading.Thread(
             target=_worker_main,
@@ -709,11 +940,18 @@ def pause_release_update() -> dict[str, Any]:
 def resume_release_update() -> dict[str, Any]:
     if _worker_alive():
         if not _PAUSE_EVENT.is_set():
-            return {"ok": True, "message": "升级 worker 正在运行", "worker_alive": True}
+            return {
+                "ok": True,
+                "message": "升级 worker 正在运行",
+                "worker_alive": True,
+            }
         _PAUSE_EVENT.clear()
         return {"ok": True, "message": "已继续下载", "worker_alive": True}
-    state = core._read_state()
-    if str(state.get("status") or "").lower() not in _RESUMABLE_STATUSES | {"paused"}:
+    state = _reconcile_deployment_state(core._read_state())
+    state_status = str(state.get("status") or "").lower()
+    if state_status in _DEPLOY_STATUSES:
+        return {"ok": False, "error": "独立部署进程正在运行，不能启动新的下载任务"}
+    if state_status not in _RESUMABLE_STATUSES | {"paused"}:
         return {"ok": False, "error": "当前状态不支持继续下载"}
     return start_release_update()
 
@@ -723,7 +961,9 @@ def reconnect_release_update() -> dict[str, Any]:
         _PAUSE_EVENT.clear()
         _RECONNECT_EVENT.set()
         return {"ok": True, "message": "已请求断开当前连接并从现有断点重连"}
-    state = core._read_state()
+    state = _reconcile_deployment_state(core._read_state())
+    if str(state.get("status") or "").lower() in _DEPLOY_STATUSES:
+        return {"ok": False, "error": "独立部署进程正在运行，不能重新连接下载"}
     if not (state.get("target_commit") or state.get("package")):
         return {"ok": False, "error": "没有可重新连接的升级任务"}
     return start_release_update()
@@ -734,16 +974,30 @@ def reset_release_update() -> dict[str, Any]:
     _PAUSE_EVENT.clear()
     if _worker_alive():
         return {"ok": True, "message": "已请求清空当前目标版本断点并从 0 重新下载"}
-    state = core._read_state()
+    state = _reconcile_deployment_state(core._read_state())
+    if str(state.get("status") or "").lower() in _DEPLOY_STATUSES:
+        _RESET_EVENT.clear()
+        return {"ok": False, "error": "独立部署进程正在运行，禁止删除已验证部署包"}
     package = Path(str(state.get("package") or "")).name
-    if package and re.fullmatch(r"LOLDataSystem-full-bug-repair-safe-deploy-[0-9a-f]{12}-py311-py314-winps51-v3\.zip", package):
-        for candidate in core._UPDATE_HOME.rglob(package + ".part") if core._UPDATE_HOME.exists() else []:
+    if package and re.fullmatch(
+        r"LOLDataSystem-full-bug-repair-safe-deploy-[0-9a-f]{12}-py311-py314-winps51-v3\.zip",
+        package,
+    ):
+        for candidate in (
+            core._UPDATE_HOME.rglob(package + ".part")
+            if core._UPDATE_HOME.exists()
+            else []
+        ):
             try:
                 candidate.resolve().relative_to(core._UPDATE_HOME.resolve())
             except ValueError:
                 continue
             candidate.unlink(missing_ok=True)
-        for candidate in core._UPDATE_HOME.rglob(package) if core._UPDATE_HOME.exists() else []:
+        for candidate in (
+            core._UPDATE_HOME.rglob(package)
+            if core._UPDATE_HOME.exists()
+            else []
+        ):
             try:
                 candidate.resolve().relative_to(core._UPDATE_HOME.resolve())
             except ValueError:

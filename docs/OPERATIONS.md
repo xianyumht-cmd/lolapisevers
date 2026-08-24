@@ -20,8 +20,9 @@ If the installed updater itself is blocked by a known download-control bug, use 
 8. During download, use **暂停下载** to preserve the `.part` file, **继续下载** to resume it, **重新连接** to close the current HTTP connection and reconnect from the same breakpoint, or **清空断点重下** to intentionally delete the current target package/partial and restart from byte 0.
 9. The downloader uses 64 KiB chunks for responsive progress/control checks. In addition to socket read timeout, a low-speed window prevents trickle traffic from remaining fake-alive forever. Defaults are about 30 seconds below 32 KiB/s; `LOLAPI_UPDATE_LOW_SPEED_WINDOW` and `LOLAPI_UPDATE_MIN_BPS` can tune this.
 10. The updater verifies metadata, target commit, package revision, SHA-256, safe ZIP paths and embedded manifest safety flags before starting the deployer.
-11. An external PowerShell process runs the existing V3 deployer. The WebUI connection may drop while the service is switched.
-12. Review the update log path shown in the WebUI if the service does not return normally.
+11. An external PowerShell process runs the existing V3 deployer. Its stdout/stderr are captured in `launch.log`; the deployer's PowerShell transcript remains `update.log`. The WebUI connection may drop while the service is switched.
+12. `scheduled` is only a transition state. `/admin/update/status` checks the detached deployment PID and the current production commit: live PID => `deploying`; dead PID + target commit active => `complete`; dead PID + old commit => `failed`. The WebUI keeps polling through `scheduled/deploying` instead of stopping at “process started”.
+13. If the PowerShell process exits before `Start-Transcript`, `launch.log` is the startup diagnostic. If it entered the deployer, use `update.log` for the full deployment transcript. Both paths are shown by the WebUI when available.
 
 ### Interrupted update recovery
 
@@ -30,6 +31,8 @@ If the installed updater itself is blocked by a known download-control bug, use 
 When a newly started 6178 process finds an old active download state whose worker does not belong to the current process, it changes the state to `interrupted` and keeps the existing `.part` file. The operator can then use **继续下载** or **重新连接**; a service restart is not required just to recover a download.
 
 A live worker whose heartbeat becomes unexpectedly stale is surfaced as `stalled` so the UI offers reconnect/recovery instead of indefinitely presenting a healthy-looking download.
+
+Detached deployment is different from interrupted download. While the deployment PID is alive, download reset/reconnect controls are disabled so the verified package cannot be deleted and a second upgrade chain cannot be started underneath the active deployer.
 
 ### Production-machine updater state
 
@@ -40,8 +43,8 @@ Default Windows directory:
 Files include:
 
 - `github-release-token.txt` — private-repository Release token; never committed or returned by the API.
-- `update-state.json` — update state, worker identity, heartbeat and download progress without the token.
-- `release-<id>-<sha>/` — verified staging directory, `.part` breakpoint, final ZIP and update log.
+- `update-state.json` — update state, worker identity, heartbeat, detached deployment PID and download progress without the token.
+- `release-<id>-<sha>/` — verified staging directory, `.part` breakpoint, final ZIP, `Start-VerifiedReleaseUpdate.ps1`, `launch.log` and `update.log`.
 
 `LOLAPI_UPDATE_HOME` can override the updater directory. `LOLAPI_UPDATE_GITHUB_TOKEN` can supply the token from the environment instead of the token file.
 

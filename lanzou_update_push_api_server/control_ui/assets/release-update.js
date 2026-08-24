@@ -139,23 +139,32 @@
     if (status?.worker_alive !== undefined) {
       lines.push(`后台 worker: ${status.worker_alive ? '运行中' : '不存在'}`);
     }
-    if (status?.heartbeat_age_seconds !== null && status?.heartbeat_age_seconds !== undefined) {
+    if (status?.worker_alive && status?.heartbeat_age_seconds !== null && status?.heartbeat_age_seconds !== undefined) {
       lines.push(`最近心跳: ${formatAge(status.heartbeat_age_seconds)}`);
     }
+    const deployPid = Number(state.deployment_pid || state.pid || 0);
+    if (deployPid > 0) {
+      const alive = state.deployment_process_alive;
+      const suffix = alive === true ? '运行中' : (alive === false ? '已退出' : '等待确认');
+      lines.push(`部署进程: PID ${deployPid} · ${suffix}`);
+    }
     if (state.target_commit) lines.push(`目标: ${shortSha(state.target_commit)}`);
-    if (state.log) lines.push(`升级日志: ${state.log}`);
+    if (state.log) {
+      lines.push(`升级日志: ${state.log}${state.deployment_log_exists === false ? '（尚未生成）' : ''}`);
+    }
+    if (state.launch_log) lines.push(`启动日志: ${state.launch_log}`);
     if (state.error) lines.push(`错误: ${state.error}`);
     return lines;
   }
 
   function statusLabel(status) {
     const stateStatus = String(status?.update_state?.status || '').toLowerCase();
+    if (status?.status === 'current' || stateStatus === 'complete') return '已是最新';
     if (stateStatus === 'paused') return '已暂停';
     if (stateStatus === 'interrupted') return '已中断';
     if (stateStatus === 'stalled') return '下载停滞';
     if (stateStatus === 'failed') return '升级失败';
-    if (stateStatus === 'scheduled') return '部署已启动';
-    if (status?.status === 'current') return '已是最新';
+    if (['scheduled', 'deploying'].includes(stateStatus)) return '部署中';
     if (status?.status === 'update_available') return '可升级';
     if (status?.status === 'updating') return '升级中';
     return '暂不可用';
@@ -187,7 +196,12 @@
     const start = $('releaseUpdateStartButton');
     const supported = status?.platform_supported !== false;
     const available = Boolean(status?.available && status?.target_commit);
-    const busy = Boolean(status?.worker_alive || status?.status === 'updating');
+    const stateStatus = String(status?.update_state?.status || '').toLowerCase();
+    const busy = Boolean(
+      status?.worker_alive
+      || status?.status === 'updating'
+      || ['scheduled', 'deploying'].includes(stateStatus)
+    );
     if (start) start.disabled = busy || !(supported && available);
 
     setText('releaseUpdateState', statusLabel(status));
@@ -240,7 +254,7 @@
     updatePollTimer = window.setInterval(async () => {
       const status = await loadStatus({ silent: true });
       const stateStatus = String(status?.update_state?.status || '').toLowerCase();
-      if (['current', 'scheduled', 'complete', 'failed', 'interrupted'].includes(stateStatus)) {
+      if (['current', 'complete', 'failed', 'interrupted'].includes(stateStatus)) {
         stopProgressPolling();
       }
     }, 1200);
@@ -430,7 +444,14 @@
       await startUpdate();
     });
     loadStatus().then((status) => {
-      if (status?.worker_alive || status?.status === 'updating') startProgressPolling();
+      const stateStatus = String(status?.update_state?.status || '').toLowerCase();
+      if (
+        status?.worker_alive
+        || status?.status === 'updating'
+        || ['scheduled', 'deploying'].includes(stateStatus)
+      ) {
+        startProgressPolling();
+      }
     });
   }
 

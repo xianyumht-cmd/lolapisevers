@@ -22,9 +22,22 @@ class UpdateControlUiContractTests(unittest.TestCase):
         ]:
             self.assertIn(control_id, script)
         self.assertIn("后台 worker", script)
-        self.assertIn("最近心跳", script)
+        self.assertIn("部署进程", script)
+        self.assertIn("启动日志", script)
+        self.assertIn("deploying", script)
         self.assertIn("pollRestartVerification", script)
         self.assertIn("stopImmediatePropagation", script)
+
+    def test_scheduled_state_is_not_treated_as_polling_terminal_anymore(self):
+        script = (
+            ROOT
+            / "lanzou_update_push_api_server"
+            / "control_ui"
+            / "assets"
+            / "release-update.js"
+        ).read_text(encoding="utf-8")
+        self.assertIn("['current', 'complete', 'failed', 'interrupted']", script)
+        self.assertNotIn("['current', 'scheduled', 'complete', 'failed', 'interrupted']", script)
 
     def test_control_routes_include_pause_resume_reconnect_and_reset(self):
         source = (
