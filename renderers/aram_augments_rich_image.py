@@ -21,7 +21,7 @@ from utils.formatters import pct
 logger = logging.getLogger("LOLDataSystem")
 
 ARAM_IMAGE_WIDTH = 840
-ARAM_IMAGE_MAX_BYTES = 260_000
+ARAM_IMAGE_MAX_BYTES = 180_000
 ARAM_IMAGE_MAX_HEIGHT = 1450
 ARAM_IMAGE_ASSET_BUDGET_SECONDS = 1.5
 
