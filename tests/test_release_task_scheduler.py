@@ -55,9 +55,9 @@ class ReleaseTaskSchedulerTests(unittest.TestCase):
                     ["powershell.exe", "-NoProfile", "-File", str(helper)],
                     stdout=fake_stream,
                 )
+                self.assertEqual(process.pid, 4321)
+                self.assertIsNone(process.poll())
 
-            self.assertEqual(process.pid, 4321)
-            self.assertIsNone(process.poll())
             register.assert_called_once()
             original.Popen.assert_not_called()
             task_launcher = staging / "Task-VerifiedReleaseUpdate.ps1"
