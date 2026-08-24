@@ -37,6 +37,12 @@ from .maintenance import (
 )
 from .parser_center_retry_admin import install_parser_center_retry_routes
 from .parser_center_ui_guard import render_parser_center_page as render_guarded_parser_center_page
+from .release_updater import (
+    ReleaseUpdateError,
+    release_update_status,
+    save_release_token,
+    start_release_update,
+)
 from .security import security_status
 from .state_recovery import recover_state_file
 from .target_file_watch_admin import (
@@ -319,3 +325,24 @@ def install_control_extensions(app: FastAPI, service) -> None:
             )
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
+
+    @app.get("/admin/update/status")
+    async def admin_update_status() -> dict[str, Any]:
+        return await asyncio.to_thread(release_update_status)
+
+    @app.post("/admin/update/token")
+    async def admin_update_token(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        token = str((payload or {}).get("token") or "")
+        try:
+            return await asyncio.to_thread(save_release_token, token)
+        except OSError as exc:
+            return {"ok": False, "error": f"Token 保存失败：{exc.__class__.__name__}"}
+
+    @app.post("/admin/update/start")
+    async def admin_update_start() -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(start_release_update)
+        except ReleaseUpdateError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"一键升级启动失败：{exc.__class__.__name__}") from exc
