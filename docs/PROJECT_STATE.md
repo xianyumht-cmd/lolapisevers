@@ -4,11 +4,10 @@
 
 ## Canonical development
 
-- 默认开发分支：`master`
-- 当前 `master` 基线：`7245238c22ae91f68068756516426a99b9e906cd`（PR #80，Release 多源测速、断点续传与实时进度）
-- 当前任务：Issue #81「WebUI 升级任务控制、停滞恢复与服务重启验证」
-- 当前任务分支：`fix/update-controls-restart-verify-20260824`
-- 生产目录 `D:\project2\lolapisevers` 在普通开发中保持只读；本任务不直接修改或重启生产。
+- 默认开发分支：`master`；GitHub 中的实际 `master` 提交始终是开发状态的最终依据。
+- Release 下载控制与服务重启验证改造记录：Issue #81 / PR #82。PR/Issue 是否已合并关闭以 GitHub 实时状态为准，本文不复制临时分支生命周期状态。
+- PR #80 已建立 Release 多源测速、断点续传与实时进度的第一版基础。
+- 生产目录 `D:\project2\lolapisevers` 在普通开发中保持只读；代码开发、CI 和本地引导包生成不等于已执行生产部署。
 
 ## 已验证的问题
 
@@ -18,7 +17,7 @@
 - `update-state.json` 是持久化文件。服务重启后旧下载线程已经不存在，新 6178 仍可能把旧 `downloading` 状态显示成活任务。
 - 原 WebUI 服务重启只安排 `Restart-Service` 后立即返回，没有验证 NSSM 服务 PID 是否真正更换；页面快速恢复本身不能证明是否发生过重启。
 
-## Issue #81 目标设计
+## Issue #81 / PR #82 设计
 
 - Release 更新改为进程内后台 worker；启动 POST 立即返回，WebUI 只轮询本地状态。
 - active 状态记录 `worker_pid`、`run_id`、heartbeat；持久化 active 状态若不属于当前进程/没有存活 worker，转换为 `interrupted`，允许从 `.part` 继续。
@@ -34,11 +33,9 @@
 - 完整 V3 ZIP 仍必须通过官方 metadata 指定的 SHA-256、路径安全检查和内嵌 manifest 安全标志后才能启动部署器。
 - V3 部署器继续负责候选测试、生产备份、基线健康检查、切换、后置验证与失败自动回滚。
 
-## 当前完成条件
+## 交付与生产衔接
 
-1. Issue #81 实现和测试完成，UI/路由契约固定。
-2. 全仓 CI、普通安全部署包和 V3 安全部署包全部通过。
-3. PR 合并 `master`，确认 master 含新 worker/控制接口/PID 重启验证。
-4. 更新本文件、`PITFALLS.md` 和 `OPERATIONS.md`。
-5. 关闭 Issue #81；清理临时任务分支（若当前 GitHub 工具支持）。
-6. 从 CI 验证通过的 V3 Artifact 生成 WinPS5.1 兼容本地引导包，让仍停留在旧下载器的生产环境先完成一次本地升级。
+- 每次候选必须经过全仓测试、Parser Center CI、普通安全部署包和 V3 安全部署包验证；以对应 PR 最新 head 的 CI 状态为准。
+- 当前安装了旧下载器的生产环境，若无法可靠完成 GitHub Release 下载，应先使用同一候选 CI 生成并验证过的本地 V3 引导包升级下载器本身。
+- 本地引导完成后，6178 遇到旧进程残留的 active `update-state.json` 会将其识别为 `interrupted`，而不是继续伪装成活下载；之后可在 WebUI 选择继续、重连或清空断点。
+- 生产实际版本必须通过运行时 `/build-info`/WebUI 当前提交或等价运行证据确认，不能仅凭仓库 PR/Release 状态推断。
