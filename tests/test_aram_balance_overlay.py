@@ -6,9 +6,14 @@ from fastapi.responses import Response
 from PIL import Image
 
 from renderers.aram_balance_overlay import build_aram_augment_image_with_balance
+from renderers.aram_augments_rich_image import (
+    ARAM_IMAGE_MAX_BYTES,
+    ARAM_IMAGE_MAX_HEIGHT,
+    ARAM_IMAGE_WIDTH,
+)
 
 
-def base_png(width=900, height=800):
+def base_png(width=ARAM_IMAGE_WIDTH, height=800):
     image = Image.new("RGB", (width, height), (12, 17, 30))
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
@@ -72,9 +77,11 @@ class AramBalanceOverlayTests(unittest.TestCase):
 
         self.assertEqual(result.status_code, 200)
         self.assertEqual(result.media_type, "image/png")
+        self.assertLessEqual(len(result.body), ARAM_IMAGE_MAX_BYTES)
         image = Image.open(io.BytesIO(bytes(result.body)))
-        self.assertEqual(image.width, 900)
-        self.assertGreater(image.height, 916)
+        self.assertEqual(image.width, ARAM_IMAGE_WIDTH)
+        self.assertGreater(image.height, 900)
+        self.assertLessEqual(image.height, ARAM_IMAGE_MAX_HEIGHT)
 
     def test_syncing_patch_still_renders_panel_without_old_values(self):
         body = base_png()
@@ -107,8 +114,9 @@ class AramBalanceOverlayTests(unittest.TestCase):
 
         self.assertEqual(result.status_code, 200)
         image = Image.open(io.BytesIO(bytes(result.body)))
-        self.assertEqual(image.width, 900)
-        self.assertGreater(image.height, 916)
+        self.assertEqual(image.width, ARAM_IMAGE_WIDTH)
+        self.assertGreater(image.height, 900)
+        self.assertLessEqual(image.height, ARAM_IMAGE_MAX_HEIGHT)
 
     def test_unavailable_balance_returns_original_image(self):
         body = base_png()
