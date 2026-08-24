@@ -24,6 +24,13 @@ _PACKAGE_RE = re.compile(
 )
 _METADATA_SUFFIX = ".metadata.json"
 _FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+_REQUIRED_MANIFEST_FLAGS = (
+    "candidate_tests_before_stop",
+    "automatic_rollback",
+    "offline_dependencies",
+    "powershell_utf8_parse_input",
+    "baseline_aware_readiness",
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _UPDATE_HOME = Path(
@@ -61,7 +68,12 @@ def save_release_token(token: str) -> dict[str, Any]:
     _ensure_home()
     if not value:
         _TOKEN_PATH.unlink(missing_ok=True)
-        return {"ok": True, "configured": bool(os.getenv("LOLAPI_UPDATE_GITHUB_TOKEN")), "source": "environment" if os.getenv("LOLAPI_UPDATE_GITHUB_TOKEN") else "none"}
+        env_configured = bool(os.getenv("LOLAPI_UPDATE_GITHUB_TOKEN"))
+        return {
+            "ok": True,
+            "configured": env_configured,
+            "source": "environment" if env_configured else "none",
+        }
     temp = _TOKEN_PATH.with_suffix(".tmp")
     temp.write_text(value, encoding="utf-8")
     try:
@@ -103,18 +115,22 @@ def _request_json(url: str, token: str, timeout: float = 12.0) -> dict[str, Any]
 
 def _select_assets(release: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     assets = release.get("assets") if isinstance(release.get("assets"), list) else []
-    zip_asset = None
-    metadata_asset = None
+    zip_assets = []
+    metadata_assets = []
     for asset in assets:
         if not isinstance(asset, dict):
             continue
         name = str(asset.get("name") or "")
         if _PACKAGE_RE.fullmatch(name):
-            zip_asset = asset
+            zip_assets.append(asset)
         elif name.endswith(_METADATA_SUFFIX) and "full-bug-repair-safe-deploy" in name and "winps51-v3" in name:
-            metadata_asset = asset
-    if not zip_asset or not metadata_asset:
-        raise ReleaseUpdateError("最新 Release 缺少 V3 ZIP 或 metadata 资产")
+            metadata_assets.append(asset)
+    if len(zip_assets) != 1 or len(metadata_assets) != 1:
+        raise ReleaseUpdateError(
+            f"最新 Release 的 V3 资产数量异常：zip={len(zip_assets)} metadata={len(metadata_assets)}"
+        )
+    zip_asset = zip_assets[0]
+    metadata_asset = metadata_assets[0]
     expected_metadata = str(zip_asset.get("name") or "")[:-4] + _METADATA_SUFFIX
     if str(metadata_asset.get("name") or "") != expected_metadata:
         raise ReleaseUpdateError("Release ZIP 与 metadata 文件名不匹配")
@@ -158,9 +174,14 @@ def _validate_metadata(metadata: dict[str, Any], zip_name: str) -> str:
         raise ReleaseUpdateError("Release metadata schema 不受支持")
     if str(metadata.get("filename") or "") != zip_name:
         raise ReleaseUpdateError("Release metadata filename 与 ZIP 不一致")
+    match = _PACKAGE_RE.fullmatch(zip_name)
+    if not match:
+        raise ReleaseUpdateError("Release ZIP 文件名不受支持")
     target = str(metadata.get("target_commit") or "").strip().lower()
     if not _FULL_SHA_RE.fullmatch(target):
         raise ReleaseUpdateError("Release metadata target_commit 无效")
+    if match.group(1) != target[:12]:
+        raise ReleaseUpdateError("Release ZIP 文件名提交前缀与 metadata 不一致")
     if int(metadata.get("package_revision") or 0) != 3:
         raise ReleaseUpdateError("只允许 V3 安全部署包")
     for key in ("powershell_utf8_parse_input", "baseline_aware_readiness"):
@@ -197,7 +218,9 @@ def release_update_status() -> dict[str, Any]:
         "current_commit": current_commit,
         "current_release": str(current.get("release") or "unknown"),
         "token_configured": bool(token),
-        "token_source": "environment" if os.getenv("LOLAPI_UPDATE_GITHUB_TOKEN") else ("file" if _TOKEN_PATH.exists() else "none"),
+        "token_source": "environment"
+        if os.getenv("LOLAPI_UPDATE_GITHUB_TOKEN")
+        else ("file" if _TOKEN_PATH.exists() else "none"),
         "platform_supported": os.name == "nt",
         "update_state": _read_state(),
     }
@@ -280,43 +303,75 @@ def _safe_extract(zip_path: Path, destination: Path) -> None:
         archive.extractall(destination)
 
 
-def _find_deployer(extract_root: Path) -> Path:
+def _validate_embedded_manifest(extract_root: Path, target_commit: str) -> Path:
+    manifests = list(extract_root.rglob("manifest.json"))
+    if len(manifests) != 1:
+        raise ReleaseUpdateError(f"Release ZIP manifest 数量异常：{len(manifests)}")
+    manifest_path = manifests[0]
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ReleaseUpdateError("Release ZIP manifest 无法解析") from exc
+    if not isinstance(manifest, dict):
+        raise ReleaseUpdateError("Release ZIP manifest 根节点必须是对象")
+    if str(manifest.get("target_commit") or "").lower() != target_commit:
+        raise ReleaseUpdateError("Release ZIP manifest 目标提交不一致")
+    if int(manifest.get("package_revision") or 0) != 3:
+        raise ReleaseUpdateError("Release ZIP manifest 不是 V3")
+    deployment = manifest.get("deployment") if isinstance(manifest.get("deployment"), dict) else {}
+    for key in _REQUIRED_MANIFEST_FLAGS:
+        if deployment.get(key) is not True:
+            raise ReleaseUpdateError(f"Release ZIP manifest 缺少安全标志：{key}")
+    return manifest_path
+
+
+def _find_deployer(extract_root: Path, manifest_path: Path) -> Path:
+    preferred = manifest_path.parent / "Deploy-FullBugRepairSafe.ps1"
+    if preferred.is_file():
+        return preferred
     matches = list(extract_root.rglob("Deploy-FullBugRepairSafe.ps1"))
     if len(matches) != 1:
         raise ReleaseUpdateError(f"Release ZIP 部署脚本数量异常：{len(matches)}")
     return matches[0]
 
 
+def _ps_quote(value: str) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
+
+
 def _helper_script(deployer: Path, log_path: Path) -> str:
-    project = str(PROJECT_ROOT)
-    deploy = str(deployer)
-    log = str(log_path)
+    project = _ps_quote(str(PROJECT_ROOT))
+    deploy = _ps_quote(str(deployer))
+    log = _ps_quote(str(log_path))
     return f'''$ErrorActionPreference = "Stop"
 Set-StrictMode -Version 2.0
 Start-Sleep -Seconds 3
-$deployPath = {json.dumps(deploy)}
-$projectRoot = {json.dumps(project)}
-$logPath = {json.dumps(log)}
+$deployPath = {deploy}
+$projectRoot = {project}
+$logPath = {log}
 Start-Transcript -Path $logPath -Append | Out-Null
 try {{
-    $command = Get-Command -LiteralPath $deployPath
+    $command = Get-Command -Name $deployPath -ErrorAction Stop
     $invoke = @{{}}
     if ($command.Parameters.ContainsKey("ProjectRoot")) {{ $invoke["ProjectRoot"] = $projectRoot }}
     if ($command.Parameters.ContainsKey("ProductionRoot")) {{ $invoke["ProductionRoot"] = $projectRoot }}
     if ($command.Parameters.ContainsKey("RepositoryRoot")) {{ $invoke["RepositoryRoot"] = $projectRoot }}
     if ($command.Parameters.ContainsKey("BaseUrl")) {{ $invoke["BaseUrl"] = "http://127.0.0.1:5001" }}
     if ($command.Parameters.ContainsKey("Hero")) {{ $invoke["Hero"] = "阿狸" }}
-    $known = @("ProjectRoot", "ProductionRoot", "RepositoryRoot", "BaseUrl", "Hero")
     $missing = @()
     foreach ($entry in $command.Parameters.GetEnumerator()) {{
         $attrs = @($entry.Value.Attributes | Where-Object {{ $_ -is [System.Management.Automation.ParameterAttribute] }})
-        if (@($attrs | Where-Object {{ $_.Mandatory }}).Count -gt 0 -and -not $invoke.ContainsKey($entry.Key) -and $known -notcontains $entry.Key) {{
+        if (@($attrs | Where-Object {{ $_.Mandatory }}).Count -gt 0 -and -not $invoke.ContainsKey($entry.Key)) {{
             $missing += $entry.Key
         }}
     }}
-    if ($missing.Count -gt 0) {{ throw "Updater cannot resolve mandatory deploy parameters: $($missing -join ', ')" }}
+    if ($missing.Count -gt 0) {{
+        throw "Updater cannot resolve mandatory deploy parameters: $($missing -join ', ')"
+    }}
     & $deployPath @invoke
-    if ($LASTEXITCODE -ne 0) {{ throw "Deployment process failed with ExitCode=$LASTEXITCODE" }}
+    if ($LASTEXITCODE -ne 0) {{
+        throw "Deployment process failed with ExitCode=$LASTEXITCODE"
+    }}
 }} catch {{
     Write-Error $_
     exit 1
@@ -337,7 +392,12 @@ def start_release_update() -> dict[str, Any]:
     target = _validate_metadata(metadata, zip_name)
     current = str(load_build_info().get("commit_sha") or "unknown").lower()
     if target == current:
-        return {"ok": True, "scheduled": False, "message": "当前已经是最新版本", "target_commit": target}
+        return {
+            "ok": True,
+            "scheduled": False,
+            "message": "当前已经是最新版本",
+            "target_commit": target,
+        }
 
     release_id = str(release.get("id") or int(time.time()))
     staging = _UPDATE_HOME / f"release-{release_id}-{target[:12]}"
@@ -352,7 +412,8 @@ def start_release_update() -> dict[str, Any]:
 
     extract_root = staging / "extracted"
     _safe_extract(zip_path, extract_root)
-    deployer = _find_deployer(extract_root)
+    manifest_path = _validate_embedded_manifest(extract_root, target)
+    deployer = _find_deployer(extract_root, manifest_path)
     helper = staging / "Start-VerifiedReleaseUpdate.ps1"
     log_path = staging / "update.log"
     helper.write_text(_helper_script(deployer, log_path), encoding="utf-8-sig")
