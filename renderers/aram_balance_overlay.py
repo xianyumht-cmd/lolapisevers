@@ -7,7 +7,7 @@ from typing import Any, Dict, List
 
 from fastapi.responses import Response
 
-from renderers.aram_augments_image import build_aram_augment_image_response
+from renderers.aram_augments_rich_image import build_aram_augment_image_response
 from renderers.image_utils import encode_png_limited, fit_text, load_image_font
 
 

@@ -5,6 +5,7 @@ from .components import icon, render_console_shell
 
 _OPERATIONS_STYLES = ("/control-assets/console.css", "/control-assets/operations.css")
 _OPERATIONS_SCRIPT = ("/control-assets/operations.js",)
+_SYSTEM_SCRIPTS = ("/control-assets/operations.js", "/control-assets/release-update.js")
 
 
 def _page_header(*, eyebrow: str, title: str, description: str, actions: str) -> str:
@@ -36,6 +37,29 @@ def _confirm_dialog() -> str:
       <span class="dialog-footer-spacer"></span>
       <button class="button button-secondary" id="operationConfirmCancel" type="button">取消</button>
       <button class="button button-primary" id="operationConfirmSubmit" type="submit">确认执行</button>
+    </footer>
+  </form>
+</dialog>'''
+
+
+def _update_confirm_dialog() -> str:
+    return f'''<dialog class="dialog" id="releaseUpdateConfirmDialog" aria-labelledby="releaseUpdateConfirmTitle">
+  <form class="dialog-card" id="releaseUpdateConfirmForm">
+    <header class="dialog-header">
+      <div>
+        <p class="eyebrow">Release 安全升级</p>
+        <h2 id="releaseUpdateConfirmTitle">确认一键升级</h2>
+      </div>
+      <button class="icon-button" id="releaseUpdateConfirmClose" type="button" aria-label="关闭对话框">{icon('x')}</button>
+    </header>
+    <div class="dialog-body">
+      <p class="dialog-description" id="releaseUpdateConfirmMessage">将下载并校验最新 V3 安全部署包。</p>
+      <div class="alert alert-warning">升级会短暂中断 5001 和 6178。部署器会先验证候选、备份生产，并在验证失败时自动回滚。</div>
+    </div>
+    <footer class="dialog-footer">
+      <span class="dialog-footer-spacer"></span>
+      <button class="button button-secondary" id="releaseUpdateConfirmCancel" type="button">取消</button>
+      <button class="button button-primary" id="releaseUpdateConfirmSubmit" type="submit">确认升级</button>
     </footer>
   </form>
 </dialog>'''
@@ -125,8 +149,8 @@ def render_system_page() -> str:
     actions = f'<button class="button button-secondary" id="systemRefreshButton" type="button">{icon("refresh")}<span>刷新状态</span></button>'
     content = _page_header(
         eyebrow="P3A · 系统管理",
-        title="安全与回滚",
-        description="查看控制台访问策略、Windows 服务、配置备份和管理审计，并执行受控重启或回滚。",
+        title="安全、回滚与升级",
+        description="查看控制台访问策略、Windows 服务、配置备份、Release 升级和管理审计。",
         actions=actions,
     ) + '''
 <section class="metric-grid">
@@ -134,6 +158,28 @@ def render_system_page() -> str:
   <article class="metric-card"><div class="metric-icon">''' + icon("lock") + '''</div><div><span>访问控制</span><strong id="securityMode" class="skeleton-text">读取中</strong><small id="securityDetail">等待安全状态</small></div></article>
   <article class="metric-card"><div class="metric-icon">''' + icon("archive") + '''</div><div><span>配置备份</span><strong id="backupCount" class="skeleton-text">0</strong><small>可回滚的备份文件</small></div></article>
   <article class="metric-card"><div class="metric-icon">''' + icon("file-text") + '''</div><div><span>审计记录</span><strong id="auditCount" class="skeleton-text">0</strong><small>最近读取的管理操作</small></div></article>
+</section>
+<section class="panel">
+  <header class="panel-header">
+    <div><h2>GitHub Release 一键升级</h2><p>只接受本仓库 V3 安全部署 ZIP + metadata；下载后校验 SHA-256，再由独立 PowerShell 进程执行部署。</p></div>
+    <div class="page-actions">
+      <button class="button button-secondary" id="releaseUpdateCheckButton" type="button">''' + icon("refresh") + '''<span>检查更新</span></button>
+      <button class="button button-primary" id="releaseUpdateStartButton" type="button" disabled>''' + icon("activity") + '''<span>一键升级</span></button>
+    </div>
+  </header>
+  <div class="panel-body">
+    <section class="metric-grid metric-grid-3">
+      <article class="metric-card"><div><span>当前提交</span><strong id="releaseCurrentCommit" class="code">读取中</strong><small id="releaseCurrentName">等待 build-info</small></div></article>
+      <article class="metric-card"><div><span>最新 Release</span><strong id="releaseLatestName">读取中</strong><small id="releaseTargetCommit">等待目标提交</small></div></article>
+      <article class="metric-card"><div><span>更新状态</span><strong id="releaseUpdateState">读取中</strong><small id="releasePackageInfo">等待 Release metadata</small></div></article>
+    </section>
+    <div class="form-row form-row-4">
+      <label class="field field-span-2"><span>GitHub Release 只读 Token</span><input id="releaseTokenInput" type="password" autocomplete="off" spellcheck="false" placeholder="私有仓库首次配置；保存后不会回显"><small id="releaseTokenHint">Token 仅保存在生产机更新目录，不进入源码、页面或普通日志。</small></label>
+      <div class="field"><span>Token 状态</span><div class="inline-status" id="releaseTokenStatus"><span class="status-dot status-dot-neutral"></span><span>读取中</span></div></div>
+      <div class="field"><span>操作</span><button class="button button-secondary" id="releaseTokenSaveButton" type="button">保存 Token</button></div>
+    </div>
+    <pre class="operations-result" id="releaseUpdateResult">正在读取 Release 更新状态...</pre>
+  </div>
 </section>
 <section class="dashboard-grid">
   <article class="panel panel-span-2">
@@ -152,14 +198,14 @@ def render_system_page() -> str:
     <header class="panel-header"><div><h2>操作审计</h2><p>不记录 Token、密码和请求正文</p></div></header>
     <div class="table-wrap"><table><thead><tr><th>时间</th><th>操作</th><th>结果</th></tr></thead><tbody id="auditRows"><tr><td colspan="3"><div class="empty-state loading-state"><span class="loading-spinner"></span>正在读取审计</div></td></tr></tbody></table></div>
   </article>
-</section>''' + _confirm_dialog()
+</section>''' + _confirm_dialog() + _update_confirm_dialog()
     return render_console_shell(
         active="system",
-        title="安全与回滚",
+        title="安全、回滚与升级",
         content=content,
         body_marker="system",
         styles=_OPERATIONS_STYLES,
-        scripts=_OPERATIONS_SCRIPT,
+        scripts=_SYSTEM_SCRIPTS,
     )
 
 
