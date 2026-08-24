@@ -45,6 +45,10 @@
     return `${(seconds / 60).toFixed(1)} 分钟前`;
   }
 
+  function sleep(ms) {
+    return new Promise((resolve) => window.setTimeout(resolve, ms));
+  }
+
   async function request(path, options = {}) {
     const headers = { accept: 'application/json' };
     const token = adminToken();
@@ -336,8 +340,85 @@
     });
   }
 
+  function renderVerifiedServiceStatus(status) {
+    const pid = Number(status?.process_id || 0);
+    const stateValue = String(status?.state || 'unknown').toLowerCase();
+    setText('serviceState', stateValue === 'running' ? '运行中' : stateValue);
+    setText('serviceDetail', `LOLDataSystem · ${stateValue}${pid > 0 ? ` · PID ${pid}` : ''}`);
+    setText('serviceStatusContent', JSON.stringify(status || {}, null, 2));
+  }
+
+  async function pollRestartVerification(requestId, beforePid) {
+    const deadline = Date.now() + 75000;
+    let lastError = '';
+    while (Date.now() < deadline) {
+      try {
+        const status = await request('/admin/service/status');
+        renderVerifiedServiceStatus(status);
+        const verification = status?.restart_verification || {};
+        if (verification.request_id === requestId && verification.status === 'verified') {
+          return verification;
+        }
+        if (
+          verification.request_id === requestId
+          && ['unverified', 'launch_failed'].includes(String(verification.status || '').toLowerCase())
+        ) {
+          throw new Error(verification.message || '服务 PID 未发生预期变化');
+        }
+      } catch (error) {
+        lastError = error.message || String(error);
+      }
+      await sleep(1200);
+    }
+    throw new Error(lastError || `75 秒内未验证服务 PID 从 ${beforePid || '-'} 发生变化`);
+  }
+
+  async function verifiedRestartService() {
+    if (!window.confirm('确认重启 LOLDataSystem？页面可能短暂断开；只有检测到服务 PID 更换后才会判定成功。')) return;
+    const button = $('restartServiceButton');
+    const original = button?.querySelector('span')?.textContent || '重启服务';
+    if (button) button.disabled = true;
+    const label = button?.querySelector('span');
+    if (label) label.textContent = '等待重启验证';
+    try {
+      const scheduled = await request('/admin/service/restart', {
+        method: 'POST',
+        body: { delay_seconds: 3 },
+      });
+      setText(
+        'serviceStatusContent',
+        `重启已安排，等待 PID 变化验证...\n请求: ${scheduled.request_id || '-'}\n重启前 PID: ${scheduled.before_pid || '-'}`,
+      );
+      const verification = await pollRestartVerification(scheduled.request_id, scheduled.before_pid);
+      setText('serviceStatusContent', JSON.stringify(verification, null, 2));
+      setText('serviceDetail', verification.message || '服务重启已验证');
+      if (label) label.textContent = '重启已验证';
+      await sleep(1800);
+    } catch (error) {
+      setText('serviceStatusContent', `服务重启未验证：${error.message}`);
+      setText('serviceDetail', '重启结果未验证，请查看 PID/服务状态');
+      if (label) label.textContent = '重启未验证';
+      await sleep(2500);
+    } finally {
+      if (button) button.disabled = false;
+      if (label) label.textContent = original;
+    }
+  }
+
+  function bindVerifiedRestart() {
+    const button = $('restartServiceButton');
+    if (!button || button.dataset.verifiedRestartBound === '1') return;
+    button.dataset.verifiedRestartBound = '1';
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      verifiedRestartService();
+    }, true);
+  }
+
   function init() {
     bindControls();
+    bindVerifiedRestart();
     $('releaseUpdateCheckButton')?.addEventListener('click', loadStatus);
     $('releaseTokenSaveButton')?.addEventListener('click', saveToken);
     $('releaseUpdateStartButton')?.addEventListener('click', openUpdateConfirm);
