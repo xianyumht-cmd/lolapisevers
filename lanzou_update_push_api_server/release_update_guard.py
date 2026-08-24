@@ -6,9 +6,12 @@ import requests
 
 from core.build_info import load_build_info
 
+from . import release_task_scheduler as task_scheduler
 from . import release_update_controller as controller
 from . import release_updater as core
 
+
+task_scheduler.install(controller)
 
 ReleaseUpdateError = core.ReleaseUpdateError
 
