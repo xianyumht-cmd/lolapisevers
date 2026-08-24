@@ -62,6 +62,7 @@ def _fresh_remote_status(previous_state: dict[str, Any]) -> dict[str, Any]:
             "can_reconnect": False,
             "can_reset": False,
         }
+        result["update_state"] = {}
         if previous_state:
             result["last_update_state"] = previous_state
         return result
@@ -142,16 +143,25 @@ def _fresh_remote_status(previous_state: dict[str, Any]) -> dict[str, Any]:
 
 
 def release_update_status() -> dict[str, Any]:
-    local = controller.release_update_status()
-    state = local.get("update_state") if isinstance(local.get("update_state"), dict) else {}
-    state_status = str(state.get("status") or "").lower()
+    raw_state = core._read_state()
+    raw_status = str(raw_state.get("status") or "").lower()
 
-    # Live workers and detached deployment processes must remain local-only so
-    # progress polling never adds GitHub traffic or races the active state machine.
-    if bool(local.get("worker_alive")) or state_status in _DEPLOY:
-        return local
+    # Only active/paused/deploy states need controller reconciliation. Idle,
+    # failed and completed states go straight to one fresh GitHub check, avoiding
+    # the old double metadata request on every manual status refresh.
+    if (
+        raw_status in controller._ACTIVE_STATUSES
+        or raw_status in _DEPLOY
+        or raw_status == "paused"
+    ):
+        local = controller.release_update_status()
+        state = local.get("update_state") if isinstance(local.get("update_state"), dict) else {}
+        state_status = str(state.get("status") or "").lower()
+        if bool(local.get("worker_alive")) or state_status in _DEPLOY:
+            return local
+        return _fresh_remote_status(state)
 
-    return _fresh_remote_status(state)
+    return _fresh_remote_status(raw_state)
 
 
 def _guard_start() -> dict[str, Any]:
