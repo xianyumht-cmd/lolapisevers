@@ -24,11 +24,29 @@ If the installed updater itself is blocked by a known download-control bug, use 
 12. `scheduled` is only a transition state. `/admin/update/status` checks the detached deployment PID and the current production commit: live PID => `deploying`; dead PID + target commit active => `complete`; dead PID + old commit => `failed`. The WebUI keeps polling through `scheduled/deploying` instead of stopping at “process started”.
 13. If the PowerShell process exits before `Start-Transcript`, `launch.log` is the startup diagnostic. If it entered the deployer, use `update.log` for the full deployment transcript. Both paths are shown by the WebUI when available.
 
+### Release freshness and downgrade guard
+
+Idle updater state is not allowed to trust a persisted `failed`, `interrupted`, `stalled` or old completed target as the newest release forever. When there is no live worker or detached deployment process, **检查更新** refreshes GitHub `releases/latest` and its metadata, then checks the commit relationship using GitHub's official Compare API.
+
+The relation is evaluated as `current...target`:
+
+- `identical` — current production and Release target are the same commit; no update is offered.
+- `ahead` — the Release target is ahead of current production; this is the only relation that enables a normal forward one-click update.
+- `behind` — the Release target is already contained in current production; the Release has not caught up and the updater must not downgrade production.
+- `diverged` — the histories have split; automatic update is blocked.
+- API error / unknown relationship — fail closed and block the update rather than guessing.
+
+A previous failed task remains available only as `last_update_state` diagnostic history. It must not replace the freshly queried Release name/target in the idle status response.
+
+The same relationship guard applies before **一键升级**, **继续下载**, **重新连接**, and **清空断点重下**. A stale `.part` or verified ZIP is never a reason to install a target that is behind the current production commit. If the saved target is behind, diverged, or cannot be verified, recovery actions are blocked until a safe forward Release exists.
+
+Active worker and detached deployment polling remain local-only. The updater does not call GitHub Compare on every 1.2-second progress poll; GitHub refresh/compare happens only when the updater is idle or reconciling a finished task.
+
 ### Interrupted update recovery
 
 `update-state.json` is persistent evidence of the last known state, not proof that a worker still exists. Active worker state includes the current process PID, run id and heartbeat.
 
-When a newly started 6178 process finds an old active download state whose worker does not belong to the current process, it changes the state to `interrupted` and keeps the existing `.part` file. The operator can then use **继续下载** or **重新连接**; a service restart is not required just to recover a download.
+When a newly started 6178 process finds an old active download state whose worker does not belong to the current process, it changes the state to `interrupted` and keeps the existing `.part` file. The operator can then use **继续下载** or **重新连接** only if that saved target is still a verified forward target; a service restart is not required just to recover a download.
 
 A live worker whose heartbeat becomes unexpectedly stale is surfaced as `stalled` so the UI offers reconnect/recovery instead of indefinitely presenting a healthy-looking download.
 
@@ -50,6 +68,8 @@ Files include:
 
 Public mirror candidates are never given the private GitHub token. For a private repository they may fail authentication; the updater safely falls back to GitHub's authenticated API path rather than leaking credentials to a third party.
 
+GitHub commit-relation checks use the same read-only token only against `api.github.com`; the token is never forwarded to public acceleration mirrors.
+
 ### Windows service restart verification
 
 The `/system` **重启服务** action is not considered successful merely because an external `Restart-Service` command was launched.
@@ -68,6 +88,7 @@ The WebUI updater refuses to schedule deployment when any of these checks fail:
 
 - non-Windows platform;
 - latest Release unavailable or private-repository Token missing;
+- current/target commit relation is `behind`, `diverged`, or cannot be safely confirmed as a forward update;
 - unexpected number/name of V3 ZIP or metadata assets;
 - metadata schema, filename or target commit mismatch;
 - non-V3 package revision;
@@ -78,6 +99,6 @@ The WebUI updater refuses to schedule deployment when any of these checks fail:
 - missing candidate-test, automatic-rollback, offline-dependency, UTF-8 or baseline-readiness manifest flags;
 - deployment script missing or introducing mandatory parameters the updater cannot resolve.
 
-Resetting a partial download is confined to the updater home and a strictly validated V3 package filename. Pause/reconnect/resume never weaken the package integrity gates.
+Resetting a partial download is confined to the updater home and a strictly validated V3 package filename. Pause/reconnect/resume never weaken the package integrity or commit-relationship gates.
 
 The V3 deployer remains the final authority for candidate testing, production backup, service switch, readiness verification and automatic rollback.
