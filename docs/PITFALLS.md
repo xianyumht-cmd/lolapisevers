@@ -33,3 +33,18 @@
   4. 只处理明确指向当前项目 `start_hidden.vbs`、`run_server.bat` 或 `ops\run_service.ps1` 的启动项；命中项移动到 `logs\retired-startup\<时间戳>` 并保存 manifest，不直接删除。
   5. `health_check.ps1` 必须持续报告 supervisor 数量、父进程归属和旧 Startup 残留，避免端口正常就误判拓扑正常。
   6. 看到 PowerShell 每几秒在任务管理器排序中上浮时，先区分“同一常驻 PID 周期性活动”和“不断创建新 PID”；不能仅凭 `run_service.ps1` 的 5 秒轮询就断言它是高 CPU 根因。
+
+## 2026-08-24 — Release 更新不能把持久化状态或“已安排重启”当成活性证据
+
+- **现象**：Release 下载在 `github-api` 只有约 0.01 MB/s 时长期显示 `downloading`；服务重启后页面仍能读到旧的百分比并继续显示“升级中”。同时 WebUI 的“重启服务”在后台安排 `Restart-Service` 后立即提示成功，无法证明 NSSM 服务是否真的换过进程。
+- **根因**：
+  1. HTTP read timeout 只能发现一段时间完全无字节；持续涓流会一直续命。
+  2. 旧下载器用 1 MiB chunk 才更新一次进度，低速链路下很久没有 UI 变化。
+  3. `update-state.json` 是磁盘快照，不是 worker 存活证明；进程重启后快照仍保留 active 状态。
+  4. 服务控制只证明“重启命令已启动”，没有记录并比较重启前后服务 PID。
+- **防止复发**：
+  1. 长任务状态必须同时携带进程内 worker 身份、`worker_pid`/`run_id` 和 heartbeat；新进程读到旧 active 状态时要自动降级为 `interrupted`，不能伪装成仍在执行。
+  2. 网络下载采用小 chunk + 时间窗口吞吐判定；read timeout 之外必须有低速熔断，触发时保留 `.part` 并从断点重连。
+  3. WebUI 的“暂停/继续/重连/重下”应是显式控制面，不使用“重启整个服务”代替下载控制。
+  4. Windows 服务重启成功必须观察到 `Running` 且服务 PID 从旧值变为新值；页面是否很快恢复访问不能作为成功/失败判断。
+  5. 任何“scheduled/accepted”类响应在 UI 中都只能显示为“已安排/等待验证”，不得直接显示为最终成功。
