@@ -16,7 +16,7 @@ from services.aram_base_balance_service import query_aram_base_balance
 
 router = APIRouter()
 logger = logging.getLogger("LOLDataSystem")
-ARAM_IMAGE_RENDERER_VERSION = "4"
+ARAM_IMAGE_RENDERER_VERSION = "5"
 
 
 def _balance_unavailable(error_class: str = "unexpected_error") -> dict:
