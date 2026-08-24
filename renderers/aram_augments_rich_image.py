@@ -30,15 +30,6 @@ def _number(value: Any) -> float:
     return number / 100.0 if number > 1 else number
 
 
-def _rarity_rank(value: Any) -> int:
-    label = rarity_label(value)
-    if label == "棱镜":
-        return 0
-    if label == "金":
-        return 1
-    return 2
-
-
 def _decision_routes(rows: List[Dict[str, Any]]) -> List[Tuple[str, str, str]]:
     if not rows:
         return []
@@ -107,13 +98,19 @@ def build_aram_augment_image_response(ctx: Any, payload: Dict[str, Any]) -> Resp
         sections_height = 0
         for _label, items in grouped:
             card_rows = (len(items) + 1) // 2
-            sections_height += section_header + card_rows * card_height + max(0, card_rows - 1) * card_gap + 12
+            sections_height += (
+                section_header
+                + card_rows * card_height
+                + max(0, card_rows - 1) * card_gap
+                + 12
+                + gap
+            )
         if not grouped:
             sections_height = 110
 
         height = outer + hero_height + gap + sections_height
         if route_height:
-            height += gap + route_height
+            height += route_height + gap
         height += footer_height + outer
 
         bg = (12, 17, 30)
@@ -235,6 +232,9 @@ def build_aram_augment_image_response(ctx: Any, payload: Dict[str, Any]) -> Resp
                     lines = wrap_draw_text(draw, desc, tiny_font, card_width - 92)[:2]
                     for line_no, line_text in enumerate(lines):
                         draw.text((x + 72, cy + 38 + line_no * 15), fit_text(draw, line_text, tiny_font, card_width - 190), fill=muted, font=tiny_font)
+                    games = row.get("games")
+                    if games not in {None, ""}:
+                        draw.text((x + 72, cy + 72), fit_text(draw, f"样本 {games}", tiny_font, card_width - 190), fill=(122, 139, 164), font=tiny_font, anchor="lm")
                 y += section_height + gap
 
         routes = _decision_routes(rows)
