@@ -56,3 +56,26 @@ The current OP.GG upstream parser supplies per-augment performance/popularity da
 - The image groups augments by quality and shows single-augment metrics directly.
 - “稳健首选 / 高胜上限 / 热门容错” are decision aids derived from single-augment data.
 - The rendered image explicitly states that those routes are not measured three-augment combination win rates.
+
+## 2026-08-25 — Release self-update is forward-only and ancestry-gated
+
+**Decision**
+
+The WebUI updater may automatically install a Release only when GitHub can prove that the Release target is a descendant of the currently running production commit. A different SHA is not sufficient evidence of an upgrade.
+
+Idle updater status refreshes the latest Release instead of letting an old failed/interrupted `update-state.json` remain authoritative. Commit relationship is evaluated against GitHub's official Compare API using `current...target`.
+
+**Reasons**
+
+- A production machine can legitimately run a tested PR candidate that is newer than the most recently published Release. In that state, `target != current` would incorrectly treat an older Release as an upgrade and could roll production backward.
+- A persisted failed task describes an old attempt, not the current release channel. It must remain diagnostic history rather than determine the newest available target indefinitely.
+- Production repositories may not have every future Release commit object locally, so a local-only `git merge-base` check is not reliable enough for the release channel. GitHub already has both commits and can authoritatively compare them.
+
+**Consequences**
+
+- `current...target = ahead` is the only normal automatic forward-update relation.
+- `identical` means no update is required.
+- `behind` means the Release is older than current production and downgrade is blocked.
+- `diverged` or an unavailable/unknown relationship is fail-closed; automatic update is blocked rather than guessed.
+- The same guard applies to start, resume, reconnect, and reset paths, not only to the WebUI button state.
+- Active download/deployment polling remains local-only; GitHub Release and compare calls are made only while idle/reconciling so progress polling does not create API traffic or race the running state machine.
