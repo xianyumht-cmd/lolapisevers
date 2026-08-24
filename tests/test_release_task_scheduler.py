@@ -39,6 +39,7 @@ class ReleaseTaskSchedulerTests(unittest.TestCase):
             helper.write_text("Write-Host ok", encoding="utf-8-sig")
             launch_log = staging / "launch.log"
             launch_log.touch()
+            expected_helper = str(helper.resolve())
 
             original = SimpleNamespace(Popen=Mock())
             proxy = launcher.SchedulerSubprocessProxy(original)
@@ -63,7 +64,7 @@ class ReleaseTaskSchedulerTests(unittest.TestCase):
             task_launcher = staging / "Task-VerifiedReleaseUpdate.ps1"
             self.assertTrue(task_launcher.is_file())
             rendered = task_launcher.read_text(encoding="utf-8-sig")
-            self.assertIn(str(helper), rendered)
+            self.assertIn(expected_helper, rendered)
             self.assertIn(str(launch_log), rendered)
 
     def test_verified_helper_outside_update_home_is_not_intercepted(self):
