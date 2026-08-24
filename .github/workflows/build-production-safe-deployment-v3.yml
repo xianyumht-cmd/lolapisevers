@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build-package-v3:
@@ -198,6 +198,19 @@ jobs:
             }
           }
 
+          $deployCommand = Get-Command -Name $deployFile -ErrorAction Stop
+          $knownUpdaterParameters = @("ProjectRoot", "ProductionRoot", "RepositoryRoot", "BaseUrl", "Hero")
+          $unknownMandatory = @()
+          foreach ($entry in $deployCommand.Parameters.GetEnumerator()) {
+            $attrs = @($entry.Value.Attributes | Where-Object { $_ -is [System.Management.Automation.ParameterAttribute] })
+            if (@($attrs | Where-Object { $_.Mandatory }).Count -gt 0 -and $knownUpdaterParameters -notcontains $entry.Key) {
+              $unknownMandatory += $entry.Key
+            }
+          }
+          if ($unknownMandatory.Count -gt 0) {
+            throw "WebUI updater cannot resolve mandatory deploy parameters: $($unknownMandatory -join ', ')"
+          }
+
           $verifyFile = Join-Path $manifestFile.Directory.FullName "Verify-FullBugRepairProduction.ps1"
           $verifyText = Get-Content $verifyFile -Raw -Encoding UTF8
           foreach ($marker in @(
@@ -224,20 +237,37 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  publish-release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    needs: build-package-v3
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified V3 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: LOLDataSystem-full-bug-repair-safe-deploy-winps51-v3
+          path: release-assets
+
       - name: Publish verified V3 assets as latest Release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          TARGET_COMMIT: ${{ github.sha }}
         run: |
           $short = $env:TARGET_COMMIT.Substring(0, 12)
           $tag = "lolapi-$short"
-          $zipFile = Get-ChildItem dist-v3 -Filter *.zip -File | Select-Object -First 1
-          $metadataFile = Get-ChildItem dist-v3 -Filter *.metadata.json -File | Select-Object -First 1
+          $zipFile = Get-ChildItem release-assets -Filter *.zip -File -Recurse | Select-Object -First 1
+          $metadataFile = Get-ChildItem release-assets -Filter *.metadata.json -File -Recurse | Select-Object -First 1
           if (-not $zipFile -or -not $metadataFile) {
             throw "Verified V3 release assets are missing."
           }
-          $notes = "Verified LOLDataSystem V3 production package for commit $env:TARGET_COMMIT. WebUI updater must verify the metadata and SHA-256 before deployment."
+          $metadata = Get-Content $metadataFile.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+          if ("$($metadata.target_commit)" -ne $env:TARGET_COMMIT) {
+            throw "Release metadata target commit does not match master push."
+          }
+          $notes = "Verified LOLDataSystem V3 production package for commit $env:TARGET_COMMIT. WebUI updater verifies metadata, SHA-256 and embedded manifest before deployment."
           gh release view $tag --repo "${{ github.repository }}" *> $null
           if ($LASTEXITCODE -eq 0) {
             gh release upload $tag $zipFile.FullName $metadataFile.FullName --clobber --repo "${{ github.repository }}"
