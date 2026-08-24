@@ -8,7 +8,7 @@
 - Release 下载控制与服务重启验证改造记录：Issue #81 / PR #82。PR/Issue 是否已合并关闭以 GitHub 实时状态为准，本文不复制临时分支生命周期状态。
 - PR #80 已建立 Release 多源测速、断点续传与实时进度的第一版基础。
 - Issue #83 / PR #84 已完成 OP.GG 海符榜百分比字段统一与 detached 部署终态跟踪。
-- 当前收尾任务：Issue #85 / PR #87，刷新旧失败 Release 状态并增加提交祖先关系/禁止降级保护。
+- Release freshness / 禁止降级保护记录：Issue #85 / PR #87；PR/Issue 生命周期状态以 GitHub 实时状态为准。
 - 生产目录 `D:\project2\lolapisevers` 在普通开发中保持只读；代码开发、CI 和本地引导包生成不等于已执行生产部署。
 
 ## 已验证生产状态
