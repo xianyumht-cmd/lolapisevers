@@ -85,9 +85,9 @@ class ReleaseTaskSchedulerTests(unittest.TestCase):
                 patch.object(launcher.time, "sleep"),
             ):
                 process = launcher.launch_verified_helper(helper, launch_log)
+                self.assertEqual(process.pid, 4321)
+                self.assertIsNone(process.poll())
 
-            self.assertEqual(process.pid, 4321)
-            self.assertIsNone(process.poll())
             register.assert_called_once()
             task_launcher = staging / "Task-VerifiedReleaseUpdate.ps1"
             self.assertTrue(task_launcher.is_file())
