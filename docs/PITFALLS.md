@@ -93,3 +93,14 @@
   3. helper 在任何延时或正式部署前先写 `deployment.pid`，随后写 `launch.log` 首行；未出现握手应立即判定启动失败。
   4. Task Scheduler action 只引用已通过 SHA-256/manifest 校验的本地 staging helper，禁止把 GitHub Token、下载 URL 凭据或动态未校验脚本放进任务参数。
   5. 已完整校验的 V3 ZIP 与部署托管失败是两个不同层次；托管失败时应复用 staging，不得默认重新下载 80+ MiB 包。
+
+## 2026-08-25 — 私有 Release 不能把“多加公共镜像”当成唯一提速方案
+
+- **现象**：生产下载私有仓库 Release 时，多个公共 GitHub 加速前缀均探测失败，最终只能回退 `github-api`，实际吞吐降到十几 KB/s；继续机械增加公共代理并不能保证私有资产可读。
+- **根因**：公共 GitHub 文件代理通常没有访问私有 Release 的仓库凭据。把私有 GitHub Token 拼进第三方代理 URL 虽可能绕过鉴权问题，却会把长期凭据暴露给不受信任的中间服务，安全代价不可接受。
+- **防止复发**：
+  1. 第三方镜像永远只做无凭据 best-effort 候选，失败就自动跳过，不能为提速向其发送 GitHub Token。
+  2. 私有 Release 的认证只发生在 `api.github.com`；从官方 asset API 的 30x 响应取得 GitHub 自有 `release-assets.githubusercontent.com` / `objects.githubusercontent.com` 临时签名 URL。
+  3. 临时签名 URL 只在当前进程内存使用，不写状态、日志、计划任务或外部镜像请求。
+  4. 对 GitHub 官方签名 CDN 可使用受限并发 Range 提升吞吐；每段必须验证 206/Content-Range，失败时回退单连接断点续传。
+  5. 无论下载源多快，最终完整性仍只由官方 metadata SHA-256 + safe extract + V3 manifest 决定，下载加速层没有权力降低发布安全门。
