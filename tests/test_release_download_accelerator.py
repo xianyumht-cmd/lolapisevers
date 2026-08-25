@@ -112,7 +112,7 @@ class ReleaseDownloadAcceleratorTests(unittest.TestCase):
 
     def test_parallel_range_download_resumes_prefix_and_assembles_exact_file(self):
         payload = bytes((index % 251 for index in range(8192)))
-        writes = []
+        ranges_seen = []
 
         class Controller:
             _RESET_EVENT = threading.Event()
@@ -127,11 +127,11 @@ class ReleaseDownloadAcceleratorTests(unittest.TestCase):
 
             @staticmethod
             def _write_runtime_state(**kwargs):
-                writes.append(kwargs)
                 return kwargs
 
         def fake_get(_url, *, headers, **_kwargs):
             raw = headers["Range"]
+            ranges_seen.append(raw)
             start, end = [int(value) for value in raw.removeprefix("bytes=").split("-")]
             return _FakeResponse(
                 status_code=206,
@@ -164,7 +164,8 @@ class ReleaseDownloadAcceleratorTests(unittest.TestCase):
             self.assertEqual(result, len(payload))
             self.assertEqual(destination.read_bytes(), payload)
             self.assertFalse(part.exists())
-            self.assertTrue(any(item.get("parallel_connections") == 3 for item in writes))
+            self.assertEqual(len(ranges_seen), 3)
+            self.assertTrue(all(value.startswith("bytes=") for value in ranges_seen))
 
     def test_install_is_idempotent_and_wraps_controller_download(self):
         original_candidates = Mock(return_value=[])
