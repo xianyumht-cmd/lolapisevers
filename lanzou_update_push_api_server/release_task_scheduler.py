@@ -13,6 +13,8 @@ from . import release_updater as core
 
 _TASK_NAME = "LOLDataSystem-ReleaseDeploy"
 _PID_FILE = "deployment.pid"
+_EXIT_CODE_FILE = "deployment.exitcode"
+_STARTED_FILE = "deployment.started"
 _TASK_LAUNCHER = "Task-VerifiedReleaseUpdate.ps1"
 _HELPER_NAME = "Start-VerifiedReleaseUpdate.ps1"
 
@@ -49,6 +51,15 @@ def _schtasks_executable() -> str:
     return "schtasks.exe"
 
 
+def _tasklist_executable() -> str:
+    if _is_windows():
+        system_root = Path(os.getenv("SystemRoot") or r"C:\Windows")
+        candidate = system_root / "System32" / "tasklist.exe"
+        if candidate.is_file():
+            return str(candidate)
+    return "tasklist.exe"
+
+
 def _decode_console_output(raw: bytes | None) -> str:
     if not raw:
         return ""
@@ -58,6 +69,34 @@ def _decode_console_output(raw: bytes | None) -> str:
         except UnicodeDecodeError:
             continue
     return raw.decode("utf-8", errors="replace").strip()
+
+
+def _tasklist_has_pid(pid: int) -> bool:
+    if not _is_windows() or pid <= 0:
+        return False
+    try:
+        completed = _subprocess.run(
+            [
+                _tasklist_executable(),
+                "/FI",
+                f"PID eq {pid}",
+                "/FO",
+                "CSV",
+                "/NH",
+            ],
+            stdin=_subprocess.DEVNULL,
+            stdout=_subprocess.PIPE,
+            stderr=_subprocess.STDOUT,
+            check=False,
+            timeout=4.0,
+        )
+    except (OSError, _subprocess.SubprocessError):
+        return False
+    if completed.returncode != 0:
+        return False
+    text = _decode_console_output(completed.stdout)
+    # CSV field 2 is PID.  This regex intentionally avoids localized headings.
+    return bool(re.search(rf'(?:^|,)\s*"?{int(pid)}"?\s*(?:,|$)', text))
 
 
 def _process_alive(pid: int) -> bool:
@@ -80,23 +119,70 @@ def _process_alive(pid: int) -> bool:
                 False,
                 process_id,
             )
-            if not handle:
-                return False
-            try:
-                exit_code = ctypes.c_ulong()
-                if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
-                    return False
-                return int(exit_code.value) == still_active
-            finally:
-                kernel32.CloseHandle(handle)
+            if handle:
+                try:
+                    exit_code = ctypes.c_ulong()
+                    if kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                        return int(exit_code.value) == still_active
+                finally:
+                    kernel32.CloseHandle(handle)
         except Exception:
-            return False
+            pass
+        # A service account may fail OpenProcess against a SYSTEM-owned task
+        # even when the process exists. tasklist is a second independent probe.
+        return _tasklist_has_pid(process_id)
 
     try:
         os.kill(process_id, 0)
     except (OSError, ProcessLookupError, PermissionError):
         return False
     return True
+
+
+def _read_int(path: Path) -> int | None:
+    try:
+        text = path.read_text(encoding="ascii").strip()
+    except OSError:
+        return None
+    if not re.fullmatch(r"-?\d+", text):
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        return None
+
+
+def _deployment_dir_for_pid(pid: int) -> Path | None:
+    try:
+        wanted = int(pid)
+    except (TypeError, ValueError):
+        return None
+    if wanted <= 0:
+        return None
+    try:
+        candidates = list(core._UPDATE_HOME.glob(f"release-*/{_PID_FILE}"))
+    except OSError:
+        return None
+    for pid_file in candidates:
+        if _read_int(pid_file) == wanted:
+            return pid_file.parent
+    return None
+
+
+def deployment_process_alive(pid: int) -> bool:
+    """Task-aware liveness probe used by WebUI deployment reconciliation.
+
+    After the 6178 service restarts, Python loses its in-memory Popen wrapper.
+    The persisted deployment.pid + deployment.exitcode files let the new process
+    still classify the Task Scheduler-owned launcher correctly.
+    """
+
+    staging = _deployment_dir_for_pid(pid)
+    if staging is not None:
+        exit_code = _read_int(staging / _EXIT_CODE_FILE)
+        if exit_code is not None:
+            return False
+    return _process_alive(pid)
 
 
 def _is_verified_helper_command(command: Any) -> tuple[bool, Path | None]:
@@ -127,42 +213,64 @@ def _task_launcher_script(
     helper: Path,
     launch_log: Path,
     pid_file: Path,
+    exit_code_file: Path,
+    started_file: Path,
 ) -> str:
     helper_q = _ps_quote(str(helper))
     launch_log_q = _ps_quote(str(launch_log))
     pid_file_q = _ps_quote(str(pid_file))
+    exit_code_q = _ps_quote(str(exit_code_file))
+    started_q = _ps_quote(str(started_file))
     return f'''$ErrorActionPreference = "Stop"
 Set-StrictMode -Version 2.0
 $helperPath = {helper_q}
 $launchLog = {launch_log_q}
 $pidPath = {pid_file_q}
+$exitCodePath = {exit_code_q}
+$startedPath = {started_q}
+Remove-Item -LiteralPath $exitCodePath -Force -ErrorAction SilentlyContinue
 Set-Content -LiteralPath $pidPath -Value ([string]$PID) -Encoding ASCII -Force
-Start-Sleep -Milliseconds 750
+Set-Content -LiteralPath $startedPath -Value ((Get-Date).ToString("o")) -Encoding ASCII -Force
 function Write-Launch([string]$Message) {{
     $stamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss.fff")
     Add-Content -LiteralPath $launchLog -Value ("[" + $stamp + "] " + $Message) -Encoding UTF8
 }}
 Write-Launch ("Task Scheduler launcher started. PID=" + $PID + "; User=" + $env:USERNAME)
+$code = 1
 try {{
     & $helperPath *>> $launchLog
     $code = $LASTEXITCODE
     if ($null -eq $code) {{ $code = 0 }}
     Write-Launch ("Verified helper exited. ExitCode=" + $code)
-    exit $code
 }} catch {{
+    $code = 1
     Write-Launch ("Launcher exception: " + ($_ | Out-String))
-    exit 1
+}} finally {{
+    try {{
+        Set-Content -LiteralPath $exitCodePath -Value ([string]$code) -Encoding ASCII -Force
+    }} catch {{
+        Write-Launch ("Failed to persist deployment.exitcode: " + ($_ | Out-String))
+    }}
 }}
+exit $code
 '''
 
 
-def _write_task_launcher(helper: Path, launch_log: Path, pid_file: Path) -> Path:
+def _write_task_launcher(
+    helper: Path,
+    launch_log: Path,
+    pid_file: Path,
+    exit_code_file: Path,
+    started_file: Path,
+) -> Path:
     launcher = helper.parent / _TASK_LAUNCHER
     launcher.write_text(
         _task_launcher_script(
             helper=helper,
             launch_log=launch_log,
             pid_file=pid_file,
+            exit_code_file=exit_code_file,
+            started_file=started_file,
         ),
         encoding="utf-8-sig",
     )
@@ -196,8 +304,8 @@ def _run_schtasks(arguments: list[str], *, timeout: float = 12.0) -> None:
 
 
 def _register_and_run_task(launcher: Path) -> None:
-    # /Run starts the task immediately; /ST only needs to make the ONCE task
-    # definition valid. A short future time avoids locale-dependent /SD dates.
+    # /Run starts the task immediately; /ST only makes the ONCE definition valid.
+    # Using a short future clock time avoids locale-dependent /SD dates.
     start_time = (datetime.now() + timedelta(minutes=2)).strftime("%H:%M")
     _run_schtasks(
         [
@@ -220,37 +328,74 @@ def _register_and_run_task(launcher: Path) -> None:
     _run_schtasks(["/Run", "/TN", _TASK_NAME])
 
 
-def _wait_for_pid(pid_file: Path, *, timeout: float = 6.0) -> int:
+def _wait_for_pid(pid_file: Path, *, timeout: float = 8.0) -> int:
     deadline = time.monotonic() + timeout
-    last_text = ""
     while time.monotonic() < deadline:
-        try:
-            last_text = pid_file.read_text(encoding="ascii").strip()
-        except OSError:
-            last_text = ""
-        if re.fullmatch(r"\d+", last_text or ""):
-            pid = int(last_text)
-            if pid > 0:
-                return pid
+        pid = _read_int(pid_file)
+        if pid is not None and pid > 0:
+            return pid
         time.sleep(0.1)
-    raise OSError("Task Scheduler 已接受部署任务，但 6 秒内未收到 PowerShell 启动握手。")
+    raise OSError("Task Scheduler 已接受部署任务，但 8 秒内未收到 PowerShell PID 握手。")
 
 
 class _ScheduledTaskProcess:
-    def __init__(self, pid: int) -> None:
+    def __init__(self, pid: int, exit_code_file: Path) -> None:
         self.pid = int(pid)
+        self._exit_code_file = Path(exit_code_file)
 
     def poll(self) -> int | None:
+        exit_code = _read_int(self._exit_code_file)
+        if exit_code is not None:
+            return exit_code
         return None if _process_alive(self.pid) else 1
 
 
-class SchedulerSubprocessProxy:
-    """Delegate subprocess except for the verified Release helper launch.
+def launch_verified_helper(helper: Path, launch_log: Path) -> _ScheduledTaskProcess:
+    """Start a verified Release helper under Task Scheduler and require handshake."""
 
-    LOLDataSystem runs under NSSM. A grandchild created with DETACHED_PROCESS can
-    still disappear before the service switch on some Windows service/job
-    configurations. The Task Scheduler service owns this one-shot SYSTEM task,
-    so the verified deployer survives 6178/NSSM process-tree changes.
+    helper = Path(helper).resolve()
+    launch_log = Path(launch_log)
+    intercepted, verified = _is_verified_helper_command(
+        [_powershell_executable(), "-File", str(helper)]
+    )
+    if not intercepted or verified is None:
+        raise OSError("拒绝启动：Release helper 不在受信任的 updater staging 目录。")
+
+    staging = verified.parent
+    pid_file = staging / _PID_FILE
+    exit_code_file = staging / _EXIT_CODE_FILE
+    started_file = staging / _STARTED_FILE
+    for path in (pid_file, exit_code_file, started_file):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    launcher = _write_task_launcher(
+        verified,
+        launch_log,
+        pid_file,
+        exit_code_file,
+        started_file,
+    )
+    _register_and_run_task(launcher)
+    pid = _wait_for_pid(pid_file)
+    process = _ScheduledTaskProcess(pid, exit_code_file)
+
+    # PID handshake is necessary but not enough: reject a task that wrote the
+    # handshake and died immediately before the helper had a chance to start.
+    time.sleep(0.35)
+    immediate = process.poll()
+    if immediate is not None:
+        raise OSError(f"Task Scheduler 部署进程握手后立即退出：ExitCode={immediate}")
+    return process
+
+
+class SchedulerSubprocessProxy:
+    """Compatibility bridge for the existing controller Popen call.
+
+    The formal Windows path is Task Scheduler.  Non-Release subprocess calls are
+    still delegated to the stdlib subprocess module unchanged.
     """
 
     def __init__(self, original: Any) -> None:
@@ -264,30 +409,27 @@ class SchedulerSubprocessProxy:
         if not intercepted or helper is None:
             return self._original.Popen(command, *args, **kwargs)
 
-        staging = helper.parent
         launch_stream = kwargs.get("stdout")
         stream_name = str(getattr(launch_stream, "name", "") or "").strip()
-        launch_log = Path(stream_name) if stream_name else staging / "launch.log"
-        pid_file = staging / _PID_FILE
-        try:
-            pid_file.unlink(missing_ok=True)
-        except OSError:
-            pass
-
-        launcher = _write_task_launcher(helper, launch_log, pid_file)
-        _register_and_run_task(launcher)
-        pid = _wait_for_pid(pid_file)
-        return _ScheduledTaskProcess(pid)
+        launch_log = Path(stream_name) if stream_name else helper.parent / "launch.log"
+        return launch_verified_helper(helper, launch_log)
 
 
 def install(controller_module: Any) -> None:
     current = controller_module.subprocess
-    if isinstance(current, SchedulerSubprocessProxy):
-        return
-    controller_module.subprocess = SchedulerSubprocessProxy(current)
+    if not isinstance(current, SchedulerSubprocessProxy):
+        controller_module.subprocess = SchedulerSubprocessProxy(current)
+
+    # The controller persists only a PID across its own service restart.  Make
+    # its reconciliation task-aware as well, so a SYSTEM-owned process is not
+    # declared dead merely because OpenProcess visibility differs by account.
+    if getattr(controller_module, "_process_alive", None) is not deployment_process_alive:
+        controller_module._process_alive = deployment_process_alive
 
 
 __all__ = [
     "SchedulerSubprocessProxy",
+    "deployment_process_alive",
     "install",
+    "launch_verified_helper",
 ]
