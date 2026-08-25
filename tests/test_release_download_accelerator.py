@@ -164,8 +164,15 @@ class ReleaseDownloadAcceleratorTests(unittest.TestCase):
             self.assertEqual(result, len(payload))
             self.assertEqual(destination.read_bytes(), payload)
             self.assertFalse(part.exists())
-            self.assertEqual(len(ranges_seen), 3)
-            self.assertTrue(all(value.startswith("bytes=") for value in ranges_seen))
+            self.assertEqual(len(ranges_seen), 2)
+            parsed = [
+                tuple(int(value) for value in raw.removeprefix("bytes=").split("-"))
+                for raw in ranges_seen
+            ]
+            parsed.sort()
+            self.assertEqual(parsed[0][0], prefix)
+            self.assertEqual(parsed[-1][1], len(payload) - 1)
+            self.assertEqual(parsed[0][1] + 1, parsed[1][0])
 
     def test_install_is_idempotent_and_wraps_controller_download(self):
         original_candidates = Mock(return_value=[])
