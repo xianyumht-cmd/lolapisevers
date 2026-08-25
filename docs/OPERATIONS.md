@@ -26,6 +26,22 @@ If the installed updater itself is blocked by a known download-control bug, use 
 14. `scheduled` is only a transition state. `/admin/update/status` checks the deployment PowerShell PID and the current production commit: live PID => `deploying`; dead PID + target commit active => `complete`; dead PID + old commit => `failed`. The WebUI keeps polling through `scheduled/deploying` instead of stopping at “process started”.
 15. If the helper fails before `Start-Transcript`, use `launch.log`; if it entered the deployer, use `update.log`. A valid Task Scheduler start must never leave both the PID handshake and launch diagnostics absent.
 
+### Private Release download acceleration
+
+The repository is private, so public GitHub proxy services are only best-effort candidates. They are probed without credentials and are never given the GitHub Release Token. A public proxy failing with 404/403/timeout is expected and must not cause credential forwarding.
+
+For the private Release fast path:
+
+1. The updater authenticates only to the official GitHub asset API with the read-only token and requests the ZIP asset with redirects disabled.
+2. A 30x redirect is accepted only when the destination host is an allowlisted GitHub-owned asset host: `release-assets.githubusercontent.com` or `objects.githubusercontent.com`.
+3. The temporary signed asset URL remains in process memory. The full signed URL is not written to `update-state.json`, logs, task arguments or public mirror requests.
+4. The official signed CDN candidate defaults to 6 parallel Range requests. `LOLAPI_UPDATE_CDN_CONNECTIONS` may tune this from 2 through 8.
+5. Existing contiguous `.zip.part` bytes remain the resume prefix. Parallel segments are temporary files; only a provably contiguous prefix is committed back to `.part` if pause/reconnect/failure interrupts the parallel transfer.
+6. Every Range response must be HTTP 206 with an exact `Content-Range`. If the CDN does not support the required Range semantics, the updater falls back to a single connection against the same official signed URL and continues from the contiguous `.part` prefix.
+7. The final ZIP is never trusted merely because the CDN transfer completed. The official Release metadata SHA-256, safe ZIP extraction and embedded V3 manifest checks remain mandatory before Task Scheduler deployment starts.
+
+China-friendly public acceleration prefixes may be added or removed over time; runtime parallel probing and failover are the source of truth, not a hard-coded assumption that any free proxy will stay healthy.
+
 ### Release freshness and downgrade guard
 
 Idle updater state is not allowed to trust a persisted `failed`, `interrupted`, `stalled` or old completed target as the newest release forever. When there is no live worker or deployment process, **检查更新** refreshes GitHub `releases/latest` and its metadata, then checks the commit relationship using GitHub's official Compare API.
@@ -72,7 +88,7 @@ Task Scheduler uses the fixed task name `LOLDataSystem-ReleaseDeploy`; a later u
 
 `LOLAPI_UPDATE_HOME` can override the updater directory. `LOLAPI_UPDATE_GITHUB_TOKEN` can supply the token from the environment instead of the token file.
 
-Public mirror candidates are never given the private GitHub token. For a private repository they may fail authentication; the updater safely falls back to GitHub's authenticated API path rather than leaking credentials to a third party.
+Public mirror candidates are never given the private GitHub token. For a private repository they may fail authentication; the updater safely falls back to the GitHub-owned signed asset/CDN path and then the authenticated API path rather than leaking credentials to a third party.
 
 GitHub commit-relation checks use the same read-only token only against `api.github.com`; the token is never forwarded to public acceleration mirrors.
 
