@@ -196,22 +196,18 @@ class WindowsPowerShellGitStderrTests(unittest.TestCase):
 
                 """
             )
+            csharp_source = (
+                'using System; public static class FakeNative { '
+                'public static int Main(string[] args) { '
+                'Console.Out.WriteLine("simulated stdout"); '
+                'Console.Error.WriteLine("simulated warning on stderr"); '
+                'foreach (string arg in args) { if (arg == "fail") return 7; } '
+                'return 0; } }'
+            )
             script_suffix = textwrap.dedent(
                 f'''\
 
-                $source = @"
-                using System;
-                public static class FakeNative {{
-                    public static int Main(string[] args) {{
-                        Console.Out.WriteLine("simulated stdout");
-                        Console.Error.WriteLine("simulated warning on stderr");
-                        foreach (string arg in args) {{
-                            if (arg == "fail") return 7;
-                        }}
-                        return 0;
-                    }}
-                }}
-                "@
+                $source = '{csharp_source}'
                 Add-Type -TypeDefinition $source -Language CSharp -OutputAssembly '{_ps_quote(fake_exe)}' -OutputType ConsoleApplication
 
                 $success = Invoke-NativeProcess -FilePath '{_ps_quote(fake_exe)}' -Arguments @("ok") -Quiet
