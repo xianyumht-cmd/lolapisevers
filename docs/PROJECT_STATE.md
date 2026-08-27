@@ -1,45 +1,54 @@
 # Project state
 
-更新时间：2026-08-27 +08:00
+更新时间：2026-08-28 +08:00
 
 ## Canonical development
 
 - 默认开发分支：`master`；GitHub 实际 `master` 提交是开发状态最终依据。
 - 生产目录 `D:\project2\lolapisevers` 在普通开发中保持只读；仓库改动、CI 和本地引导包不等于生产已部署。
-- PR #80 建立 Release 多镜像测速、断点续传与实时进度。
-- Issue #81 / PR #82 建立后台 worker、低速熔断、暂停/继续/重连/重下与服务重启 PID 验证。
-- Issue #83 / PR #84 完成 OP.GG 海符榜百分比规范化和部署终态跟踪。
-- Issue #85 / PR #87 完成 Release freshness、GitHub Compare 前向升级守卫与禁止降级。
-- Issue #88 / PR #89 将 Release 部署 helper 的生命周期交给 Windows Task Scheduler / SYSTEM。
-- Issue #90 / PR #91 强化 Task Scheduler 的 PID/started/exitcode 持久化证据与服务重启后的部署状态恢复。
-- Issue #92 / PR #93 已完成中国区 Release 加速源扩充、GitHub 官方签名 CDN 与并发 Range 下载。
-- 本轮任务开始时 `master` 为 `2135a13a23b96fe2455d3a53311b35bd93dd22da`。
-- 当前开发任务：Issue #94 / PR #95，降低查询图片生成延迟，同时保持业务数据的新鲜度边界不变。
+- 当前 `master` / 已发布 Release `lolapi-e0dbf15c15d2` 的目标提交为 `e0dbf15c15d24fc13609679c9ad7ddfd35e6c4d1`，其中 PR #95 已完成查询图片延迟 P0。
+- 2026-08-28 生产运行时仍停留在 `2135a13a23b96fe2455d3a53311b35bd93dd22da`；从 WebUI 升级 `e0dbf15c...` 时，83 MB V3 包已通过 `github-cdn-6x` 下载到 100%，但候选测试阶段在生产停止/切换前失败，因此生产未改变。
+- 当前修复任务：Issue #96，分支 `fix/winps51-python-stderr`。目标是修复 WinPS 5.1 将 Python/Node 的正常 stderr 输出误判为部署失败的问题。
 
-## 查询图片延迟 P0
+## 已完成：查询图片延迟 P0（Issue #94 / PR #95）
 
-- 战绩、段位、海符统计等业务数据仍走既有第三方 upstream / snapshot 策略；图片优化不把实时业务数据替换成长 TTL 结果。
-- 图片素材 CDN 从正常用户查询关键路径移除：本地已有素材直接使用，本地缺失时立即使用占位继续渲染，并由进程内小型后台线程池补资源。
-- 后台图片下载按 URL single-flight，失败有短冷却；后台失败不写入长时间 negative cache，避免临时 CDN 故障长期隐藏素材。
-- 显式设置 `IMAGE_ASSET_BLOCKING_FETCH_ENABLED=1` 才恢复同步图片下载，定位为维护/诊断逃生开关，不是生产默认路径。
-- 字体加载改为进程内 LRU；`fit_text` 从逐字符回退改为二分测量。
-- PNG 在线编码从 `optimize=True + compress_level=9 + 多轮 palette/resize` 改为低延迟压缩等级和更少编码轮次，同时继续执行最大尺寸与最大字节硬上限。
-- 战绩 PNG 增加 120 秒服务端最终图缓存，key 绑定所有可见业务字段、renderer version 和 footer；业务数据一变即 miss。
-- 如果本次战绩图仍有缺失素材，响应标记 `X-Image-Cache: warming` / `X-Image-Assets: warming`，该占位版本不写最终图缓存；资源补齐后的下一次查询会重新渲染完整版本。
-- HTTP 仍保持 `Cache-Control: no-store`，服务端最终图缓存只用于减少重复 Pillow/PNG 工作。
+- 战绩、段位、海符统计等业务数据继续走既有第三方 upstream / snapshot 新鲜度策略；图片优化没有把实时业务数据替换成长 TTL 结果。
+- 图片素材 CDN 已从正常用户查询关键路径移除：本地已有素材直接使用，本地缺失时立即用占位继续渲染并后台补资源。
+- 字体加载使用进程内 LRU；`fit_text` 使用二分测量；PNG 在线编码改为低延迟压缩路径。
+- 战绩 PNG 使用 120 秒服务端最终图缓存，key 绑定可见业务字段、renderer version 和 footer；业务数据变化即 miss。
+- 素材未齐时响应为 `warming` 且不写最终图缓存，后台资源补齐后下一次查询重绘完整版本。
+
+## 当前阻塞：WinPS 5.1 原生命令 stderr 误杀候选测试
+
+生产 `update.log` / `launch.log` 的可重复证据：
+
+- Task Scheduler / SYSTEM helper 正常启动，PID 15740 与 13064 都进入 `1/6 Build isolated candidate environment while production stays running`。
+- 候选 Python 为生产 `.venv\Scripts\python.exe`，版本 Python 3.14。
+- 离线 wheel 安装与 `pip check` 成功。
+- `tests/test_winps51_git_stderr.py` 中 `Function:\Invoke-Git` 的 Python 字符串触发 `SyntaxWarning: "\I" is an invalid escape sequence`。
+- V3 deployer 仍直接执行 `& $candidatePython ...`；在 Windows PowerShell 5.1 且 `$ErrorActionPreference = "Stop"` 时，这个 stderr 被转换为终止错误，部署进程 ExitCode=1。
+- 日志明确记录 `Production was not stopped or changed.`，所以这是候选预检的 fail-closed，生产没有发生半切换。
+
+Issue #96 修复要求：
+
+1. 修正当前 Python 无效转义，新增全仓 Python `SyntaxWarning` 回归检查。
+2. V3 Release artifact 将候选 Python/Node 调用改为 `System.Diagnostics.Process` 包装：stdout/stderr 均捕获进日志，只有真实非零 ExitCode 才失败。
+3. 保留既有 Git stderr-safe 包装；新增 `winps51_native_process_stderr_safe` metadata / manifest 安全标志。
+4. V3 CI 必须验证最终 ZIP 内没有候选阶段的直接 `& $candidatePython` / `& $node.Source` 调用，并验证安全 wrapper marker。
+5. Windows 单测必须模拟“stderr 有 warning + ExitCode 0”通过、“ExitCode 非 0”失败，防止再次出现假失败。
 
 ## Release 更新安全边界
 
 - GitHub Release Token 只发送到 GitHub 官方 API；第三方公共镜像永不携带 Token。
 - Release metadata 继续通过 GitHub 官方认证链获取；最终 ZIP 必须通过 metadata SHA-256、路径安全检查、V3 manifest 安全标志与 target commit 校验。
 - GitHub Compare 只有 `current...target = ahead` 才允许自动前向升级；`behind`、`diverged` 或关系未知均 fail-closed。
-- 部署继续由 Task Scheduler / SYSTEM 托管，并由 V3 deployer 执行候选测试、备份、基线健康检查、生产切换、后置验证和失败回滚。
-- 生产升级继续以经过 CI/V3 打包并发布到 GitHub Release 的 `master` 为输入；用户从 6178 WebUI 点击一键升级，不在普通开发阶段直接覆盖生产目录。
+- 部署由 Task Scheduler / SYSTEM 托管；V3 deployer 先做候选测试，再做备份/生产切换/后置验证，失败时自动回滚。
+- 已验证 ZIP 下载成功不等于部署成功；候选预检失败时必须保留当前生产并显示明确失败阶段。
 
 ## 当前完成门
 
-1. PR #95 的单元/集成 tests、Parser Center CI、普通安全包、V3 安全部署包全部通过。
-2. 检查 PR diff，确认业务 upstream 路径、图片 fallback、PNG byte ceiling 和 Release 部署边界没有回归。
-3. 合并 PR #95 到 `master`，确认 `master` 包含结果并删除临时分支。
-4. 确认 master push 的 V3 Release 工作流完成并发布新的 verified Release。
-5. 关闭 Issue #94；之后生产机器只需要从 WebUI 发起一键升级。
+1. Issue #96 的实现和 Windows stderr 回归测试完成。
+2. `tests`、Parser Center CI、普通安全包、V3 安全部署包全部通过。
+3. PR 合并到 `master`，确认 `master` 包含修复并清理临时分支。
+4. master push 发布新的 verified V3 Release，metadata / manifest 包含 `winps51_native_process_stderr_safe=true`。
+5. 生产机器从 6178 WebUI 再次执行一键升级；最终以当前生产提交切换到新 Release 目标并且服务验证通过为准。
