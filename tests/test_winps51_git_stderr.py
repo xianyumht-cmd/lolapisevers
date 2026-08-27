@@ -189,55 +189,59 @@ class WindowsPowerShellGitStderrTests(unittest.TestCase):
             temp = Path(temp_value)
             fake_exe = temp / "fake-native.exe"
             test_script = temp / "test-native-stderr.ps1"
-            test_script.write_text(
-                textwrap.dedent(
-                    f"""
-                    $ErrorActionPreference = "Stop"
-                    Set-StrictMode -Version 2.0
+            script_prefix = textwrap.dedent(
+                """
+                $ErrorActionPreference = "Stop"
+                Set-StrictMode -Version 2.0
 
-                    {helper}
+                """
+            )
+            script_suffix = textwrap.dedent(
+                f'''\
 
-                    $source = @"
-                    using System;
-                    public static class FakeNative {{
-                        public static int Main(string[] args) {{
-                            Console.Out.WriteLine("simulated stdout");
-                            Console.Error.WriteLine("simulated warning on stderr");
-                            foreach (string arg in args) {{
-                                if (arg == "fail") return 7;
-                            }}
-                            return 0;
+                $source = @"
+                using System;
+                public static class FakeNative {{
+                    public static int Main(string[] args) {{
+                        Console.Out.WriteLine("simulated stdout");
+                        Console.Error.WriteLine("simulated warning on stderr");
+                        foreach (string arg in args) {{
+                            if (arg == "fail") return 7;
                         }}
+                        return 0;
                     }}
-                    "@
-                    Add-Type -TypeDefinition $source -Language CSharp -OutputAssembly '{_ps_quote(fake_exe)}' -OutputType ConsoleApplication
+                }}
+                "@
+                Add-Type -TypeDefinition $source -Language CSharp -OutputAssembly '{_ps_quote(fake_exe)}' -OutputType ConsoleApplication
 
-                    $success = Invoke-NativeProcess -FilePath '{_ps_quote(fake_exe)}' -Arguments @("ok") -Quiet
-                    if ($success.ExitCode -ne 0) {{
-                        throw "zero-exit native command was treated as failure"
-                    }}
-                    if ($success.Error -notmatch "simulated warning on stderr") {{
-                        throw "stderr was not captured"
-                    }}
+                $success = Invoke-NativeProcess -FilePath '{_ps_quote(fake_exe)}' -Arguments @("ok") -Quiet
+                if ($success.ExitCode -ne 0) {{
+                    throw "zero-exit native command was treated as failure"
+                }}
+                if ($success.Error -notmatch "simulated warning on stderr") {{
+                    throw "stderr was not captured"
+                }}
 
-                    $allowed = Invoke-NativeProcess -FilePath '{_ps_quote(fake_exe)}' -Arguments @("fail") -AllowFailure -Quiet
-                    if ($allowed.ExitCode -ne 7) {{
-                        throw "nonzero exit code was not preserved"
-                    }}
+                $allowed = Invoke-NativeProcess -FilePath '{_ps_quote(fake_exe)}' -Arguments @("fail") -AllowFailure -Quiet
+                if ($allowed.ExitCode -ne 7) {{
+                    throw "nonzero exit code was not preserved"
+                }}
 
-                    $didThrow = $false
-                    try {{
-                        Invoke-NativeProcess -FilePath '{_ps_quote(fake_exe)}' -Arguments @("fail") -Quiet | Out-Null
-                    }} catch {{
-                        $didThrow = $true
-                    }}
-                    if (-not $didThrow) {{
-                        throw "nonzero native command did not fail closed"
-                    }}
+                $didThrow = $false
+                try {{
+                    Invoke-NativeProcess -FilePath '{_ps_quote(fake_exe)}' -Arguments @("fail") -Quiet | Out-Null
+                }} catch {{
+                    $didThrow = $true
+                }}
+                if (-not $didThrow) {{
+                    throw "nonzero native command did not fail closed"
+                }}
 
-                    "winps51-native-stderr-pass"
-                    """
-                ),
+                "winps51-native-stderr-pass"
+                '''
+            )
+            test_script.write_text(
+                script_prefix + helper + "\n" + script_suffix,
                 encoding="ascii",
                 newline="\r\n",
             )
