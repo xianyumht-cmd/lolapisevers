@@ -104,3 +104,14 @@
   3. 临时签名 URL 只在当前进程内存使用，不写状态、日志、计划任务或外部镜像请求。
   4. 对 GitHub 官方签名 CDN 可使用受限并发 Range 提升吞吐；每段必须验证 206/Content-Range，失败时回退单连接断点续传。
   5. 无论下载源多快，最终完整性仍只由官方 metadata SHA-256 + safe extract + V3 manifest 决定，下载加速层没有权力降低发布安全门。
+
+## 2026-08-28 — WinPS 5.1 不能用 `$ErrorActionPreference=Stop` 直接承接 Python/Node stderr
+
+- **现象**：Release `lolapi-e0dbf15c15d2` 已下载并校验完成，Task Scheduler/SYSTEM 也正常启动部署器，但候选预检在生产切换前退出。Python 3.14 对测试源码的无效转义输出 `SyntaxWarning` 到 stderr，WinPS 5.1 将其变成终止错误；重复部署会在同一点失败。
+- **根因**：V3 之前只把 Git 原生命令改成 `System.Diagnostics.Process` 捕获 stdout/stderr，候选阶段的 Python/Node 仍使用 `& $candidatePython ...` / `& $node.Source ...`。在 Windows PowerShell 5.1 的错误流语义下，“stderr 有内容”与“进程 ExitCode 非 0”不是同一件事，不能用 PowerShell ErrorRecord 代替原生进程退出码。
+- **防止复发**：
+  1. 部署关键路径的原生命令使用显式 process wrapper；stdout/stderr 作为诊断文本捕获，真实成功/失败只由进程 ExitCode 判定。
+  2. wrapper 必须同时异步读取 stdout/stderr，避免大量 unittest/pip 输出造成管道死锁；非零 ExitCode 继续 fail-closed。
+  3. Python 测试源码不得留下会在新 Python 版本升级成 `SyntaxWarning` 的无效转义；CI 增加全仓编译 warning 检查。
+  4. V3 metadata/manifest 对这种兼容性使用独立安全标志，并在最终 ZIP 校验阶段确认 wrapper marker 存在、直接候选 Python/Node 调用不存在。
+  5. 候选预检失败必须发生在停止生产服务之前；日志出现 `Production was not stopped or changed.` 时，不要把它误判为下载失败或生产半升级。
