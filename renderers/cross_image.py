@@ -1,9 +1,12 @@
+import hashlib
 import io
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi.responses import Response
 
+from cache import TTLCache
 from core.context import AppContext
 from renderers.cross_svg import build_cross_svg_response
 from renderers.image_utils import (
@@ -21,6 +24,36 @@ logger = logging.getLogger("LOLDataSystem")
 
 CDRAGON_BASE = "https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/v1"
 GTIMG_BASE = "https://game.gtimg.cn/images/lol/act/img"
+BATTLE_IMAGE_RENDERER_VERSION = "2"
+_BATTLE_IMAGE_CACHE = TTLCache(ttl_seconds=120, max_size=128)
+_BATTLE_VISIBLE_FIELDS = (
+    "name",
+    "region",
+    "level",
+    "rank",
+    "last_online_time",
+    "winrate_recent",
+    "avg_kda_recent",
+    "is_stale",
+    "profile_icon",
+    "ranked_queues",
+    "recent_matches",
+)
+
+
+def _battle_image_cache_key(payload: Dict[str, Any]) -> str:
+    projection = {field: payload.get(field) for field in _BATTLE_VISIBLE_FIELDS}
+    projection["renderer_version"] = BATTLE_IMAGE_RENDERER_VERSION
+    projection["footer_left"] = image_footer_left()
+    projection["footer_right"] = image_footer_right()
+    raw = json.dumps(
+        projection,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return "battle-image:" + hashlib.sha256(raw).hexdigest()
 
 
 def _profile_icon_url(profile_icon_id: Any) -> str:
@@ -39,6 +72,20 @@ def _item_icon_url(item_id: Any) -> str:
 
 
 def build_cross_image_response(ctx: AppContext, payload: Dict[str, Any]) -> Response:
+    cache_key = _battle_image_cache_key(payload)
+    cached = _BATTLE_IMAGE_CACHE.get(cache_key)
+    if isinstance(cached, bytes) and cached:
+        return Response(
+            content=cached,
+            media_type="image/png",
+            headers={
+                "X-Image-Bytes": str(len(cached)),
+                "X-Image-Cache": "hit",
+                "X-Image-Assets": "complete",
+                "Cache-Control": "no-store",
+            },
+        )
+
     try:
         from PIL import Image, ImageDraw, ImageOps
 
@@ -109,6 +156,8 @@ def build_cross_image_response(ctx: AppContext, payload: Dict[str, Any]) -> Resp
                     asset_urls.append(item_url)
         asset_cache = getattr(ctx, "image_asset_cache", getattr(ctx, "aram_augment_cache", None))
         assets = prefetch_image_urls(asset_cache, asset_urls, timeout=3.5, max_workers=8, max_assets=72)
+        expected_asset_urls = {url for url in asset_urls if url}
+        assets_complete = all(url in assets for url in expected_asset_urls)
 
         def paste_icon(
             url: str,
@@ -279,10 +328,17 @@ def build_cross_image_response(ctx: AppContext, payload: Dict[str, Any]) -> Resp
         )
 
         encoded = encode_png_limited(image)
+        if assets_complete:
+            _BATTLE_IMAGE_CACHE.set(cache_key, encoded)
         return Response(
             content=encoded,
             media_type="image/png",
-            headers={"X-Image-Bytes": str(len(encoded)), "Cache-Control": "no-store"},
+            headers={
+                "X-Image-Bytes": str(len(encoded)),
+                "X-Image-Cache": "miss" if assets_complete else "warming",
+                "X-Image-Assets": "complete" if assets_complete else "warming",
+                "Cache-Control": "no-store",
+            },
         )
     except Exception as exc:
         logger.warning("cross_query image png generation failed, falling back to svg: %s", exc)

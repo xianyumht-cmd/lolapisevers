@@ -1,12 +1,26 @@
 import concurrent.futures
+import functools
 import io
 import os
+import queue
+import threading
+import time
 from typing import Any, Dict, Iterable, List, Optional
 
 
 NEGATIVE_IMAGE_CACHE_VALUE = b""
+_BACKGROUND_IMAGE_LOCK = threading.Lock()
+_BACKGROUND_IMAGE_QUEUE: Optional[queue.Queue] = None
+_BACKGROUND_IMAGE_INFLIGHT: set[str] = set()
+_BACKGROUND_IMAGE_RETRY_AFTER: Dict[str, float] = {}
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    value = str(os.getenv(name, "1" if default else "0")).strip().lower()
+    return value not in {"0", "false", "no", "off", ""}
+
+
+@functools.lru_cache(maxsize=64)
 def load_image_font(size: int, bold: bool = False):
     try:
         from PIL import ImageFont
@@ -56,10 +70,22 @@ def fit_text(draw: Any, text: Any, font: Any, max_width: int) -> str:
         if draw.textbbox((0, 0), value, font=font)[2] <= max_width:
             return value
         ellipsis = "..."
-        current = value
-        while current and draw.textbbox((0, 0), current + ellipsis, font=font)[2] > max_width:
-            current = current[:-1]
-        return (current + ellipsis) if current else ellipsis
+        if draw.textbbox((0, 0), ellipsis, font=font)[2] > max_width:
+            return ellipsis
+
+        # Long player/item strings used to be measured once per removed
+        # character. Binary search keeps the same output contract while cutting
+        # textbbox calls from O(n) to O(log n).
+        low = 0
+        high = len(value)
+        while low < high:
+            middle = (low + high + 1) // 2
+            candidate = value[:middle] + ellipsis
+            if draw.textbbox((0, 0), candidate, font=font)[2] <= max_width:
+                low = middle
+            else:
+                high = middle - 1
+        return value[:low] + ellipsis
     except Exception:
         return value[: max(max_width // 12, 1)]
 
@@ -107,7 +133,13 @@ def _cache_image_result(cache: Any, cache_key: str, content: bytes) -> None:
         pass
 
 
-def download_image_cached(cache: Any, url: str, timeout: float = 4.0) -> Optional[bytes]:
+def download_image_cached(
+    cache: Any,
+    url: str,
+    timeout: float = 4.0,
+    *,
+    negative_cache: bool = True,
+) -> Optional[bytes]:
     url = str(url or "").strip()
     if not url:
         return None
@@ -127,15 +159,18 @@ def download_image_cached(cache: Any, url: str, timeout: float = 4.0) -> Optiona
         content_type = str(response.headers.get("content-type") or "").lower()
         content = response.content
         if not response.ok or not content or len(content) > 2_500_000:
-            _cache_image_result(cache, cache_key, NEGATIVE_IMAGE_CACHE_VALUE)
+            if negative_cache:
+                _cache_image_result(cache, cache_key, NEGATIVE_IMAGE_CACHE_VALUE)
             return None
         if content_type and "image" not in content_type:
-            _cache_image_result(cache, cache_key, NEGATIVE_IMAGE_CACHE_VALUE)
+            if negative_cache:
+                _cache_image_result(cache, cache_key, NEGATIVE_IMAGE_CACHE_VALUE)
             return None
         _cache_image_result(cache, cache_key, content)
         return content
     except Exception:
-        _cache_image_result(cache, cache_key, NEGATIVE_IMAGE_CACHE_VALUE)
+        if negative_cache:
+            _cache_image_result(cache, cache_key, NEGATIVE_IMAGE_CACHE_VALUE)
         return None
 
 
@@ -150,6 +185,82 @@ def _image_asset_priority(url: str) -> int:
     return 3
 
 
+def _background_image_worker(work_queue: queue.Queue) -> None:
+    while True:
+        cache, url, timeout, cooldown = work_queue.get()
+        succeeded = False
+        try:
+            succeeded = bool(
+                download_image_cached(
+                    cache,
+                    url,
+                    timeout=timeout,
+                    negative_cache=False,
+                )
+            )
+        finally:
+            with _BACKGROUND_IMAGE_LOCK:
+                _BACKGROUND_IMAGE_INFLIGHT.discard(url)
+                if succeeded:
+                    _BACKGROUND_IMAGE_RETRY_AFTER.pop(url, None)
+                else:
+                    _BACKGROUND_IMAGE_RETRY_AFTER[url] = time.monotonic() + cooldown
+            work_queue.task_done()
+
+
+def _background_image_queue() -> queue.Queue:
+    global _BACKGROUND_IMAGE_QUEUE
+    with _BACKGROUND_IMAGE_LOCK:
+        if _BACKGROUND_IMAGE_QUEUE is None:
+            queue_size = _env_int("IMAGE_ASSET_BACKGROUND_QUEUE_SIZE", 256, 16, 2048)
+            workers = _env_int("IMAGE_ASSET_BACKGROUND_WORKERS", 4, 1, 16)
+            _BACKGROUND_IMAGE_QUEUE = queue.Queue(maxsize=queue_size)
+            for index in range(workers):
+                threading.Thread(
+                    target=_background_image_worker,
+                    args=(_BACKGROUND_IMAGE_QUEUE,),
+                    name=f"image-asset-refresh-{index + 1}",
+                    daemon=True,
+                ).start()
+        return _BACKGROUND_IMAGE_QUEUE
+
+
+def _schedule_image_refresh(cache: Any, url: str) -> bool:
+    """Schedule a missing decorative asset without delaying the current query.
+
+    A bounded daemon-worker queue plus single-flight per URL prevents a burst of
+    queries from creating unlimited CDN work. Daemon workers also ensure pending
+    decorative downloads never hold Windows service shutdown or a Release update
+    open. Failures have a short cooldown and do not poison the long negative cache.
+    """
+
+    normalized = str(url or "").strip()
+    if not normalized:
+        return False
+
+    now = time.monotonic()
+    with _BACKGROUND_IMAGE_LOCK:
+        retry_after = _BACKGROUND_IMAGE_RETRY_AFTER.get(normalized, 0.0)
+        if normalized in _BACKGROUND_IMAGE_INFLIGHT or retry_after > now:
+            return False
+        _BACKGROUND_IMAGE_INFLIGHT.add(normalized)
+
+    timeout = _env_float("IMAGE_ASSET_BACKGROUND_TIMEOUT_SECONDS", 4.0, 0.5, 15.0)
+    cooldown = _env_float("IMAGE_ASSET_BACKGROUND_RETRY_SECONDS", 30.0, 1.0, 600.0)
+    try:
+        _background_image_queue().put_nowait((cache, normalized, timeout, cooldown))
+        return True
+    except queue.Full:
+        with _BACKGROUND_IMAGE_LOCK:
+            _BACKGROUND_IMAGE_INFLIGHT.discard(normalized)
+        return False
+    except Exception:
+        with _BACKGROUND_IMAGE_LOCK:
+            _BACKGROUND_IMAGE_INFLIGHT.discard(normalized)
+            _BACKGROUND_IMAGE_RETRY_AFTER[normalized] = time.monotonic() + cooldown
+        return False
+
+
 def prefetch_image_urls(
     cache: Any,
     urls: Iterable[str],
@@ -158,6 +269,7 @@ def prefetch_image_urls(
     max_workers: int = 8,
     max_assets: int = 72,
     overall_timeout: Optional[float] = None,
+    blocking_network: Optional[bool] = None,
 ) -> Dict[str, bytes]:
     unique: List[str] = []
     seen = set()
@@ -171,7 +283,7 @@ def prefetch_image_urls(
             break
 
     # Profile and champion icons are more important than item icons when the
-    # upstream image hosts are degraded and the total prefetch budget expires.
+    # local cache is incomplete.
     unique.sort(key=_image_asset_priority)
 
     result: Dict[str, bytes] = {}
@@ -187,6 +299,21 @@ def prefetch_image_urls(
     if not missing:
         return result
 
+    # Query rendering is latency-sensitive. Decorative CDN fetches therefore
+    # leave the request critical path by default: render immediately with local
+    # assets/placeholders and refresh misses in the background. Business/query
+    # data freshness is unaffected because it is fetched before rendering.
+    should_block = (
+        _env_bool("IMAGE_ASSET_BLOCKING_FETCH_ENABLED", False)
+        if blocking_network is None
+        else bool(blocking_network)
+    )
+    if not should_block:
+        for url in missing:
+            _schedule_image_refresh(cache, url)
+        return result
+
+    # Explicit blocking mode remains available for maintenance tools and tests.
     request_timeout = min(
         max(0.25, float(timeout)),
         _env_float("IMAGE_ASSET_TIMEOUT_SECONDS", 1.5, 0.25, 5.0),
@@ -218,11 +345,7 @@ def prefetch_image_urls(
             if isinstance(content, bytes) and content:
                 result[url] = content
 
-        # Do not let slow or unreachable decoration hosts hold the whole battle
-        # result hostage. Cache a short-lived miss through the existing asset
-        # cache so an immediate repeat query uses placeholders instead of paying
-        # the same timeout again. A running request may still overwrite this with
-        # real bytes when it succeeds.
+        # Blocking mode preserves the old short-circuit behavior after timeout.
         for future in pending:
             url = future_map[future]
             future.cancel()
@@ -257,11 +380,22 @@ def encode_png_limited(
             Image.Resampling.LANCZOS,
         )
 
+    compress_level = _env_int("IMAGE_PNG_COMPRESS_LEVEL", 3, 0, 9)
+    optimize = _env_bool("IMAGE_PNG_OPTIMIZE", False)
+
     def save_png(candidate: Any) -> bytes:
         buffer = io.BytesIO()
-        candidate.save(buffer, format="PNG", optimize=True, compress_level=9)
+        candidate.save(
+            buffer,
+            format="PNG",
+            optimize=optimize,
+            compress_level=compress_level,
+        )
         return buffer.getvalue()
 
+    # The online path favors a small number of fast encodes. The old level-9
+    # optimized encoder repeatedly tried many palettes/resizes, saving bandwidth
+    # at the cost of request CPU time.
     best = save_png(working)
     if len(best) <= target_bytes:
         return best
@@ -278,7 +412,7 @@ def encode_png_limited(
         )
         return save_png(palette_image)
 
-    for colors in (192, 160, 128, 96, 64):
+    for colors in (192, 128):
         encoded = try_palette(working, colors)
         if len(encoded) < len(best):
             best = encoded
@@ -286,31 +420,28 @@ def encode_png_limited(
             return encoded
 
     resized = working
-    while resized.width > 680 and resized.height > 760:
-        resized = resized.resize(
-            (max(680, int(resized.width * 0.92)), max(760, int(resized.height * 0.92))),
-            Image.Resampling.LANCZOS,
-        )
+    minimum_width = min(360, resized.width)
+    minimum_height = min(420, resized.height)
+    while len(best) > target_bytes and (
+        resized.width > minimum_width or resized.height > minimum_height
+    ):
+        ratio = max(0.62, min(0.88, (target_bytes / max(len(best), 1)) ** 0.5 * 0.96))
+        next_width = max(minimum_width, int(resized.width * ratio))
+        next_height = max(minimum_height, int(resized.height * ratio))
+        if (next_width, next_height) == resized.size:
+            break
+        resized = resized.resize((next_width, next_height), Image.Resampling.BILINEAR)
         for colors in (96, 64):
             encoded = try_palette(resized, colors)
             if len(encoded) < len(best):
                 best = encoded
             if len(encoded) <= target_bytes:
                 return encoded
-        if resized.width <= 680 or resized.height <= 760:
-            break
 
-    # Highly detailed screenshots can remain large even after normal palette
-    # compression. Continue with adaptive downscaling so the byte ceiling is a
-    # real upper bound rather than a best-effort hint.
-    while len(best) > target_bytes and (resized.width > 360 or resized.height > 420):
-        ratio = max(0.62, min(0.88, (target_bytes / max(len(best), 1)) ** 0.5 * 0.95))
-        next_width = max(360, int(resized.width * ratio))
-        next_height = max(420, int(resized.height * ratio))
-        if (next_width, next_height) == resized.size:
-            break
-        resized = resized.resize((next_width, next_height), Image.Resampling.BILINEAR)
-        for colors in (64, 48, 32, 24, 16):
+    # At the minimum practical dimensions, reduce palette depth only as far as
+    # necessary to keep the existing hard byte ceiling contract.
+    if len(best) > target_bytes:
+        for colors in (48, 32, 24, 16):
             encoded = try_palette(resized, colors)
             if len(encoded) < len(best):
                 best = encoded

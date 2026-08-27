@@ -49,15 +49,33 @@ class ImageUtilsTests(unittest.TestCase):
             self.assertIsNone(download_image_cached(cache, url, timeout=0.01))
         self.assertEqual(cache.get(f"image_asset:{url}"), NEGATIVE_IMAGE_CACHE_VALUE)
 
-    def test_negative_cached_asset_is_not_retried(self):
+    def test_negative_cached_asset_is_not_retried_in_blocking_mode(self):
         cache = FakeCache()
         url = "https://assets.invalid/item/2.png"
         cache.set(f"image_asset:{url}", NEGATIVE_IMAGE_CACHE_VALUE)
         with patch("renderers.image_utils.download_image_cached") as downloader:
-            self.assertEqual(prefetch_image_urls(cache, [url]), {})
+            self.assertEqual(
+                prefetch_image_urls(cache, [url], blocking_network=True),
+                {},
+            )
         downloader.assert_not_called()
 
-    def test_prefetch_returns_when_overall_budget_expires(self):
+    def test_default_prefetch_schedules_missing_assets_without_network_wait(self):
+        cache = FakeCache()
+        urls = [f"https://assets.invalid/item/{index}.png" for index in range(4)]
+
+        started = time.perf_counter()
+        with patch("renderers.image_utils._schedule_image_refresh", return_value=True) as scheduler:
+            with patch("renderers.image_utils.download_image_cached") as downloader:
+                result = prefetch_image_urls(cache, urls)
+        elapsed = time.perf_counter() - started
+
+        self.assertEqual(result, {})
+        self.assertLess(elapsed, 0.1)
+        self.assertEqual(scheduler.call_count, len(urls))
+        downloader.assert_not_called()
+
+    def test_prefetch_returns_when_explicit_blocking_budget_expires(self):
         cache = FakeCache()
         urls = [f"https://assets.invalid/item/{index}.png" for index in range(4)]
 
@@ -72,6 +90,7 @@ class ImageUtilsTests(unittest.TestCase):
                 urls,
                 max_workers=1,
                 overall_timeout=0.03,
+                blocking_network=True,
             )
         elapsed = time.perf_counter() - started
 
@@ -79,6 +98,20 @@ class ImageUtilsTests(unittest.TestCase):
         self.assertLess(elapsed, 0.15)
         for url in urls:
             self.assertEqual(cache.get(f"image_asset:{url}"), NEGATIVE_IMAGE_CACHE_VALUE)
+
+    def test_background_download_failure_does_not_poison_long_negative_cache(self):
+        cache = FakeCache()
+        url = "https://assets.invalid/item/9.png"
+        with patch("requests.get", side_effect=TimeoutError("offline")):
+            self.assertIsNone(
+                download_image_cached(
+                    cache,
+                    url,
+                    timeout=0.01,
+                    negative_cache=False,
+                )
+            )
+        self.assertIsNone(cache.get(f"image_asset:{url}"))
 
     def test_encode_png_limited_caps_dimensions_and_bytes(self):
         image = Image.new("RGB", (1500, 2400), (18, 24, 39))
