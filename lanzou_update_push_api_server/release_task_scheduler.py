@@ -412,6 +412,27 @@ class SchedulerSubprocessProxy:
         launch_stream = kwargs.get("stdout")
         stream_name = str(getattr(launch_stream, "name", "") or "").strip()
         launch_log = Path(stream_name) if stream_name else helper.parent / "launch.log"
+
+        # The controller opens launch.log before calling Popen so a normal child
+        # process can inherit that handle.  The Task Scheduler path does not
+        # inherit the handle; its PowerShell launcher opens the same file with
+        # *>>.  Keeping the controller handle open races Out-File on Windows and
+        # can make a verified deployment die with FileOpenFailure before the
+        # helper starts.  Release that caller-owned stream before scheduling.
+        if stream_name and launch_stream is not None:
+            try:
+                flush = getattr(launch_stream, "flush", None)
+                if callable(flush):
+                    flush()
+            except (OSError, ValueError):
+                pass
+            try:
+                close = getattr(launch_stream, "close", None)
+                if callable(close):
+                    close()
+            except (OSError, ValueError) as exc:
+                raise OSError("无法释放 Release launch.log 文件句柄。") from exc
+
         return launch_verified_helper(helper, launch_log)
 
 

@@ -47,7 +47,11 @@ class ReleaseTaskSchedulerTests(unittest.TestCase):
 
             original = SimpleNamespace(Popen=Mock())
             proxy = launcher.SchedulerSubprocessProxy(original)
-            fake_stream = SimpleNamespace(name=str(launch_log))
+            fake_stream = SimpleNamespace(
+                name=str(launch_log),
+                flush=Mock(),
+                close=Mock(),
+            )
             fake_process = SimpleNamespace(pid=4321, poll=Mock(return_value=None))
 
             with (
@@ -65,6 +69,8 @@ class ReleaseTaskSchedulerTests(unittest.TestCase):
             called_helper, called_log = launch.call_args.args
             self.assertEqual(called_helper.resolve(), helper.resolve())
             self.assertEqual(Path(called_log), launch_log)
+            fake_stream.flush.assert_called_once_with()
+            fake_stream.close.assert_called_once_with()
             original.Popen.assert_not_called()
 
     def test_explicit_launch_requires_pid_handshake_and_live_process(self):

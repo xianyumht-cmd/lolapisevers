@@ -108,6 +108,14 @@ jobs:
               exit $LASTEXITCODE
           }
 
+      - name: Patch V3 WinPS5.1 native Git stderr handling
+        shell: powershell
+        run: |
+          .\ops\Patch-V3-WinPS51ReleaseArtifact.ps1 -DistRoot "$pwd\dist-v3"
+          if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+          }
+
       - name: Verify V3 package hashes and safety flags
         shell: pwsh
         run: |
@@ -129,6 +137,9 @@ jobs:
           }
           if (-not [bool]$metadata.baseline_aware_readiness) {
             throw "V3 metadata is missing baseline-aware readiness."
+          }
+          if (-not [bool]$metadata.winps51_native_git_stderr_safe) {
+            throw "V3 metadata is missing native Git stderr safety."
           }
           $zipHash = (Get-FileHash $zipFile.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($zipHash -ne "$($metadata.zip_sha256)".ToLowerInvariant()) {
@@ -156,7 +167,8 @@ jobs:
             "automatic_rollback",
             "offline_dependencies",
             "powershell_utf8_parse_input",
-            "baseline_aware_readiness"
+            "baseline_aware_readiness",
+            "winps51_native_git_stderr_safe"
           )) {
             if (-not [bool]$manifest.deployment.$flag) {
               throw "V3 safety flag is missing: $flag"
@@ -191,11 +203,20 @@ jobs:
             "Capture pre-switch production health baseline",
             "pre-switch-health.json",
             "BaselineHealthPath",
-            "Automatic rollback is starting"
+            "Automatic rollback is starting",
+            'Invoke-Git -WorkingDirectory $ProjectRoot -Arguments @("bundle", "verify", $bundlePath)',
+            'Invoke-Git -WorkingDirectory $ProjectRoot -Arguments @("clone", "--no-checkout", $bundlePath, $candidateRepository)'
           )) {
             if (-not $deployText.Contains($marker)) {
               throw "V3 deployment marker is missing: $marker"
             }
+          }
+
+          if ($deployText.Contains('& (Resolve-GitExecutable) -C $ProjectRoot bundle verify')) {
+            throw "V3 deployment still contains unsafe native bundle verify."
+          }
+          if ($deployText.Contains('& (Resolve-GitExecutable) clone --no-checkout')) {
+            throw "V3 deployment still contains unsafe native clone."
           }
 
           $deployCommand = Get-Command -Name $deployFile -ErrorAction Stop
