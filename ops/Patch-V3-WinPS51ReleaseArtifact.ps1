@@ -27,11 +27,20 @@ function Replace-UniqueText {
     )
     $normalizedOld = $Old.Replace("`r`n", "`n")
     $normalizedNew = $New.Replace("`r`n", "`n")
-    $count = [regex]::Matches($Text, [regex]::Escape($normalizedOld)).Count
+    $pattern = New-Object System.Text.RegularExpressions.Regex(
+        [regex]::Escape($normalizedOld),
+        [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+    )
+    $matches = $pattern.Matches($Text)
+    $count = $matches.Count
     if ($count -ne 1) {
         throw "$Label patch anchor count was $count, expected 1."
     }
-    return $Text.Replace($normalizedOld, $normalizedNew)
+    return $pattern.Replace(
+        $Text,
+        [System.Text.RegularExpressions.MatchEvaluator]{ param($match) $normalizedNew },
+        1
+    )
 }
 
 $DistRoot = [IO.Path]::GetFullPath($DistRoot)
@@ -149,9 +158,6 @@ function Invoke-NativeProcess {
             Write-Host ($stdout.TrimEnd())
         }
         if ($stderr) {
-            # Keep stderr in the deployment transcript without converting it to
-            # a PowerShell ErrorRecord. WinPS 5.1 + ErrorActionPreference=Stop
-            # otherwise treats benign Python/unittest warnings as fatal.
             Write-Host ($stderr.TrimEnd())
         }
     }
@@ -281,7 +287,7 @@ function Invoke-NativeProcess {
         '& $node.Source --check',
         '$bootstrapVersion = (& $bootstrapPython -c'
     )) {
-        if ($deployText.Contains($unsafeNative)) {
+        if ($deployText.IndexOf($unsafeNative, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
             throw "Unsafe direct native invocation remains after patch: $unsafeNative"
         }
     }
