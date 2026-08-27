@@ -154,7 +154,10 @@ def render_console_shell(
     safe_title = escape(title)
     safe_marker = escape(body_marker, quote=True)
     style_tags = _asset_tags(styles, kind="style")
-    script_tags = _asset_tags(scripts, kind="script")
+    effective_scripts = scripts
+    if body_marker == "watchers" and "/control-assets/website-watch-sync.js" not in effective_scripts:
+        effective_scripts = (*effective_scripts, "/control-assets/website-watch-sync.js")
+    script_tags = _asset_tags(effective_scripts, kind="script")
     return f'''<!doctype html>
 <html lang="zh-CN">
 <head>
