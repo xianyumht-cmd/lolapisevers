@@ -81,6 +81,7 @@ def build_cross_image_response(ctx: AppContext, payload: Dict[str, Any]) -> Resp
             headers={
                 "X-Image-Bytes": str(len(cached)),
                 "X-Image-Cache": "hit",
+                "X-Image-Assets": "complete",
                 "Cache-Control": "no-store",
             },
         )
@@ -155,6 +156,8 @@ def build_cross_image_response(ctx: AppContext, payload: Dict[str, Any]) -> Resp
                     asset_urls.append(item_url)
         asset_cache = getattr(ctx, "image_asset_cache", getattr(ctx, "aram_augment_cache", None))
         assets = prefetch_image_urls(asset_cache, asset_urls, timeout=3.5, max_workers=8, max_assets=72)
+        expected_asset_urls = {url for url in asset_urls if url}
+        assets_complete = all(url in assets for url in expected_asset_urls)
 
         def paste_icon(
             url: str,
@@ -325,13 +328,15 @@ def build_cross_image_response(ctx: AppContext, payload: Dict[str, Any]) -> Resp
         )
 
         encoded = encode_png_limited(image)
-        _BATTLE_IMAGE_CACHE.set(cache_key, encoded)
+        if assets_complete:
+            _BATTLE_IMAGE_CACHE.set(cache_key, encoded)
         return Response(
             content=encoded,
             media_type="image/png",
             headers={
                 "X-Image-Bytes": str(len(encoded)),
-                "X-Image-Cache": "miss",
+                "X-Image-Cache": "miss" if assets_complete else "warming",
+                "X-Image-Assets": "complete" if assets_complete else "warming",
                 "Cache-Control": "no-store",
             },
         )
