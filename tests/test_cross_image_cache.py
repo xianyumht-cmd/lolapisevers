@@ -17,7 +17,7 @@ class CrossImageCacheTests(unittest.TestCase):
         self.addCleanup(self.cache_patcher.stop)
         self.ctx = SimpleNamespace(image_asset_cache=None, aram_augment_cache=None)
 
-    def _payload(self, *, name="缓存测试", wins=3):
+    def _payload(self, *, name="缓存测试", wins=3, profile_icon=0):
         return {
             "name": name,
             "region": "艾欧尼亚",
@@ -27,7 +27,7 @@ class CrossImageCacheTests(unittest.TestCase):
             "winrate_recent": "60%",
             "avg_kda_recent": 3.2,
             "is_stale": False,
-            "profile_icon": 0,
+            "profile_icon": profile_icon,
             "ranked_queues": [
                 {"queue_name": "单双排", "rank": "黄金 I", "wins": wins, "losses": 2}
             ],
@@ -67,6 +67,23 @@ class CrossImageCacheTests(unittest.TestCase):
         self.assertEqual(second.body, b"new-png")
         self.assertEqual(encoder.call_count, 2)
         self.assertEqual(second.headers.get("x-image-cache"), "miss")
+
+    def test_warming_assets_are_not_frozen_in_final_image_cache(self):
+        payload = self._payload(profile_icon=123)
+        with patch("renderers.cross_image.prefetch_image_urls", return_value={}):
+            with patch(
+                "renderers.cross_image.encode_png_limited",
+                side_effect=[b"placeholder-png", b"rerendered-png"],
+            ) as encoder:
+                first = cross_image.build_cross_image_response(self.ctx, payload)
+                second = cross_image.build_cross_image_response(self.ctx, dict(payload))
+
+        self.assertEqual(first.body, b"placeholder-png")
+        self.assertEqual(second.body, b"rerendered-png")
+        self.assertEqual(encoder.call_count, 2)
+        self.assertEqual(first.headers.get("x-image-cache"), "warming")
+        self.assertEqual(second.headers.get("x-image-cache"), "warming")
+        self.assertEqual(first.headers.get("x-image-assets"), "warming")
 
 
 if __name__ == "__main__":
