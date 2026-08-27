@@ -108,7 +108,7 @@ jobs:
               exit $LASTEXITCODE
           }
 
-      - name: Patch V3 WinPS5.1 native Git stderr handling
+      - name: Patch V3 WinPS5.1 native process stderr handling
         shell: powershell
         run: |
           .\ops\Patch-V3-WinPS51ReleaseArtifact.ps1 -DistRoot "$pwd\dist-v3"
@@ -141,6 +141,9 @@ jobs:
           if (-not [bool]$metadata.winps51_native_git_stderr_safe) {
             throw "V3 metadata is missing native Git stderr safety."
           }
+          if (-not [bool]$metadata.winps51_native_process_stderr_safe) {
+            throw "V3 metadata is missing native process stderr safety."
+          }
           $zipHash = (Get-FileHash $zipFile.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($zipHash -ne "$($metadata.zip_sha256)".ToLowerInvariant()) {
             throw "V3 ZIP SHA-256 mismatch."
@@ -168,7 +171,8 @@ jobs:
             "offline_dependencies",
             "powershell_utf8_parse_input",
             "baseline_aware_readiness",
-            "winps51_native_git_stderr_safe"
+            "winps51_native_git_stderr_safe",
+            "winps51_native_process_stderr_safe"
           )) {
             if (-not [bool]$manifest.deployment.$flag) {
               throw "V3 safety flag is missing: $flag"
@@ -205,7 +209,10 @@ jobs:
             "BaselineHealthPath",
             "Automatic rollback is starting",
             'Invoke-Git -WorkingDirectory $ProjectRoot -Arguments @("bundle", "verify", $bundlePath)',
-            'Invoke-Git -WorkingDirectory $ProjectRoot -Arguments @("clone", "--no-checkout", $bundlePath, $candidateRepository)'
+            'Invoke-Git -WorkingDirectory $ProjectRoot -Arguments @("clone", "--no-checkout", $bundlePath, $candidateRepository)',
+            "function Invoke-NativeProcess {",
+            'Invoke-NativeProcess -FilePath $candidatePython -Arguments @(',
+            '"-m", "unittest", "discover"'
           )) {
             if (-not $deployText.Contains($marker)) {
               throw "V3 deployment marker is missing: $marker"
@@ -217,6 +224,17 @@ jobs:
           }
           if ($deployText.Contains('& (Resolve-GitExecutable) clone --no-checkout')) {
             throw "V3 deployment still contains unsafe native clone."
+          }
+
+          foreach ($unsafeNative in @(
+            '& $BootstrapPython -m venv',
+            '& $candidatePython',
+            '& $node.Source --check',
+            '$bootstrapVersion = (& $bootstrapPython -c'
+          )) {
+            if ($deployText.Contains($unsafeNative)) {
+              throw "V3 deployment still contains unsafe direct native invocation: $unsafeNative"
+            }
           }
 
           $deployCommand = Get-Command -Name $deployFile -ErrorAction Stop
