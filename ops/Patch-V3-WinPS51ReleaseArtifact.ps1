@@ -155,7 +155,7 @@ function Invoke-NativeProcess {
     }
 
     if (-not $AllowFailure -and $exitCode -ne 0) {
-        throw "Native process failed with ExitCode=$exitCode: $FilePath $($Arguments -join ' ')`n$stderr"
+        throw "Native process failed with ExitCode=${exitCode}: $FilePath $($Arguments -join ' ')`n$stderr"
     }
     return [pscustomobject]@{
         ExitCode = $exitCode
