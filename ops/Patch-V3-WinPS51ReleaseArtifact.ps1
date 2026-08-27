@@ -25,11 +25,13 @@ function Replace-UniqueText {
         [string]$New,
         [string]$Label
     )
-    $count = [regex]::Matches($Text, [regex]::Escape($Old)).Count
+    $normalizedOld = $Old.Replace("`r`n", "`n")
+    $normalizedNew = $New.Replace("`r`n", "`n")
+    $count = [regex]::Matches($Text, [regex]::Escape($normalizedOld)).Count
     if ($count -ne 1) {
         throw "$Label patch anchor count was $count, expected 1."
     }
-    return $Text.Replace($Old, $New)
+    return $Text.Replace($normalizedOld, $normalizedNew)
 }
 
 $DistRoot = [IO.Path]::GetFullPath($DistRoot)
