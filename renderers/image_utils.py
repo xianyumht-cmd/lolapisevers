@@ -2,6 +2,7 @@ import concurrent.futures
 import functools
 import io
 import os
+import queue
 import threading
 import time
 from typing import Any, Dict, Iterable, List, Optional
@@ -9,7 +10,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 NEGATIVE_IMAGE_CACHE_VALUE = b""
 _BACKGROUND_IMAGE_LOCK = threading.Lock()
-_BACKGROUND_IMAGE_EXECUTOR: Optional[concurrent.futures.ThreadPoolExecutor] = None
+_BACKGROUND_IMAGE_QUEUE: Optional[queue.Queue] = None
 _BACKGROUND_IMAGE_INFLIGHT: set[str] = set()
 _BACKGROUND_IMAGE_RETRY_AFTER: Dict[str, float] = {}
 
@@ -184,25 +185,53 @@ def _image_asset_priority(url: str) -> int:
     return 3
 
 
-def _background_image_executor() -> concurrent.futures.ThreadPoolExecutor:
-    global _BACKGROUND_IMAGE_EXECUTOR
-    with _BACKGROUND_IMAGE_LOCK:
-        if _BACKGROUND_IMAGE_EXECUTOR is None:
-            workers = _env_int("IMAGE_ASSET_BACKGROUND_WORKERS", 4, 1, 16)
-            _BACKGROUND_IMAGE_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
-                max_workers=workers,
-                thread_name_prefix="image-asset-refresh",
+def _background_image_worker(work_queue: queue.Queue) -> None:
+    while True:
+        cache, url, timeout, cooldown = work_queue.get()
+        succeeded = False
+        try:
+            succeeded = bool(
+                download_image_cached(
+                    cache,
+                    url,
+                    timeout=timeout,
+                    negative_cache=False,
+                )
             )
-        return _BACKGROUND_IMAGE_EXECUTOR
+        finally:
+            with _BACKGROUND_IMAGE_LOCK:
+                _BACKGROUND_IMAGE_INFLIGHT.discard(url)
+                if succeeded:
+                    _BACKGROUND_IMAGE_RETRY_AFTER.pop(url, None)
+                else:
+                    _BACKGROUND_IMAGE_RETRY_AFTER[url] = time.monotonic() + cooldown
+            work_queue.task_done()
+
+
+def _background_image_queue() -> queue.Queue:
+    global _BACKGROUND_IMAGE_QUEUE
+    with _BACKGROUND_IMAGE_LOCK:
+        if _BACKGROUND_IMAGE_QUEUE is None:
+            queue_size = _env_int("IMAGE_ASSET_BACKGROUND_QUEUE_SIZE", 256, 16, 2048)
+            workers = _env_int("IMAGE_ASSET_BACKGROUND_WORKERS", 4, 1, 16)
+            _BACKGROUND_IMAGE_QUEUE = queue.Queue(maxsize=queue_size)
+            for index in range(workers):
+                threading.Thread(
+                    target=_background_image_worker,
+                    args=(_BACKGROUND_IMAGE_QUEUE,),
+                    name=f"image-asset-refresh-{index + 1}",
+                    daemon=True,
+                ).start()
+        return _BACKGROUND_IMAGE_QUEUE
 
 
 def _schedule_image_refresh(cache: Any, url: str) -> bool:
     """Schedule a missing decorative asset without delaying the current query.
 
-    A small process-wide pool and single-flight set prevent a burst of identical
-    player queries from creating duplicate CDN requests. Failures have a short
-    cooldown, but are not written into the long-lived negative cache, so a
-    temporary CDN outage cannot hide an asset for the full image-cache TTL.
+    A bounded daemon-worker queue plus single-flight per URL prevents a burst of
+    queries from creating unlimited CDN work. Daemon workers also ensure pending
+    decorative downloads never hold Windows service shutdown or a Release update
+    open. Failures have a short cooldown and do not poison the long negative cache.
     """
 
     normalized = str(url or "").strip()
@@ -218,29 +247,13 @@ def _schedule_image_refresh(cache: Any, url: str) -> bool:
 
     timeout = _env_float("IMAGE_ASSET_BACKGROUND_TIMEOUT_SECONDS", 4.0, 0.5, 15.0)
     cooldown = _env_float("IMAGE_ASSET_BACKGROUND_RETRY_SECONDS", 30.0, 1.0, 600.0)
-
-    def refresh() -> None:
-        succeeded = False
-        try:
-            succeeded = bool(
-                download_image_cached(
-                    cache,
-                    normalized,
-                    timeout=timeout,
-                    negative_cache=False,
-                )
-            )
-        finally:
-            with _BACKGROUND_IMAGE_LOCK:
-                _BACKGROUND_IMAGE_INFLIGHT.discard(normalized)
-                if succeeded:
-                    _BACKGROUND_IMAGE_RETRY_AFTER.pop(normalized, None)
-                else:
-                    _BACKGROUND_IMAGE_RETRY_AFTER[normalized] = time.monotonic() + cooldown
-
     try:
-        _background_image_executor().submit(refresh)
+        _background_image_queue().put_nowait((cache, normalized, timeout, cooldown))
         return True
+    except queue.Full:
+        with _BACKGROUND_IMAGE_LOCK:
+            _BACKGROUND_IMAGE_INFLIGHT.discard(normalized)
+        return False
     except Exception:
         with _BACKGROUND_IMAGE_LOCK:
             _BACKGROUND_IMAGE_INFLIGHT.discard(normalized)
@@ -407,10 +420,14 @@ def encode_png_limited(
             return encoded
 
     resized = working
-    while len(best) > target_bytes and (resized.width > 360 or resized.height > 420):
+    minimum_width = min(360, resized.width)
+    minimum_height = min(420, resized.height)
+    while len(best) > target_bytes and (
+        resized.width > minimum_width or resized.height > minimum_height
+    ):
         ratio = max(0.62, min(0.88, (target_bytes / max(len(best), 1)) ** 0.5 * 0.96))
-        next_width = max(360, int(resized.width * ratio))
-        next_height = max(420, int(resized.height * ratio))
+        next_width = max(minimum_width, int(resized.width * ratio))
+        next_height = max(minimum_height, int(resized.height * ratio))
         if (next_width, next_height) == resized.size:
             break
         resized = resized.resize((next_width, next_height), Image.Resampling.BILINEAR)
