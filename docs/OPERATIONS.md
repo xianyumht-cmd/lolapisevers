@@ -25,6 +25,7 @@ If the installed updater itself is blocked by a known download-control bug, use 
 13. After the handshake, the launcher writes the first `launch.log` line and redirects helper output there. The deployer's PowerShell transcript remains `update.log`. The launcher process is owned by Task Scheduler, so it survives 6178/NSSM service-tree replacement during the V3 switch.
 14. `scheduled` is only a transition state. `/admin/update/status` checks the deployment PowerShell PID and the current production commit: live PID => `deploying`; dead PID + target commit active => `complete`; dead PID + old commit => `failed`. The WebUI keeps polling through `scheduled/deploying` instead of stopping at “process started”.
 15. If the helper fails before `Start-Transcript`, use `launch.log`; if it entered the deployer, use `update.log`. A valid Task Scheduler start must never leave both the PID handshake and launch diagnostics absent.
+16. Candidate preflight native processes (Python/Node) must not be invoked directly under WinPS 5.1 with `$ErrorActionPreference = "Stop"`. The verified V3 artifact uses a `System.Diagnostics.Process` wrapper that captures stdout/stderr into the transcript and treats only a nonzero native ExitCode as failure. Benign warnings on stderr remain visible but cannot abort a successful command.
 
 ### Private Release download acceleration
 
@@ -114,11 +115,11 @@ The WebUI updater refuses to schedule deployment when any of these checks fail:
 - unexpected number/name of V3 ZIP or metadata assets;
 - metadata schema, filename or target commit mismatch;
 - non-V3 package revision;
-- missing UTF-8 parser or baseline-readiness flags;
+- missing UTF-8 parser, baseline-readiness, native Git stderr-safety, or native process stderr-safety flags;
 - ZIP byte count or SHA-256 mismatch;
 - ZIP path traversal;
 - embedded manifest target/revision mismatch;
-- missing candidate-test, automatic-rollback, offline-dependency, UTF-8 or baseline-readiness manifest flags;
+- missing candidate-test, automatic-rollback, offline-dependency, UTF-8, baseline-readiness, native Git stderr-safety, or native process stderr-safety manifest flags;
 - deployment script missing or introducing mandatory parameters the updater cannot resolve;
 - Windows Task Scheduler cannot register/run the verified helper or no `deployment.pid` handshake is observed.
 
