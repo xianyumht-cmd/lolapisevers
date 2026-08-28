@@ -4,11 +4,11 @@
 
 ## Canonical development
 
-- 默认开发分支：`master`；GitHub 实际 `master` 提交是开发状态最终依据。
-- 当前已验证 `master` 提交：`62097ddd262543c0d90af2ef95f048e7cefa23c2`。
-- 当前 latest verified Release：`lolapi-62097ddd2625`，`target_commitish=62097ddd262543c0d90af2ef95f048e7cefa23c2`。
-- Issue #96 已关闭，PR #97 已合并；WinPS 5.1 原生命令 stderr 误杀候选测试的问题已进入上述 Release。
-- PR #95 的查询图片延迟 P0 也已包含在当前 `master` / Release 中。
+- 默认开发分支：`master`；**GitHub 实时 `master` 提交是开发状态最终依据，不在本文件中把某个 SHA 永久写成“当前 master”**，避免状态文档自身合并后立刻使该声明过期。
+- 本轮规则变更前最后一个包含 runtime 代码的已验证基线为 `62097ddd262543c0d90af2ef95f048e7cefa23c2`；对应 verified Release 为 `lolapi-62097ddd2625`。
+- PR #99 已合并，只修改仓库规则/知识文档，不改变 runtime 行为，也不需要为了本规则单独强制生产部署。最新 `master` / latest Release 仍应在执行任务时从 GitHub 实时核验。
+- Issue #96 已关闭，PR #97 已合并；WinPS 5.1 原生命令 stderr 误杀候选测试的问题已进入上述 runtime 基线。
+- PR #95 的查询图片延迟 P0 也已包含在上述 runtime 基线中。
 - 生产目录 `D:\project2\lolapisevers` 在普通开发中保持只读；仓库改动、CI、Issue/PR 或本地诊断不等于已授权生产部署。
 
 ## 当前开放问题：GroupGuard runtime / WebUI 配置语义漂移（Issue #98）
@@ -38,7 +38,7 @@
 
 ## Durable prevention
 
-本次规则任务把“runtime / WebUI 配置同步”升级为仓库级强制要求：
+PR #99 已把“runtime / WebUI 配置同步”升级为仓库级强制要求：
 
 - 任一配置 key、默认值、可选值、归一化、继承/优先级或配置驱动的 runtime 行为发生变化时，必须在同一 task/PR 检查并同步 runtime、WebUI display/effective preview、WebUI edit/save、API、docs 和 tests。
 - WebUI 若声称展示“最终/生效”值，不得使用与 runtime 不同的优先级；优先返回 canonical value + source。
