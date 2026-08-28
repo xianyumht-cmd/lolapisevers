@@ -135,3 +135,15 @@ A task is **not fully closed** if repository knowledge is materially stale after
 - If existing knowledge conflicts with reality, correct or mark it superseded as part of the current task instead of silently working around it.
 
 The goal is that a future ChatGPT/Codex session can enter the repository, read the canonical files, inspect live repository state, and continue safely **without relying on the user to remember previous instructions or retell project history**.
+
+## 10. Runtime / WebUI configuration parity
+
+Treat configuration behavior as one cross-surface contract. Runtime logic and the control plane must never knowingly implement different meanings for the same setting.
+
+- Any change to a configuration key, default, allowed value, normalization rule, inheritance rule, precedence rule, feature switch, output mode, or other runtime behavior controlled by configuration must inspect and update **all affected surfaces in the same task/PR**: runtime resolution, WebUI display/effective preview, WebUI edit/save mapping, admin/query APIs, migrations/defaults, documentation, and tests.
+- A plugin/runtime change is not complete if the WebUI still displays, edits, saves, or explains the old behavior. A WebUI change is not complete if the runtime/API still interprets the setting differently.
+- WebUI pages that claim to show a final/effective value should prefer a server-side canonical resolved value and its source. If the browser must derive the value, its precedence must be identical to runtime and protected by parity tests.
+- For changed configurable behavior, regression coverage must include the relevant precedence layers, including where applicable: global default, feature/profile value, explicit group override, and inherited/no-override group. Tests must assert that runtime delivery and WebUI/API effective preview agree.
+- Distinguish an **explicit group override** from a value merely present in an already-resolved/effective group object. An inherited global value must not accidentally masquerade as a group override and mask a more specific feature/profile setting.
+- When a bug is caused by runtime/WebUI drift, fix the shared contract and add a regression that would have caught the divergence; do not patch only the visible label or only the runtime branch.
+- Before merging, explicitly verify every affected configuration surface. If a surface is intentionally unaffected, record why in the PR/test evidence rather than assuming it is synchronized.

@@ -102,3 +102,24 @@ The Task Scheduler launcher must write its real PowerShell PID to `deployment.pi
 - The existing status machine continues to use the real deployment PID plus current production commit to decide `deploying`, `complete`, or `failed`.
 - Failure to register/run Task Scheduler or receive the PID handshake is a launch failure and must not be shown as `scheduled`.
 - A deployment-launch failure does not invalidate an already verified V3 ZIP; retry should reuse staging rather than redownload the asset.
+
+## 2026-08-28 — Configuration semantics are one runtime/control-plane contract
+
+**Decision**
+
+A configurable behavior has one canonical meaning across runtime logic, WebUI, admin/query APIs, defaults/migrations, and documentation. Configuration precedence and inheritance are part of that contract, not implementation details that each surface may re-create independently.
+
+For effective values, an explicit group override must be distinguishable from a value inherited from the global/default layer. Feature/profile settings may only be masked when the canonical precedence contract says so, not merely because an already-resolved group object happens to contain the inherited value.
+
+**Reasons**
+
+- The 2026-08-28 GroupGuard audit found `queryCommandProfiles.lol_battle.outputFormat="image"` and `global.lolQueryOutputFormat="forward"` while the WebUI presented the profile value but runtime battle delivery still selected `forward` for a group without an explicit output override.
+- WebUI `commandOut()` and runtime `resolveQueryOutputFormat()` had evolved different precedence semantics. The same saved configuration therefore produced different answers depending on which surface interpreted it.
+- A control panel that displays a different effective value from runtime is operationally worse than an obvious error because it makes a correct operator configuration look ineffective.
+
+**Consequences**
+
+- Runtime and WebUI/API effective previews must use the same precedence contract and, where practical, the same server-side resolver or resolved value/source.
+- Changes to configurable runtime behavior must update every affected control-plane surface in the same task/PR.
+- Regression tests for changed configuration behavior must cover relevant global, feature/profile, explicit group override, and inherited/no-override cases and assert parity between runtime and WebUI/API effective values.
+- Issue #98 tracks the current GroupGuard query-output precedence defect; production configuration is not force-overwritten as a workaround.
