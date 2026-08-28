@@ -115,3 +115,14 @@
   3. Python 测试源码不得留下会在新 Python 版本升级成 `SyntaxWarning` 的无效转义；CI 增加全仓编译 warning 检查。
   4. V3 metadata/manifest 对这种兼容性使用独立安全标志，并在最终 ZIP 校验阶段确认 wrapper marker 存在、直接候选 Python/Node 调用不存在。
   5. 候选预检失败必须发生在停止生产服务之前；日志出现 `Production was not stopped or changed.` 时，不要把它误判为下载失败或生产半升级。
+
+## 2026-08-28 — GroupGuard runtime 与 WebUI 不能各自实现配置优先级
+
+- **现象**：121 的查询管理页把 `lol_battle` 显示为 `image`，同时页面底部显示默认 `forward`；真实战绩查询却出现 `forward_send_direct`。只读审计确认 `queryCommandProfiles.lol_battle.outputFormat="image"`、`global.lolQueryOutputFormat="forward"`，且测试群没有显式战绩输出覆盖。
+- **根因**：WebUI `commandOut()` 已演进为优先展示 feature/profile 输出，而 runtime `resolveQueryOutputFormat()` 仍先读取已经合并后的 group/effective `lolQueryOutputFormat`。由于 effective group 对象会带入继承自 global 的 `forward`，runtime 无法区分“本群明确覆盖 forward”和“只是继承 global forward”，于是错误地让继承值遮住 profile `image`。同一配置契约在 WebUI 与 runtime 被分别实现，更新其中一侧后产生语义漂移。
+- **防止复发**：
+  1. 配置 key、默认值、可选值、归一化、继承和优先级属于一个跨 runtime/WebUI/API 的合同；修改任一项时必须在同一 task/PR 检查并同步所有受影响表面。
+  2. 最终生效值必须区分 explicit group override 与 inherited/effective value；不能因为 resolved group 对象里存在字段就把它当成群覆盖。
+  3. WebUI 的“最终/生效”预览优先消费服务端 canonical resolver 返回的 value + source；浏览器若自行推导，必须与 runtime 共用同一优先级并有 parity regression。
+  4. 回归至少覆盖：global default、feature/profile、显式 group override、完全继承/无 override 四层，并断言 runtime delivery 与 WebUI/API preview 一致。
+  5. 发现 drift 时修共享契约和测试，不能只改页面标签或只改 runtime 分支。Issue #98 跟踪当前查询输出优先级缺陷。
