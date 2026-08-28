@@ -5,50 +5,47 @@
 ## Canonical development
 
 - 默认开发分支：`master`；GitHub 实际 `master` 提交是开发状态最终依据。
-- 生产目录 `D:\project2\lolapisevers` 在普通开发中保持只读；仓库改动、CI 和本地引导包不等于生产已部署。
-- 当前 `master` / 已发布 Release `lolapi-e0dbf15c15d2` 的目标提交为 `e0dbf15c15d24fc13609679c9ad7ddfd35e6c4d1`，其中 PR #95 已完成查询图片延迟 P0。
-- 2026-08-28 生产运行时仍停留在 `2135a13a23b96fe2455d3a53311b35bd93dd22da`；从 WebUI 升级 `e0dbf15c...` 时，83 MB V3 包已通过 `github-cdn-6x` 下载到 100%，但候选测试阶段在生产停止/切换前失败，因此生产未改变。
-- 当前修复任务：Issue #96，分支 `fix/winps51-python-stderr`。目标是修复 WinPS 5.1 将 Python/Node 的正常 stderr 输出误判为部署失败的问题。
+- 当前已验证 `master` 提交：`62097ddd262543c0d90af2ef95f048e7cefa23c2`。
+- 当前 latest verified Release：`lolapi-62097ddd2625`，`target_commitish=62097ddd262543c0d90af2ef95f048e7cefa23c2`。
+- Issue #96 已关闭，PR #97 已合并；WinPS 5.1 原生命令 stderr 误杀候选测试的问题已进入上述 Release。
+- PR #95 的查询图片延迟 P0 也已包含在当前 `master` / Release 中。
+- 生产目录 `D:\project2\lolapisevers` 在普通开发中保持只读；仓库改动、CI、Issue/PR 或本地诊断不等于已授权生产部署。
 
-## 已完成：查询图片延迟 P0（Issue #94 / PR #95）
+## 当前开放问题：GroupGuard runtime / WebUI 配置语义漂移（Issue #98）
 
-- 战绩、段位、海符统计等业务数据继续走既有第三方 upstream / snapshot 新鲜度策略；图片优化没有把实时业务数据替换成长 TTL 结果。
-- 图片素材 CDN 已从正常用户查询关键路径移除：本地已有素材直接使用，本地缺失时立即用占位继续渲染并后台补资源。
-- 字体加载使用进程内 LRU；`fit_text` 使用二分测量；PNG 在线编码改为低延迟压缩路径。
-- 战绩 PNG 使用 120 秒服务端最终图缓存，key 绑定可见业务字段、renderer version 和 footer；业务数据变化即 miss。
-- 素材未齐时响应为 `warming` 且不写最终图缓存，后台资源补齐后下一次查询重绘完整版本。
+2026-08-28 对 `192.168.3.121` 的 `groupguard-snowluma` 做只读审计后，确认查询输出配置存在 runtime / WebUI 优先级不一致：
 
-## 当前阻塞：WinPS 5.1 原生命令 stderr 误杀候选测试
+- `global.lolQueryOutputFormat="forward"`。
+- `queryCommandProfiles.lol_battle.outputFormat="image"`。
+- WebUI 查询管理页优先展示 feature/profile，因此战绩显示 `image`。
+- runtime `resolveQueryOutputFormat()` 先读取 resolved/effective group 的 `lolQueryOutputFormat`；继承自 global 的 `forward` 会被当成群值并遮住 profile `image`。
+- 真实战绩日志出现 `forward_send_direct`，证明这不是单纯页面文案问题。
+- 当前 `config.json` 的 `groups` 为空，但 SQLite `group_config` 有 16 条持久化分群配置；判断群覆盖必须同时看 runtime storage，不能只看主 JSON。
 
-生产 `update.log` / `launch.log` 的可重复证据：
+这属于配置合同漂移，不应通过强制覆盖生产配置来规避。Issue #98 的修复方向是建立一套 canonical precedence，并让 runtime、WebUI effective preview、WebUI save/API 和回归测试共用同一语义。
 
-- Task Scheduler / SYSTEM helper 正常启动，PID 15740 与 13064 都进入 `1/6 Build isolated candidate environment while production stays running`。
-- 候选 Python 为生产 `.venv\Scripts\python.exe`，版本 Python 3.14。
-- 离线 wheel 安装与 `pip check` 成功。
-- `tests/test_winps51_git_stderr.py` 中 `Function:\Invoke-Git` 的 Python 字符串触发 `SyntaxWarning: "\I" is an invalid escape sequence`。
-- V3 deployer 仍直接执行 `& $candidatePython ...`；在 Windows PowerShell 5.1 且 `$ErrorActionPreference = "Stop"` 时，这个 stderr 被转换为终止错误，部署进程 ExitCode=1。
-- 日志明确记录 `Production was not stopped or changed.`，所以这是候选预检的 fail-closed，生产没有发生半切换。
+## 已确认属于预期设计、不是缺陷
 
-Issue #96 修复要求：
+- 121 自撤回开启：约 50% 概率、10–30 秒随机撤回，用于风控。
+- `global.outputLocale="en"` 是当前预期输出语言。
+- 121 全局问答关闭、查询开启符合当前查询机器人分工。
 
-1. 修正当前 Python 无效转义，新增全仓 Python `SyntaxWarning` 回归检查。
-2. V3 Release artifact 将候选 Python/Node 调用改为 `System.Diagnostics.Process` 包装：stdout/stderr 均捕获进日志，只有真实非零 ExitCode 才失败。
-3. 保留既有 Git stderr-safe 包装；新增 `winps51_native_process_stderr_safe` metadata / manifest 安全标志。
-4. V3 CI 必须验证最终 ZIP 内没有候选阶段的直接 `& $candidatePython` / `& $node.Source` 调用，并验证安全 wrapper marker。
-5. Windows 单测必须模拟“stderr 有 warning + ExitCode 0”通过、“ExitCode 非 0”失败，防止再次出现假失败。
+## 其他现场观察（未在本规则任务中修改）
 
-## Release 更新安全边界
+- 当前启动日志仍出现 OneBot `send_group_msg` 被拒绝（`result=120`）的发送失败；有战绩请求已走到图片消息阶段后被 OneBot 拒绝。这与 Issue #98 的输出优先级问题是不同层次。
+- 动态命令校验日志曾发现旧 HTTP Provider/参数映射错误；应作为独立后续问题处理，避免与配置优先级修复混在同一个改动里。
+- 部分 SQLite 分群记录保存的是历史整份配置快照，部分只保存小范围覆盖；后续若做配置清理，必须保留真正有意的群级差异，不能直接批量删除。
 
-- GitHub Release Token 只发送到 GitHub 官方 API；第三方公共镜像永不携带 Token。
-- Release metadata 继续通过 GitHub 官方认证链获取；最终 ZIP 必须通过 metadata SHA-256、路径安全检查、V3 manifest 安全标志与 target commit 校验。
-- GitHub Compare 只有 `current...target = ahead` 才允许自动前向升级；`behind`、`diverged` 或关系未知均 fail-closed。
-- 部署由 Task Scheduler / SYSTEM 托管；V3 deployer 先做候选测试，再做备份/生产切换/后置验证，失败时自动回滚。
-- 已验证 ZIP 下载成功不等于部署成功；候选预检失败时必须保留当前生产并显示明确失败阶段。
+## Durable prevention
 
-## 当前完成门
+本次规则任务把“runtime / WebUI 配置同步”升级为仓库级强制要求：
 
-1. Issue #96 的实现和 Windows stderr 回归测试完成。
-2. `tests`、Parser Center CI、普通安全包、V3 安全部署包全部通过。
-3. PR 合并到 `master`，确认 `master` 包含修复并清理临时分支。
-4. master push 发布新的 verified V3 Release，metadata / manifest 包含 `winps51_native_process_stderr_safe=true`。
-5. 生产机器从 6178 WebUI 再次执行一键升级；最终以当前生产提交切换到新 Release 目标并且服务验证通过为准。
+- 任一配置 key、默认值、可选值、归一化、继承/优先级或配置驱动的 runtime 行为发生变化时，必须在同一 task/PR 检查并同步 runtime、WebUI display/effective preview、WebUI edit/save、API、docs 和 tests。
+- WebUI 若声称展示“最终/生效”值，不得使用与 runtime 不同的优先级；优先返回 canonical value + source。
+- 配置行为回归必须覆盖相关的 global、profile/feature、explicit group override、inherited/no-override 层，并验证 runtime 与控制面一致。
+
+## Next actions
+
+1. 按 Issue #98 修复 GroupGuard 查询输出 precedence，先用测试定义 canonical contract，再同步 runtime + WebUI/API；不要先强制改生产配置。
+2. #98 独立完成并验证后，再分别处理 OneBot `result=120` 和动态命令加载错误。
+3. 若后续整理 16 条分群配置，先生成只读差异报告，区分 intentional override 与历史快照，再决定是否压缩覆盖。
