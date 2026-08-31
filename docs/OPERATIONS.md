@@ -15,9 +15,13 @@ the 121 container data directory is also read-only during an audit.
 
 The API timing trace is `query-delivery-timing.v1` under the response `meta`.
 The GroupGuard trace is `query-delivery-timing.v1` in its internal structured
-response metadata and log event. Neither trace contains credentials or raw
-query content. A production restart, configuration change, container rebuild or
-deployment is outside an audit and needs separate explicit authorization.
+response metadata and log event. For queued text/image delivery, T5/T6/T7/T8/T9
+are placed at queue submission, worker acquisition, risk-delay completion, and
+the actual OneBot action boundaries. Direct forward delivery remains direct and
+does not claim queue timing. Neither trace contains credentials, group IDs, or
+raw query content. A production restart, configuration change, container
+rebuild or deployment is outside an audit and needs separate explicit
+authorization.
 
 ## GitHub Release production update
 

@@ -42,9 +42,12 @@ The latency boundaries are intentionally separate:
 
 The API now returns sanitized `meta.timing` fields for the first two
 boundaries. GroupGuard keeps the cross-process trace through T0 plugin receive,
-T1/T2 API request/response, T3 plan decode, T4 payload ready, T8 send start and
-T9 send completion. This prevents the existing `plugin_execution_result`
-duration from being mistaken for end-to-end delivery time.
+T1/T2 API request/response, T3 plan decode, T4 payload ready, T5 queue
+submission, T6 worker acquisition, T7 risk-delay completion, and T8/T9 around
+the actual OneBot action. Direct forward-node delivery remains a separate
+direct transport path and records T8/T9 without fabricated queue timestamps.
+This prevents the existing `plugin_execution_result` duration from being
+mistaken for end-to-end delivery time.
 
 ## Query image latency boundary
 

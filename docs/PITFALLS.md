@@ -138,3 +138,8 @@
   3. WebUI 的“最终/生效”预览优先消费服务端 canonical resolver 返回的 value + source；浏览器若自行推导，必须与 runtime 共用同一优先级并有 parity regression。
   4. 回归至少覆盖：global default、feature/profile、显式 group override、完全继承/无 override 四层，并断言 runtime delivery 与 WebUI/API preview 一致。
   5. 发现 drift 时修共享契约和测试，不能只改页面标签或只改 runtime 分支。Issue #98 跟踪当前查询输出优先级缺陷。
+## 2026-08-31 — Do not infer image latency from a pre-queue plugin timestamp
+
+- **现象**：插件执行时长或一次图片 API 耗时被误认为包含完整 QQ 发送链路。
+- **根因**：旧 trace 没有标记入队、worker 获取和风控延迟，且 T8/T9 不在实际 OneBot action 边界。
+- **防止复发**：跨仓库 trace 必须使用 T5/T6/T7/T8/T9 拆出队列等待、配置的风险延迟和 OneBot 处理；直接转发路径单独标记，不能伪造队列耗时。没有新的生产 trace 前不得改变延迟策略。

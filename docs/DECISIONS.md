@@ -168,3 +168,25 @@ For effective values, an explicit group override must be distinguishable from a 
 - Changes to configurable runtime behavior must update every affected control-plane surface in the same task/PR.
 - Regression tests for changed configuration behavior must cover relevant global, feature/profile, explicit group override, and inherited/no-override cases and assert parity between runtime and WebUI/API effective values.
 - Issue #98 tracks the current GroupGuard query-output precedence defect; production configuration is not force-overwritten as a workaround.
+## 2026-08-31 — GroupGuard queue trace is part of the API-to-QQ latency contract
+
+### Decision
+
+Keep `query-delivery-timing.v1` optional in the API response and carry the
+sanitized values into GroupGuard. Define queued-delivery boundaries as T5 queue
+submission, T6 worker acquisition, T7 configured risk-delay completion, and
+T8/T9 around the actual OneBot action. Keep direct forward delivery unchanged
+and classify it as a direct transport path.
+
+### Reason
+
+The API-side timings alone cannot explain the known enqueue-to-OneBot interval.
+The GroupGuard trace must expose queue wait, intentional delay, and OneBot
+processing independently without changing latency policy or image transport.
+
+### Consequences
+
+Later optimization decisions can use `T6-T5`, `T7-T6`, and `T9-T8` instead of
+guessing from a single plugin duration. Older GroupGuard clients ignore the
+optional timing metadata, while the new client remains compatible with API
+responses that do not include it.
