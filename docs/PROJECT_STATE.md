@@ -65,6 +65,15 @@
 - No queue, risk delay, retry policy, image transport contract, production
   configuration, service, container, or runtime data was changed.
 
+## 2026-08-31 post-push verification
+
+- Follow-up commit `bcac8a70ea841cd2ed481d85a425d9552252fc1a` is pushed to
+  `codex/image-delivery-observability-20260831`; PR #101 remains open and
+  unmerged. Local full regression completed with 477 tests passing.
+- A paired PR watcher attempt could not refresh the GitHub GraphQL state because
+  the API returned `EOF`; this is an external observation failure, not a source
+  test failure. No merge or production action was taken.
+
 ## 当前开放问题：GroupGuard runtime / WebUI 配置语义漂移（Issue #98）
 
 2026-08-28 对 `192.168.3.121` 的 `groupguard-snowluma` 做只读审计后，确认查询输出配置存在 runtime / WebUI 优先级不一致：
