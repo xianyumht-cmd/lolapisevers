@@ -56,7 +56,16 @@ class GroupGuardDeliveryRouterTests(unittest.IsolatedAsyncioTestCase):
             new=AsyncMock(return_value=SHARD_PAYLOAD),
         ), patch(
             "routers.groupguard_delivery._render_feature_image",
-            new=AsyncMock(return_value=Response(content=image, media_type="image/png")),
+            new=AsyncMock(
+                return_value=Response(
+                    content=image,
+                    media_type="image/png",
+                    headers={
+                        "X-Image-Asset-Start-Offset-Ms": "1.2",
+                        "X-Image-Asset-End-Offset-Ms": "2.7",
+                    },
+                )
+            ),
         ):
             response = await groupguard_query(
                 request_with_ctx(),
@@ -82,6 +91,9 @@ class GroupGuardDeliveryRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(body["meta"]["timing"]["query_ms"], 0)
         self.assertEqual(body["meta"]["timing"]["image"]["bytes"], len(image))
         self.assertEqual(body["meta"]["timing"]["image"]["base64_chars"], len(segment["data"]))
+        self.assertEqual(body["meta"]["timing"]["image"]["asset_lookup_started_offset_ms"], 1.2)
+        self.assertEqual(body["meta"]["timing"]["image"]["asset_available_offset_ms"], 2.7)
+        self.assertIn("t3_render_started", body["meta"]["timing"]["api_stage_offsets_ms"])
         self.assertNotIn("rows", body)
 
     async def test_aram_image_failure_falls_back_to_service_text(self):

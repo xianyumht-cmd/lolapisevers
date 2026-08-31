@@ -77,6 +77,7 @@ def build_shard_image_response(ctx: AppContext, payload: Dict[str, Any]) -> Resp
             alias and callable(cache_get) and isinstance(cache_get(f"hero_icon:{alias}"), bytes)
         )
         icon_bytes = download_hero_icon(ctx, alias) if alias else None
+        asset_finished = time.perf_counter()
         asset_ms = (time.perf_counter() - asset_started) * 1000
         if icon_bytes:
             try:
@@ -138,6 +139,8 @@ def build_shard_image_response(ctx: AppContext, payload: Dict[str, Any]) -> Resp
                 "X-Image-Asset-Ms": f"{asset_ms:.1f}",
                 "X-Image-Asset-Count": "1" if icon_bytes else "0",
                 "X-Image-Expected-Asset-Count": "1" if alias else "0",
+                "X-Image-Asset-Start-Offset-Ms": f"{(asset_started - render_started) * 1000:.1f}",
+                "X-Image-Asset-End-Offset-Ms": f"{(asset_finished - render_started) * 1000:.1f}",
                 "X-Image-Encode-Ms": f"{encode_ms:.1f}",
                 "X-Image-Render-Ms": f"{(time.perf_counter() - render_started) * 1000:.1f}",
                 "X-Image-Width": str(width),

@@ -14,14 +14,19 @@ the 121 container data directory is also read-only during an audit.
 6. For end-to-end evidence, aggregate `bot_send_events` read-only by scene, media flag and status. Use `sent_at - queued_at` only for rows with a successful send timestamp; separately report configured random delay. Failed rows must not be treated as valid latency samples.
 
 The API timing trace is `query-delivery-timing.v1` under the response `meta`.
+For images, read `api_stage_offsets_ms` together with the sanitized image
+`asset_lookup_started_offset_ms` and `asset_available_offset_ms`; these are
+relative offsets within one API request, not cross-host wall-clock timestamps.
 The GroupGuard trace is `query-delivery-timing.v1` in its internal structured
-response metadata and log event. For queued text/image delivery, T5/T6/T7/T8/T9
-are placed at queue submission, worker acquisition, risk-delay completion, and
-the actual OneBot action boundaries. Direct forward delivery remains direct and
-does not claim queue timing. Neither trace contains credentials, group IDs, or
-raw query content. A production restart, configuration change, container
-rebuild or deployment is outside an audit and needs separate explicit
-authorization.
+response metadata and log event. T0/T1/T2/T8/T9 are the plugin receive, API
+request, API response, OneBot call start and OneBot call return boundaries. T7
+payload preparation is recorded immediately before converting the validated
+delivery envelope into OneBot segments. For queued text/image delivery, the
+separate queue T5/T6/T7 fields remain queue submission, worker acquisition and
+risk-delay completion. Direct forward delivery remains direct and does not
+claim queue timing. Neither trace contains credentials, group IDs, or raw query
+content. A production restart, configuration change, container rebuild or
+deployment is outside an audit and needs separate explicit authorization.
 
 ## GitHub Release production update
 

@@ -45,6 +45,26 @@
 - PR #101（lolapisevers）与 GroupGuard PR #56 已创建，均保持 open、未合并。对应 GitHub Actions 运行在作业启动前以 `startup_failure` 结束，页面提示疑似 workflow file issue；当前没有可下载的失败作业日志，也不能重跑，因此 CI 结论暂记为 blocked，而不是代码测试失败。
 - 未重启、未部署、未修改 121 或 100 的生产文件。下一步是先恢复/确认 CI 工作流可启动并取得 PR checks；之后仍需按每个 PR 单独批准，再决定是否进入生产部署。
 
+## 2026-08-31 follow-up: exact image stages and bounded optimization
+
+- Local deterministic renderer baselines were measured before this follow-up:
+  battle cold render was about 120 ms with synthetic complete assets, ARAM
+  cold render about 70 ms, and final-image cache hits about 0.1–0.2 ms. A
+  379 KB PNG base64 encoding sample took about 1.5 ms. These are local
+  renderer/encoding measurements, not QQ delivery measurements.
+- The API now exposes monotonic-relative image stage offsets for T3 render
+  start, T4 render finish, T5 asset lookup start, T6 asset availability and
+  T7 API payload preparation/availability. GroupGuard additionally uses
+  `performance.now()` for elapsed T0–T9 calculations and records T7 plugin
+  payload preparation immediately before OneBot plan conversion.
+- The only behavior optimization in this follow-up is an ARAM image cache-hit
+  fast path when both `aram_balance:<alias>` and
+  `aram_base_balance:<alias>` are already present in the existing TTL cache.
+  It avoids repeated champion lookup work, preserves the same cached values
+  and TTL, and falls back unchanged when either layer is absent.
+- No queue, risk delay, retry policy, image transport contract, production
+  configuration, service, container, or runtime data was changed.
+
 ## 当前开放问题：GroupGuard runtime / WebUI 配置语义漂移（Issue #98）
 
 2026-08-28 对 `192.168.3.121` 的 `groupguard-snowluma` 做只读审计后，确认查询输出配置存在 runtime / WebUI 优先级不一致：

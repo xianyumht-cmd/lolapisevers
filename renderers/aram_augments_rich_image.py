@@ -233,6 +233,7 @@ def build_aram_augment_image_response(ctx: Any, payload: Dict[str, Any]) -> Resp
             max_assets=42,
             overall_timeout=ARAM_IMAGE_ASSET_BUDGET_SECONDS,
         )
+        asset_finished = time.perf_counter()
         asset_ms = (time.perf_counter() - asset_started) * 1000
         expected_asset_urls = {url for url in asset_urls if url}
         assets_complete = all(url in assets for url in expected_asset_urls)
@@ -486,6 +487,8 @@ def build_aram_augment_image_response(ctx: Any, payload: Dict[str, Any]) -> Resp
                 "X-Image-Asset-Ms": f"{asset_ms:.1f}",
                 "X-Image-Asset-Count": str(len(assets)),
                 "X-Image-Expected-Asset-Count": str(len(expected_asset_urls)),
+                "X-Image-Asset-Start-Offset-Ms": f"{(asset_started - render_started) * 1000:.1f}",
+                "X-Image-Asset-End-Offset-Ms": f"{(asset_finished - render_started) * 1000:.1f}",
                 "X-Image-Encode-Ms": f"{encode_ms:.1f}",
                 "X-Image-Render-Ms": f"{(time.perf_counter() - render_started) * 1000:.1f}",
                 "X-Image-Width": str(ARAM_IMAGE_WIDTH),

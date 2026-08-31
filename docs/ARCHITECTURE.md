@@ -40,11 +40,19 @@ The latency boundaries are intentionally separate:
 - image preparation latency: final-image cache lookup, decorative asset lookup/refresh, Pillow render and PNG encoding;
 - transport latency: JSON/base64 transfer, GroupGuard decode/hash/plan construction, send queue delay and OneBot response.
 
-The API now returns sanitized `meta.timing` fields for the first two
-boundaries. GroupGuard keeps the cross-process trace through T0 plugin receive,
-T1/T2 API request/response, T3 plan decode, T4 payload ready, T5 queue
-submission, T6 worker acquisition, T7 risk-delay completion, and T8/T9 around
-the actual OneBot action. Direct forward-node delivery remains a separate
+The API returns sanitized `meta.timing` fields for the first two boundaries.
+For image responses, `api_stage_offsets_ms` maps T3/T4/T7 to render start,
+render finish, and API payload preparation/availability, measured from the API
+request start with `perf_counter()`. Image headers also expose the offset from
+render start to T5 asset lookup and T6 asset availability. GroupGuard keeps
+the cross-process trace through T0 plugin receive, T1/T2 API request/response,
+T7 plugin OneBot-payload preparation, T3 plan decode, T4 payload ready, T5
+queue submission, T6 worker acquisition, T7 configured risk-delay completion,
+and T8/T9 around the actual OneBot action. The two T7 records are intentionally
+named separately in the serialized trace so API asset/payload stages cannot be
+confused with the existing queue risk-delay boundary. All elapsed durations on
+the GroupGuard side use `performance.now()`; readable `Date.now()` timestamps
+remain only for correlation. Direct forward-node delivery remains a separate
 direct transport path and records T8/T9 without fabricated queue timestamps.
 This prevents the existing `plugin_execution_result` duration from being
 mistaken for end-to-end delivery time.

@@ -257,6 +257,8 @@ def build_aram_augment_image_with_balance(ctx: Any, payload: Dict[str, Any]) -> 
             "X-Image-Asset-Count",
             "X-Image-Expected-Asset-Count",
             "X-Image-Cache-Lookup-Ms",
+            "X-Image-Asset-Start-Offset-Ms",
+            "X-Image-Asset-End-Offset-Ms",
         ):
             value = base_response.headers.get(name)
             if value is not None:

@@ -128,6 +128,12 @@
   4. V3 metadata/manifest 对这种兼容性使用独立安全标志，并在最终 ZIP 校验阶段确认 wrapper marker 存在、直接候选 Python/Node 调用不存在。
   5. 候选预检失败必须发生在停止生产服务之前；日志出现 `Production was not stopped or changed.` 时，不要把它误判为下载失败或生产半升级。
 
+## 2026-08-31 — 不要把未同步的 API 时间戳直接塞进跨主机 T0-T9
+
+- **现象**：把 API 渲染、图片资产和 GroupGuard 发送阶段都写成同一组绝对时间戳，看起来像能直接相减，但两个主机的时钟没有经过同步校准。
+- **根因**：API 的 T3/T4/T5/T6/T7 发生在插件收到 T2 之前；若直接复用插件的数字 T3/T4/T7 字段，会把 API 阶段误写成 plan/queue 阶段或制造错误的时间顺序。
+- **防止复发**：API 阶段使用从 API 请求开始计算的 monotonic offset，GroupGuard 阶段使用本机 `performance.now()` 的 elapsed duration；序列化时保留清晰的阶段名称，不伪造跨主机绝对时钟关系。
+
 ## 2026-08-28 — GroupGuard runtime 与 WebUI 不能各自实现配置优先级
 
 - **现象**：121 的查询管理页把 `lol_battle` 显示为 `image`，同时页面底部显示默认 `forward`；真实战绩查询却出现 `forward_send_direct`。只读审计确认 `queryCommandProfiles.lol_battle.outputFormat="image"`、`global.lolQueryOutputFormat="forward"`，且测试群没有显式战绩输出覆盖。

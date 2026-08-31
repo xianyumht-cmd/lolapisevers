@@ -133,6 +133,13 @@ def _image_timing(response: Response) -> Dict[str, Any]:
         "expected_asset_count": int(_header_float(headers, "X-Image-Expected-Asset-Count")),
         "bytes": len(body),
     }
+    for key, header in (
+        ("asset_lookup_started_offset_ms", "X-Image-Asset-Start-Offset-Ms"),
+        ("asset_available_offset_ms", "X-Image-Asset-End-Offset-Ms"),
+    ):
+        value = _header_float(headers, header)
+        if value > 0:
+            timing[key] = value
     for key, header in (("width", "X-Image-Width"), ("height", "X-Image-Height")):
         try:
             value = int(headers.get(header, 0) or 0)
@@ -160,6 +167,15 @@ def _delivery_timing(
         "render_ms": round(max(0.0, (render_finished - render_started) * 1000), 1) if render_finished and render_started else 0.0,
         "delivery_prepare_ms": round(max(0.0, (now - delivery_started) * 1000), 1) if delivery_started else 0.0,
         "api_total_ms": round(max(0.0, (now - request_started) * 1000), 1),
+    }
+    timing["api_stage_offsets_ms"] = {
+        "t3_render_started": round(max(0.0, (render_started - request_started) * 1000), 1)
+        if render_started else 0.0,
+        "t4_render_finished": round(max(0.0, (render_finished - request_started) * 1000), 1)
+        if render_finished else 0.0,
+        "t7_payload_prepare_started": round(max(0.0, (delivery_started - request_started) * 1000), 1)
+        if delivery_started else round(max(0.0, (now - request_started) * 1000), 1),
+        "t7_payload_ready": round(max(0.0, (now - request_started) * 1000), 1),
     }
     if image and response is not None:
         timing["image"] = _image_timing(response)

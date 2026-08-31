@@ -190,3 +190,30 @@ Later optimization decisions can use `T6-T5`, `T7-T6`, and `T9-T8` instead of
 guessing from a single plugin duration. Older GroupGuard clients ignore the
 optional timing metadata, while the new client remains compatible with API
 responses that do not include it.
+
+## 2026-08-31 — Keep image-stage timings local and do not bypass intentional risk policy
+
+### Decision
+
+Record API render and asset stages as monotonic relative offsets, and record
+GroupGuard payload preparation plus queue/OneBot stages with monotonic elapsed
+durations. Do not remove the configured query send queue or inherited random
+risk delay solely because it appears in the end-to-end number.
+
+### Reason
+
+The API and GroupGuard clocks are separate hosts, so absolute cross-process
+stage timestamps would imply precision that is not available. Existing
+production evidence shows the queue/risk interval is material, but the delay
+is an intentional shared anti-risk policy rather than an accidental image
+download wait. A timing fix must not silently change that policy.
+
+### Consequences
+
+- `meta.timing.api_stage_offsets_ms` and image offset fields can locate render,
+  asset and API payload work without pretending to be synchronized clocks.
+- GroupGuard logs can compare queue wait, risk delay, payload preparation and
+  OneBot processing using `performance.now()`.
+- Any future latency-policy change needs its own explicit product/operations
+  decision and regression evidence; this task only adds a safe ARAM cache-hit
+  fast path that preserves TTL and balance freshness semantics.

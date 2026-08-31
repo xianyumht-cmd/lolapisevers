@@ -166,6 +166,7 @@ def build_cross_image_response(ctx: AppContext, payload: Dict[str, Any]) -> Resp
         asset_cache = getattr(ctx, "image_asset_cache", getattr(ctx, "aram_augment_cache", None))
         asset_started = time.perf_counter()
         assets = prefetch_image_urls(asset_cache, asset_urls, timeout=3.5, max_workers=8, max_assets=72)
+        asset_finished = time.perf_counter()
         asset_ms = (time.perf_counter() - asset_started) * 1000
         expected_asset_urls = {url for url in asset_urls if url}
         assets_complete = all(url in assets for url in expected_asset_urls)
@@ -354,6 +355,8 @@ def build_cross_image_response(ctx: AppContext, payload: Dict[str, Any]) -> Resp
                 "X-Image-Asset-Ms": f"{asset_ms:.1f}",
                 "X-Image-Asset-Count": str(len(assets)),
                 "X-Image-Expected-Asset-Count": str(len(expected_asset_urls)),
+                "X-Image-Asset-Start-Offset-Ms": f"{(asset_started - render_started) * 1000:.1f}",
+                "X-Image-Asset-End-Offset-Ms": f"{(asset_finished - render_started) * 1000:.1f}",
                 "X-Image-Encode-Ms": f"{encode_ms:.1f}",
                 "X-Image-Render-Ms": f"{(time.perf_counter() - render_started) * 1000:.1f}",
                 "X-Image-Width": str(width),
