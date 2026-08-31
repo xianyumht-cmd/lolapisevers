@@ -1,5 +1,50 @@
 # Technical decisions
 
+## 2026-08-31 — Measure the complete query-to-OneBot path before changing transport
+
+**Decision**
+
+Treat API query/render, GroupGuard plan construction, and the send queue as
+separate latency boundaries. Keep the current base64 delivery contract while
+adding safe stage timing across those boundaries; do not switch to a public
+CDN, URL delivery, or local-file delivery based only on a multi-second
+aggregate metric.
+
+**Reasons**
+
+- Production is split between 121 (bot/OneBot) and 100 (LOL API), but the
+  measured network connection is about 1.4ms.
+- Warm battle images return from 100 in about 0.09–0.21s, while cold business
+  queries and post-API sends are multi-second in different samples.
+- The existing GroupGuard plugin metric is recorded before structured response
+  sending, so it cannot identify queue or OneBot time.
+- The current OneBot client accepts the tested base64 image representation and
+  changing it would expand compatibility and rollback risk without a measured
+  benefit.
+
+**Consequences**
+
+- API timing exposes only bounded stage metadata: elapsed milliseconds, cache/
+  asset state, dimensions, and byte counts.
+- GroupGuard records T0/T1/T2/T3/T4/T8/T9 without storing user content or
+  credentials.
+- Any future transport optimization must compare cold and warm cases, verify
+  OneBot support, and preserve text/image/forward fallback behavior.
+
+## 2026-08-31 — No production deployment during the latency audit
+
+**Decision**
+
+The audit and instrumentation are developed on task branches only. The
+production working tree, 121 containers, and 100 service are not restarted,
+rewritten, or deployed as part of this task.
+
+**Reason**
+
+The goal is to establish a trustworthy baseline first; an unverified runtime
+change would make before/after comparisons ambiguous and increase recovery
+risk.
+
 ## 2026-08-24 — Production updates use verified GitHub Releases
 
 **Decision**
@@ -123,3 +168,52 @@ For effective values, an explicit group override must be distinguishable from a 
 - Changes to configurable runtime behavior must update every affected control-plane surface in the same task/PR.
 - Regression tests for changed configuration behavior must cover relevant global, feature/profile, explicit group override, and inherited/no-override cases and assert parity between runtime and WebUI/API effective values.
 - Issue #98 tracks the current GroupGuard query-output precedence defect; production configuration is not force-overwritten as a workaround.
+## 2026-08-31 — GroupGuard queue trace is part of the API-to-QQ latency contract
+
+### Decision
+
+Keep `query-delivery-timing.v1` optional in the API response and carry the
+sanitized values into GroupGuard. Define queued-delivery boundaries as T5 queue
+submission, T6 worker acquisition, T7 configured risk-delay completion, and
+T8/T9 around the actual OneBot action. Keep direct forward delivery unchanged
+and classify it as a direct transport path.
+
+### Reason
+
+The API-side timings alone cannot explain the known enqueue-to-OneBot interval.
+The GroupGuard trace must expose queue wait, intentional delay, and OneBot
+processing independently without changing latency policy or image transport.
+
+### Consequences
+
+Later optimization decisions can use `T6-T5`, `T7-T6`, and `T9-T8` instead of
+guessing from a single plugin duration. Older GroupGuard clients ignore the
+optional timing metadata, while the new client remains compatible with API
+responses that do not include it.
+
+## 2026-08-31 — Keep image-stage timings local and do not bypass intentional risk policy
+
+### Decision
+
+Record API render and asset stages as monotonic relative offsets, and record
+GroupGuard payload preparation plus queue/OneBot stages with monotonic elapsed
+durations. Do not remove the configured query send queue or inherited random
+risk delay solely because it appears in the end-to-end number.
+
+### Reason
+
+The API and GroupGuard clocks are separate hosts, so absolute cross-process
+stage timestamps would imply precision that is not available. Existing
+production evidence shows the queue/risk interval is material, but the delay
+is an intentional shared anti-risk policy rather than an accidental image
+download wait. A timing fix must not silently change that policy.
+
+### Consequences
+
+- `meta.timing.api_stage_offsets_ms` and image offset fields can locate render,
+  asset and API payload work without pretending to be synchronized clocks.
+- GroupGuard logs can compare queue wait, risk delay, payload preparation and
+  OneBot processing using `performance.now()`.
+- Any future latency-policy change needs its own explicit product/operations
+  decision and regression evidence; this task only adds a safe ARAM cache-hit
+  fast path that preserves TTL and balance freshness semantics.

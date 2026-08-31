@@ -1,5 +1,62 @@
 # Architecture
 
+## Active production query delivery topology (verified 2026-08-31)
+
+The production deployment is split across two hosts. `192.168.3.121` runs the
+GroupGuard/SnowLuma/OneBot side, while `192.168.3.100:5001` runs the LOL API
+and image renderer. Port 6178 on 100 is a control/update API, not the query
+data path.
+
+```text
+QQ group message
+      |
+      v
+SnowLuma OneBot WS :3001
+      |
+      v
+GroupGuard intranet plugin (121)
+      | POST /api/v1/groupguard/query
+      v
+LOLDataSystem :5001 (100)
+      | query cache / upstream snapshot policy
+      | Pillow render + local decorative asset cache
+      | base64 image delivery envelope
+      v
+GroupGuard validates SHA-256, maps image to base64://, and enqueues send
+      | external_query queue, group mode, concurrency 2, risk delay
+      v
+SnowLuma OneBot transport -> QQ
+```
+
+The active battle, shard and ARAM paths use the channel-neutral delivery
+contract. An image is returned inside the JSON envelope as a base64 segment;
+there is no public image URL, local file path, or second GroupGuard download
+in this path. Older direct image-URL handlers remain in source for migration
+review but are not the active `builtin.query.*.intranet` route.
+
+The latency boundaries are intentionally separate:
+
+- business/query data latency: upstream request, parser, result cache and snapshot fallback;
+- image preparation latency: final-image cache lookup, decorative asset lookup/refresh, Pillow render and PNG encoding;
+- transport latency: JSON/base64 transfer, GroupGuard decode/hash/plan construction, send queue delay and OneBot response.
+
+The API returns sanitized `meta.timing` fields for the first two boundaries.
+For image responses, `api_stage_offsets_ms` maps T3/T4/T7 to render start,
+render finish, and API payload preparation/availability, measured from the API
+request start with `perf_counter()`. Image headers also expose the offset from
+render start to T5 asset lookup and T6 asset availability. GroupGuard keeps
+the cross-process trace through T0 plugin receive, T1/T2 API request/response,
+T7 plugin OneBot-payload preparation, T3 plan decode, T4 payload ready, T5
+queue submission, T6 worker acquisition, T7 configured risk-delay completion,
+and T8/T9 around the actual OneBot action. The two T7 records are intentionally
+named separately in the serialized trace so API asset/payload stages cannot be
+confused with the existing queue risk-delay boundary. All elapsed durations on
+the GroupGuard side use `performance.now()`; readable `Date.now()` timestamps
+remain only for correlation. Direct forward-node delivery remains a separate
+direct transport path and records T8/T9 without fabricated queue timestamps.
+This prevents the existing `plugin_execution_result` duration from being
+mistaken for end-to-end delivery time.
+
 ## Query image latency boundary
 
 Business/query data and decorative image assets have different freshness requirements and therefore different request boundaries.

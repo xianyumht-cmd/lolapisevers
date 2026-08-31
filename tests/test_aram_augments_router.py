@@ -68,6 +68,31 @@ class AramAugmentsImageCacheTests(unittest.TestCase):
         self.assertEqual(renderer.call_count, 2)
         self.assertNotEqual(first.headers["etag"], second.headers["etag"])
 
+    def test_cached_balance_layers_are_reused_without_provider_lookup(self):
+        self.ctx.aram_augment_cache = TTLCache(ttl_seconds=300, max_size=8)
+        self.ctx.aram_augment_cache.set(
+            "aram_balance:ahri",
+            {"status": "ok", "provider": "arammayhem", "changes": []},
+        )
+        self.ctx.aram_augment_cache.set(
+            "aram_base_balance:ahri",
+            {"status": "ok", "provider": "opgg", "changes": []},
+        )
+        with patch(
+            "routers.aram_augments._safe_balance_query",
+            side_effect=AssertionError("cached balance must not query provider"),
+        ), patch(
+            "routers.aram_augments._safe_base_balance_query",
+            side_effect=AssertionError("cached base balance must not query provider"),
+        ), patch(
+            "routers.aram_augments.build_aram_augment_image_response",
+            return_value=Response(content=b"png-bytes", media_type="image/png"),
+        ):
+            result = _build_cached_image_response(self.ctx, self.payload)
+
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.headers["x-image-cache"], "miss")
+
 
 if __name__ == "__main__":
     unittest.main()

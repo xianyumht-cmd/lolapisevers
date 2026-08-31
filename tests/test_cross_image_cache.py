@@ -50,6 +50,8 @@ class CrossImageCacheTests(unittest.TestCase):
         self.assertEqual(second.body, b"first-png")
         self.assertEqual(first.headers.get("x-image-cache"), "miss")
         self.assertEqual(second.headers.get("x-image-cache"), "hit")
+        self.assertIn("x-image-cache-lookup-ms", second.headers)
+        self.assertIn("x-image-render-ms", second.headers)
         encoder.assert_called_once()
 
     def test_changed_business_payload_misses_final_image_cache(self):

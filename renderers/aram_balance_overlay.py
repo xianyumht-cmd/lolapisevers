@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import logging
 import math
+import time
 from typing import Any, Dict, List
 
 from fastapi.responses import Response
@@ -86,6 +87,7 @@ def _layer_height(layer: Dict[str, Any]) -> int:
 
 
 def build_aram_augment_image_with_balance(ctx: Any, payload: Dict[str, Any]) -> Response:
+    render_started = time.perf_counter()
     base_response = build_aram_augment_image_response(ctx, payload)
     if base_response.status_code >= 400 or not str(base_response.media_type or "").startswith("image/"):
         return base_response
@@ -233,19 +235,38 @@ def build_aram_augment_image_with_balance(ctx: Any, payload: Dict[str, Any]) -> 
             empty_kind="Mayhem 专属",
         )
 
+        encode_started = time.perf_counter()
         encoded = encode_png_limited(
             image,
             max_bytes=ARAM_IMAGE_MAX_BYTES,
             max_width=ARAM_IMAGE_WIDTH,
             max_height=ARAM_IMAGE_MAX_HEIGHT,
         )
+        encode_ms = (time.perf_counter() - encode_started) * 1000
+        headers = {
+            "X-Image-Bytes": str(len(encoded)),
+            "X-Image-Encode-Ms": f"{encode_ms:.1f}",
+            "X-Image-Render-Ms": f"{(time.perf_counter() - render_started) * 1000:.1f}",
+            "X-Image-Width": str(ARAM_IMAGE_WIDTH),
+            "X-Image-Height": str(image.height),
+            "Cache-Control": "no-store",
+        }
+        for name in (
+            "X-Image-Assets",
+            "X-Image-Asset-Ms",
+            "X-Image-Asset-Count",
+            "X-Image-Expected-Asset-Count",
+            "X-Image-Cache-Lookup-Ms",
+            "X-Image-Asset-Start-Offset-Ms",
+            "X-Image-Asset-End-Offset-Ms",
+        ):
+            value = base_response.headers.get(name)
+            if value is not None:
+                headers[name] = str(value)
         return Response(
             content=encoded,
             media_type="image/png",
-            headers={
-                "X-Image-Bytes": str(len(encoded)),
-                "Cache-Control": "no-store",
-            },
+            headers=headers,
         )
     except Exception as exc:
         logger.exception("aram balance overlay generation failed: %s", exc)

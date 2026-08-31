@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import hashlib
 import json
 import logging
@@ -96,6 +97,18 @@ def _payload_with_balance(ctx, payload: dict) -> dict:
         return payload
 
     hero = payload.get("hero") if isinstance(payload.get("hero"), dict) else {}
+    canonical_alias = str(hero.get("alias") or hero.get("name") or "").strip().casefold()
+    balance_cache = getattr(ctx, "aram_augment_cache", None)
+    if canonical_alias and existing_balance is None and existing_base is None and balance_cache is not None:
+        cached_balance = balance_cache.get(f"aram_balance:{canonical_alias}")
+        cached_base = balance_cache.get(f"aram_base_balance:{canonical_alias}")
+        if isinstance(cached_balance, dict) and isinstance(cached_base, dict):
+            enriched = dict(payload)
+            enriched["balance"] = _attach_base_balance(
+                copy.deepcopy(cached_balance),
+                copy.deepcopy(cached_base),
+            )
+            return enriched
     hero_query = str(
         hero.get("alias")
         or hero.get("name")

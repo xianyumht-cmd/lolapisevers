@@ -1,5 +1,17 @@
 # PITFALLS
 
+## 2026-08-31 — GroupGuard plugin execution time is not end-to-end send time
+
+- **现象**：生产日志中的 `plugin_execution_result` 显示战绩/海符榜需要数秒，容易直接把时间归因于图片生成或 API 返回。
+- **根因**：该事件在结构化交付结果准备完之后、`sendUnifiedCommandResponse` 之前记录；随后还会经过 `external_query` 发送队列、随机风控延迟、OneBot action 和 QQ 侧处理。
+- **防止复发**：查询链路必须同时记录 API query/render/delivery-preparation 与 GroupGuard T0/T1/T2/T3/T4/T8/T9；端到端均值只使用带有效 `sent_at` 的发送事件，并单独报告随机延迟。
+
+## 2026-08-31 — 图片 text/image 对照必须标记业务和渲染 cache 状态
+
+- **现象**：一次战绩图片请求可能只有约 0.2s，另一次海符榜图片约 1.5s；若直接与某次文本请求比较，会得出“图片固定多几秒”的错误结论。
+- **根因**：业务结果缓存、最终图片缓存、装饰资源缓存和背景刷新状态彼此独立；图片首次返回还可能是 placeholder/warming，前后 payload 或资源完整性也可能不同。
+- **防止复发**：每次对照同时记录 source、业务 cache、final-image cache、asset completeness、PNG bytes、base64 chars 和阶段耗时；至少分别做 cold、warming、warm 三种样本，不能只比较两个总耗时。
+
 ## 2026-08-11 — OP.GG ARAM 平衡卡的实时 HTML 不能按单一展示形态解析
 
 - **现象**：海符榜基础 ARAM 层在真实环境中把亚索显示为“完整平衡暂不可用”，而 OP.GG 当前实际有攻速 `+2.5%`；库奇能拿到平衡值但版本显示“未校验”。
@@ -116,6 +128,12 @@
   4. V3 metadata/manifest 对这种兼容性使用独立安全标志，并在最终 ZIP 校验阶段确认 wrapper marker 存在、直接候选 Python/Node 调用不存在。
   5. 候选预检失败必须发生在停止生产服务之前；日志出现 `Production was not stopped or changed.` 时，不要把它误判为下载失败或生产半升级。
 
+## 2026-08-31 — 不要把未同步的 API 时间戳直接塞进跨主机 T0-T9
+
+- **现象**：把 API 渲染、图片资产和 GroupGuard 发送阶段都写成同一组绝对时间戳，看起来像能直接相减，但两个主机的时钟没有经过同步校准。
+- **根因**：API 的 T3/T4/T5/T6/T7 发生在插件收到 T2 之前；若直接复用插件的数字 T3/T4/T7 字段，会把 API 阶段误写成 plan/queue 阶段或制造错误的时间顺序。
+- **防止复发**：API 阶段使用从 API 请求开始计算的 monotonic offset，GroupGuard 阶段使用本机 `performance.now()` 的 elapsed duration；序列化时保留清晰的阶段名称，不伪造跨主机绝对时钟关系。
+
 ## 2026-08-28 — GroupGuard runtime 与 WebUI 不能各自实现配置优先级
 
 - **现象**：121 的查询管理页把 `lol_battle` 显示为 `image`，同时页面底部显示默认 `forward`；真实战绩查询却出现 `forward_send_direct`。只读审计确认 `queryCommandProfiles.lol_battle.outputFormat="image"`、`global.lolQueryOutputFormat="forward"`，且测试群没有显式战绩输出覆盖。
@@ -126,3 +144,8 @@
   3. WebUI 的“最终/生效”预览优先消费服务端 canonical resolver 返回的 value + source；浏览器若自行推导，必须与 runtime 共用同一优先级并有 parity regression。
   4. 回归至少覆盖：global default、feature/profile、显式 group override、完全继承/无 override 四层，并断言 runtime delivery 与 WebUI/API preview 一致。
   5. 发现 drift 时修共享契约和测试，不能只改页面标签或只改 runtime 分支。Issue #98 跟踪当前查询输出优先级缺陷。
+## 2026-08-31 — Do not infer image latency from a pre-queue plugin timestamp
+
+- **现象**：插件执行时长或一次图片 API 耗时被误认为包含完整 QQ 发送链路。
+- **根因**：旧 trace 没有标记入队、worker 获取和风控延迟，且 T8/T9 不在实际 OneBot action 边界。
+- **防止复发**：跨仓库 trace 必须使用 T5/T6/T7/T8/T9 拆出队列等待、配置的风险延迟和 OneBot 处理；直接转发路径单独标记，不能伪造队列耗时。没有新的生产 trace 前不得改变延迟策略。
