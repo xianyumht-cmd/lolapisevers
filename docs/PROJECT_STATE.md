@@ -41,7 +41,9 @@
 
 - 已在最新 `origin/master` 上创建后续观测分支，补充 API 查询、图片缓存/装饰资源/PNG 编码、交付准备阶段计时；GroupGuard 源码侧已补齐 T0-T9 队列/风控/OneBot trace，并保留原有交付合同。直接转发路径继续记录 T8/T9，不伪造队列时间戳。
 - 计时只记录阶段、耗时、图片字节数/编码字符数、缓存状态和尺寸，不记录账号、群号、Cookie、Token 或原始查询内容。
-- 当前仍是开发验证状态；未重启、未部署、未修改 121 或 100 的生产文件。新增测试已覆盖队列等待、零风控延迟、OneBot 失败状态、旧 API 无 timing metadata 和主交付字段兼容；下一步是完成完整验证、生产 bundle 内容核验、PR/CI 检查，再按授权进入云端。
+- 本地验证已完成：Python unittest `476` 项通过；GroupGuard typecheck、全量 npm test、`build:all`、独立 `build:snowluma`、不可变部署包预检均通过。GroupGuard 分支提交为 `a61f2bf87a22276e664a2ab83d65c7061454bfd8`，lolapisevers 文档分支提交为 `0849ccbe4d07e42831a05bf96d01c2c2d4ef853d`。
+- PR #101（lolapisevers）与 GroupGuard PR #56 已创建，均保持 open、未合并。对应 GitHub Actions 运行在作业启动前以 `startup_failure` 结束，页面提示疑似 workflow file issue；当前没有可下载的失败作业日志，也不能重跑，因此 CI 结论暂记为 blocked，而不是代码测试失败。
+- 未重启、未部署、未修改 121 或 100 的生产文件。下一步是先恢复/确认 CI 工作流可启动并取得 PR checks；之后仍需按每个 PR 单独批准，再决定是否进入生产部署。
 
 ## 当前开放问题：GroupGuard runtime / WebUI 配置语义漂移（Issue #98）
 
