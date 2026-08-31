@@ -1,5 +1,24 @@
 # Operations
 
+## Read-only production query-chain audit
+
+Use this checklist before changing image delivery or declaring an upstream
+latency problem fixed. The production working tree on 100 remains read-only;
+the 121 container data directory is also read-only during an audit.
+
+1. Verify the actual service/process/listener owners on 100. The expected query listener is `0.0.0.0:5001` under `LOLDataSystem`; 6178 is a separate control service.
+2. Verify the 121 containers and listeners. The expected bot side is `groupguard-snowluma` plus `snowluma`, with OneBot WS on 3001; 121 should not be expected to listen on 5001.
+3. Read only the safe build-info, health/readiness and query-observability surfaces. Do not export environment values, cookies, raw messages, request parameters or payload JSON.
+4. Confirm the active `lolApiBaseUrl`, query profiles, queue mode/concurrency, and the `external_query` risk-delay override. A missing scene override means the global 500–1500ms delay applies.
+5. For a controlled comparison, call the API from 121 with text and image preferences, repeat only after recording whether business and final-image caches are warm, and compare API time, PNG bytes, base64 characters, cache state and asset state.
+6. For end-to-end evidence, aggregate `bot_send_events` read-only by scene, media flag and status. Use `sent_at - queued_at` only for rows with a successful send timestamp; separately report configured random delay. Failed rows must not be treated as valid latency samples.
+
+The API timing trace is `query-delivery-timing.v1` under the response `meta`.
+The GroupGuard trace is `query-delivery-timing.v1` in its internal structured
+response metadata and log event. Neither trace contains credentials or raw
+query content. A production restart, configuration change, container rebuild or
+deployment is outside an audit and needs separate explicit authorization.
+
 ## GitHub Release production update
 
 ### First installation of the updater

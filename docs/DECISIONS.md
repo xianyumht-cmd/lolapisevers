@@ -1,5 +1,50 @@
 # Technical decisions
 
+## 2026-08-31 — Measure the complete query-to-OneBot path before changing transport
+
+**Decision**
+
+Treat API query/render, GroupGuard plan construction, and the send queue as
+separate latency boundaries. Keep the current base64 delivery contract while
+adding safe stage timing across those boundaries; do not switch to a public
+CDN, URL delivery, or local-file delivery based only on a multi-second
+aggregate metric.
+
+**Reasons**
+
+- Production is split between 121 (bot/OneBot) and 100 (LOL API), but the
+  measured network connection is about 1.4ms.
+- Warm battle images return from 100 in about 0.09–0.21s, while cold business
+  queries and post-API sends are multi-second in different samples.
+- The existing GroupGuard plugin metric is recorded before structured response
+  sending, so it cannot identify queue or OneBot time.
+- The current OneBot client accepts the tested base64 image representation and
+  changing it would expand compatibility and rollback risk without a measured
+  benefit.
+
+**Consequences**
+
+- API timing exposes only bounded stage metadata: elapsed milliseconds, cache/
+  asset state, dimensions, and byte counts.
+- GroupGuard records T0/T1/T2/T3/T4/T8/T9 without storing user content or
+  credentials.
+- Any future transport optimization must compare cold and warm cases, verify
+  OneBot support, and preserve text/image/forward fallback behavior.
+
+## 2026-08-31 — No production deployment during the latency audit
+
+**Decision**
+
+The audit and instrumentation are developed on task branches only. The
+production working tree, 121 containers, and 100 service are not restarted,
+rewritten, or deployed as part of this task.
+
+**Reason**
+
+The goal is to establish a trustworthy baseline first; an unverified runtime
+change would make before/after comparisons ambiguous and increase recovery
+risk.
+
 ## 2026-08-24 — Production updates use verified GitHub Releases
 
 **Decision**

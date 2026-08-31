@@ -1,5 +1,17 @@
 # PITFALLS
 
+## 2026-08-31 — GroupGuard plugin execution time is not end-to-end send time
+
+- **现象**：生产日志中的 `plugin_execution_result` 显示战绩/海符榜需要数秒，容易直接把时间归因于图片生成或 API 返回。
+- **根因**：该事件在结构化交付结果准备完之后、`sendUnifiedCommandResponse` 之前记录；随后还会经过 `external_query` 发送队列、随机风控延迟、OneBot action 和 QQ 侧处理。
+- **防止复发**：查询链路必须同时记录 API query/render/delivery-preparation 与 GroupGuard T0/T1/T2/T3/T4/T8/T9；端到端均值只使用带有效 `sent_at` 的发送事件，并单独报告随机延迟。
+
+## 2026-08-31 — 图片 text/image 对照必须标记业务和渲染 cache 状态
+
+- **现象**：一次战绩图片请求可能只有约 0.2s，另一次海符榜图片约 1.5s；若直接与某次文本请求比较，会得出“图片固定多几秒”的错误结论。
+- **根因**：业务结果缓存、最终图片缓存、装饰资源缓存和背景刷新状态彼此独立；图片首次返回还可能是 placeholder/warming，前后 payload 或资源完整性也可能不同。
+- **防止复发**：每次对照同时记录 source、业务 cache、final-image cache、asset completeness、PNG bytes、base64 chars 和阶段耗时；至少分别做 cold、warming、warm 三种样本，不能只比较两个总耗时。
+
 ## 2026-08-11 — OP.GG ARAM 平衡卡的实时 HTML 不能按单一展示形态解析
 
 - **现象**：海符榜基础 ARAM 层在真实环境中把亚索显示为“完整平衡暂不可用”，而 OP.GG 当前实际有攻速 `+2.5%`；库奇能拿到平衡值但版本显示“未校验”。

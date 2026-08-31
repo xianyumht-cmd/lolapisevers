@@ -1,6 +1,6 @@
 # Project state
 
-更新时间：2026-08-28 +08:00
+更新时间：2026-08-31 +08:00
 
 ## Canonical development
 
@@ -10,6 +10,38 @@
 - Issue #96 已关闭，PR #97 已合并；WinPS 5.1 原生命令 stderr 误杀候选测试的问题已进入上述 runtime 基线。
 - PR #95 的查询图片延迟 P0 也已包含在上述 runtime 基线中。
 - 生产目录 `D:\project2\lolapisevers` 在普通开发中保持只读；仓库改动、CI、Issue/PR 或本地诊断不等于已授权生产部署。
+
+## 2026-08-31 已核验：生产查询链路与图片时延边界
+
+本节记录的是 2026-08-31 对实际运行主机的只读核验，不是根据目录名或分支名推断的拓扑。
+
+- `192.168.3.121` 是生产机器人主机：`groupguard-snowluma` 使用 host network，GroupGuard 编译版本为 `23ed0084eb2214e591a0108b5b82d33fb10b00ba`；SnowLuma 的 OneBot HTTP/WS 端口分别为 3000/3001。
+- 121 上没有 5001/6178 监听。GroupGuard 的 `lolApiBaseUrl` 指向 `http://192.168.3.100:5001`，因此查询 API 生产端在 100，不在 121。
+- `192.168.3.100` 的 `LOLDataSystem` Windows 服务由 NSSM 托管 `ops\\run_service.ps1`，运行 `.venv\\Scripts\\python.exe app.py`；5001 是查询 API，6178 是控制/更新 API。当前 API 运行版本为 `62097ddd262543c0d90af2ef95f048e7cefa23c2`，合同为 `groupguard-lol-api.v2`。
+- 活跃查询路径是：GroupGuard 动态 intranet 插件 → `POST /api/v1/groupguard/query` → 100 上的查询/渲染 → JSON 交付包 → GroupGuard 把图片转为 `base64://...` → external_query 发送队列 → SnowLuma OneBot WS → QQ。API 不返回公共图片 URL，也不要求 GroupGuard 再下载图片。
+- 121 当前查询 profile 对战绩、海符榜均偏好 image；发送队列为分群模式、并发 2，`external_query` 未配置专属风控延迟，因而继承全局随机延迟 500–1500ms。
+- API 健康检查可用；LOL Ban provider 当前为 degraded（有历史缓存但最近成功数为 0），这是另一条链路，不作为战绩/海符榜图片时延根因。
+
+### 实测边界（121 直连 100，未触发 QQ 发送）
+
+| 请求 | API 总耗时 | 返回体/图片体积 | 观察 |
+| --- | ---: | ---: | --- |
+| 战绩 text | 5.14s | 1.7KB | 当次业务数据为 live，冷查询明显变慢 |
+| 战绩 image（首次对照） | 0.21s | JSON 506KB，PNG 379KB | 业务结果命中 cache，图片返回很快 |
+| 战绩 image（再次） | 0.09s | JSON 506KB，PNG 379KB | 最终图片 cache 命中 |
+| 海符榜 text | 1.97s | 2.3KB | OP.GG 业务数据返回 |
+| 海符榜 image（首次对照） | 1.51s | JSON 238KB，PNG 178KB | 受到业务/装饰资源/图片 cache 状态影响 |
+| 海符榜 image（再次） | 0.16s | JSON 239KB，PNG 179KB | warm 后显著下降，且前后图片 hash 不同，不能当作严格 cold/warm 同 payload 对照 |
+
+这些数字证明 121→100 的连接不是秒级瓶颈，也不能证明“图片编码固定多 6 秒”。生产 GroupGuard 的历史插件耗时均值为：战绩约 6.59s、海符榜约 8.67s、ARAM 约 4.62s；该指标在结构化交付包返回前记录，**不包含后续发送队列**。生产 `bot_send_events` 近 24 小时的已发送 `external_query` 图片消息 332 条，入队到 OneBot 返回平均约 2.78s，其中随机延迟平均约 1.03s，剩余约 1.75s 由队列等待与 OneBot 处理共同构成。失败消息没有有效 `sent_at`，不纳入该均值。
+
+当前最可靠的根因判断是：业务上游冷查询是插件耗时的主要来源；图片发送还叠加了 500–1500ms 随机延迟、并发为 2 的发送队列和 OneBot 处理时间。API 已有图片/装饰资源优化，但此前缺少跨 API、解码、入队、发送完成的同一条 trace，因此不能把 base64、PNG 编码、OneBot 上传或 QQ 网络中的任何一项单独定性为“6 秒根因”。
+
+### 本轮执行状态
+
+- 已在最新 `origin/master` 上创建后续观测分支，补充 API 查询、图片缓存/装饰资源/PNG 编码、交付准备阶段计时；GroupGuard 源码侧补充 T0/T1/T2/T3/T4/T8/T9 trace，并保留原有交付合同。
+- 计时只记录阶段、耗时、图片字节数/编码字符数、缓存状态和尺寸，不记录账号、群号、Cookie、Token 或原始查询内容。
+- 当前仍是开发验证状态；未重启、未部署、未修改 121 或 100 的生产文件。下一步是跑完整验证、审查两仓库 diff，再按 PR 流程进入云端。
 
 ## 当前开放问题：GroupGuard runtime / WebUI 配置语义漂移（Issue #98）
 

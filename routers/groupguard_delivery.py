@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Dict, Mapping
+import time
+from typing import Any, Dict, Mapping, Optional
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
@@ -111,6 +112,60 @@ def _image_response_ok(response: Response) -> bool:
     )
 
 
+def _header_float(headers: Any, name: str) -> float:
+    try:
+        return max(0.0, round(float(headers.get(name, 0.0) or 0.0), 1))
+    except (AttributeError, TypeError, ValueError):
+        return 0.0
+
+
+def _image_timing(response: Response) -> Dict[str, Any]:
+    headers = getattr(response, "headers", {})
+    body = bytes(getattr(response, "body", b"") or b"")
+    timing: Dict[str, Any] = {
+        "cache": str(headers.get("X-Image-Cache") or ""),
+        "assets": str(headers.get("X-Image-Assets") or ""),
+        "cache_lookup_ms": _header_float(headers, "X-Image-Cache-Lookup-Ms"),
+        "asset_ms": _header_float(headers, "X-Image-Asset-Ms"),
+        "encode_ms": _header_float(headers, "X-Image-Encode-Ms"),
+        "render_ms": _header_float(headers, "X-Image-Render-Ms"),
+        "asset_count": int(_header_float(headers, "X-Image-Asset-Count")),
+        "expected_asset_count": int(_header_float(headers, "X-Image-Expected-Asset-Count")),
+        "bytes": len(body),
+    }
+    for key, header in (("width", "X-Image-Width"), ("height", "X-Image-Height")):
+        try:
+            value = int(headers.get(header, 0) or 0)
+        except (AttributeError, TypeError, ValueError):
+            value = 0
+        if value > 0:
+            timing[key] = value
+    return timing
+
+
+def _delivery_timing(
+    *,
+    request_started: float,
+    data_ready: float,
+    render_started: float = 0.0,
+    render_finished: float = 0.0,
+    delivery_started: float = 0.0,
+    response: Optional[Response] = None,
+    image: bool = False,
+) -> Dict[str, Any]:
+    now = time.perf_counter()
+    timing: Dict[str, Any] = {
+        "schema_version": "query-delivery-timing.v1",
+        "query_ms": round(max(0.0, (data_ready - request_started) * 1000), 1),
+        "render_ms": round(max(0.0, (render_finished - render_started) * 1000), 1) if render_finished and render_started else 0.0,
+        "delivery_prepare_ms": round(max(0.0, (now - delivery_started) * 1000), 1) if delivery_started else 0.0,
+        "api_total_ms": round(max(0.0, (now - request_started) * 1000), 1),
+    }
+    if image and response is not None:
+        timing["image"] = _image_timing(response)
+    return timing
+
+
 def _filename(feature: str, payload: Mapping[str, Any]) -> str:
     hero = payload.get("hero") if isinstance(payload.get("hero"), Mapping) else {}
     identity = str(
@@ -204,6 +259,7 @@ def _identifier_parameters(parameters: Mapping[str, Any]) -> tuple[str, str]:
 
 @router.post("/api/v1/groupguard/query")
 async def groupguard_query(request: Request, body: Dict[str, Any]):
+    request_started = time.perf_counter()
     server_request_id = request_id()
     body = body if isinstance(body, dict) else {}
     try:
@@ -310,6 +366,7 @@ async def groupguard_query(request: Request, body: Dict[str, Any]):
                 payload = await query_aram_augments(ctx, hero=hero)
                 text = format_aram_text(payload)
 
+        data_ready = time.perf_counter()
         wants_image = (
             feature in _IMAGE_FEATURES
             and preferred in {"auto", "image"}
@@ -320,43 +377,71 @@ async def groupguard_query(request: Request, body: Dict[str, Any]):
             fallback_reason = "image_not_supported"
 
         if wants_image:
+            render_started = time.perf_counter()
             rendered = await _render_feature_image(
                 request,
                 feature,
                 payload,
                 text,
             )
+            render_finished = time.perf_counter()
             if _image_response_ok(rendered):
+                delivery_started = time.perf_counter()
                 delivery = image_delivery(
                     bytes(rendered.body),
                     mime_type=str(rendered.media_type or "image/png"),
                     filename=_filename(feature, payload),
                 )
+                meta = dict(_meta_for_feature(feature, payload))
+                timing = _delivery_timing(
+                    request_started=request_started,
+                    data_ready=data_ready,
+                    render_started=render_started,
+                    render_finished=render_finished,
+                    delivery_started=delivery_started,
+                    response=rendered,
+                    image=True,
+                )
+                segment = delivery.get("segments", [{}])[0]
+                if isinstance(segment, dict):
+                    image_timing = timing.get("image")
+                    if isinstance(image_timing, dict):
+                        image_timing["base64_chars"] = len(str(segment.get("data") or ""))
+                meta["timing"] = timing
                 return JSONResponse(
                     content=success_envelope(
                         feature=feature,
                         delivery=delivery,
-                        meta=_meta_for_feature(feature, payload),
+                        meta=meta,
                         client_request_id=client_request_id,
                         server_request_id=server_request_id,
                     )
                 )
             fallback_reason = "image_render_failed"
 
+        delivery_started = time.perf_counter()
         delivery = _delivery_for_text(
             text,
             capabilities,
             preferred if preferred != "image" else "auto",
         )
+        meta = dict(
+            _meta_for_feature(
+                feature,
+                payload,
+                delivery_fallback=fallback_reason,
+            )
+        )
+        meta["timing"] = _delivery_timing(
+            request_started=request_started,
+            data_ready=data_ready,
+            delivery_started=delivery_started,
+        )
         return JSONResponse(
             content=success_envelope(
                 feature=feature,
                 delivery=delivery,
-                meta=_meta_for_feature(
-                    feature,
-                    payload,
-                    delivery_fallback=fallback_reason,
-                ),
+                meta=meta,
                 client_request_id=client_request_id,
                 server_request_id=server_request_id,
             )

@@ -1,5 +1,6 @@
 import io
 import logging
+import time
 from typing import Any, Dict, Optional
 
 import requests
@@ -32,6 +33,7 @@ def download_hero_icon(ctx: AppContext, alias: str) -> Optional[bytes]:
 
 
 def build_shard_image_response(ctx: AppContext, payload: Dict[str, Any]) -> Response:
+    render_started = time.perf_counter()
     try:
         from PIL import Image, ImageDraw
 
@@ -68,7 +70,14 @@ def build_shard_image_response(ctx: AppContext, payload: Dict[str, Any]) -> Resp
         icon_size = 96
         icon_x = (width - icon_size) // 2
         icon_y = 46
+        asset_started = time.perf_counter()
+        shard_cache = getattr(ctx, "shard_cache", None) if ctx is not None else None
+        cache_get = getattr(shard_cache, "get", None)
+        icon_cache_hit = bool(
+            alias and callable(cache_get) and isinstance(cache_get(f"hero_icon:{alias}"), bytes)
+        )
         icon_bytes = download_hero_icon(ctx, alias) if alias else None
+        asset_ms = (time.perf_counter() - asset_started) * 1000
         if icon_bytes:
             try:
                 icon = Image.open(io.BytesIO(icon_bytes)).convert("RGB").resize((icon_size, icon_size))
@@ -114,9 +123,28 @@ def build_shard_image_response(ctx: AppContext, payload: Dict[str, Any]) -> Resp
         footer = f"本数据由 GroupGuardKing GGK 提供 | {payload.get('updated_at')}"
         footer_box = draw.textbbox((0, 0), footer, font=small_font)
         draw.text(((width - (footer_box[2] - footer_box[0])) // 2, height - 48), footer, fill=muted, font=small_font)
+        encode_started = time.perf_counter()
         buffer = io.BytesIO()
         image.save(buffer, format="PNG", optimize=True)
-        return Response(content=buffer.getvalue(), media_type="image/png")
+        encoded = buffer.getvalue()
+        encode_ms = (time.perf_counter() - encode_started) * 1000
+        return Response(
+            content=encoded,
+            media_type="image/png",
+            headers={
+                "X-Image-Bytes": str(len(encoded)),
+                "X-Image-Cache": "asset-hit" if icon_cache_hit else "asset-miss",
+                "X-Image-Assets": "complete" if (not alias or icon_bytes) else "warming",
+                "X-Image-Asset-Ms": f"{asset_ms:.1f}",
+                "X-Image-Asset-Count": "1" if icon_bytes else "0",
+                "X-Image-Expected-Asset-Count": "1" if alias else "0",
+                "X-Image-Encode-Ms": f"{encode_ms:.1f}",
+                "X-Image-Render-Ms": f"{(time.perf_counter() - render_started) * 1000:.1f}",
+                "X-Image-Width": str(width),
+                "X-Image-Height": str(height),
+                "Cache-Control": "no-store",
+            },
+        )
     except Exception as exc:
         logger.exception("shard_query image generation failed: %s", exc)
         return JSONResponse(status_code=500, content={"error": f"合集图片生成失败: {exc}"})

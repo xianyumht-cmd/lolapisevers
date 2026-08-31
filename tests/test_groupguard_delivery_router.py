@@ -78,6 +78,10 @@ class GroupGuardDeliveryRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(segment["type"], "image")
         self.assertEqual(base64.b64decode(segment["data"]), image)
         self.assertEqual(body["meta"]["hero"]["alias"], "Kalista")
+        self.assertEqual(body["meta"]["timing"]["schema_version"], "query-delivery-timing.v1")
+        self.assertGreaterEqual(body["meta"]["timing"]["query_ms"], 0)
+        self.assertEqual(body["meta"]["timing"]["image"]["bytes"], len(image))
+        self.assertEqual(body["meta"]["timing"]["image"]["base64_chars"], len(segment["data"]))
         self.assertNotIn("rows", body)
 
     async def test_aram_image_failure_falls_back_to_service_text(self):

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import logging
+import time
 from typing import Any, Dict, List, Tuple
 
 from fastapi.responses import JSONResponse, Response
@@ -140,6 +141,7 @@ def _collect_asset_urls(
 
 
 def build_aram_augment_image_response(ctx: Any, payload: Dict[str, Any]) -> Response:
+    render_started = time.perf_counter()
     try:
         from PIL import Image, ImageDraw, ImageOps
 
@@ -221,14 +223,19 @@ def build_aram_augment_image_response(ctx: Any, payload: Dict[str, Any]) -> Resp
 
         hero_icon = f"https://game.gtimg.cn/images/lol/act/img/champion/{alias}.png" if alias else ""
         asset_cache = getattr(ctx, "image_asset_cache", getattr(ctx, "aram_augment_cache", None))
+        asset_urls = _collect_asset_urls(alias, rows, build_data)
+        asset_started = time.perf_counter()
         assets = prefetch_image_urls(
             asset_cache,
-            _collect_asset_urls(alias, rows, build_data),
+            asset_urls,
             timeout=1.0,
             max_workers=12,
             max_assets=42,
             overall_timeout=ARAM_IMAGE_ASSET_BUDGET_SECONDS,
         )
+        asset_ms = (time.perf_counter() - asset_started) * 1000
+        expected_asset_urls = {url for url in asset_urls if url}
+        assets_complete = all(url in assets for url in expected_asset_urls)
 
         def paste_icon(
             url: str,
@@ -462,16 +469,29 @@ def build_aram_augment_image_response(ctx: Any, payload: Dict[str, Any]) -> Resp
         draw.text((outer, footer_y + 19), image_footer_left(), fill=muted, font=tiny_font, anchor="lm")
         draw.text((width - outer, footer_y + 19), image_footer_right(), fill=muted, font=tiny_font, anchor="rm")
 
+        encode_started = time.perf_counter()
         encoded = encode_png_limited(
             image,
             max_bytes=ARAM_IMAGE_MAX_BYTES,
             max_width=ARAM_IMAGE_WIDTH,
             max_height=ARAM_IMAGE_MAX_HEIGHT,
         )
+        encode_ms = (time.perf_counter() - encode_started) * 1000
         return Response(
             content=encoded,
             media_type="image/png",
-            headers={"X-Image-Bytes": str(len(encoded)), "Cache-Control": "no-store"},
+            headers={
+                "X-Image-Bytes": str(len(encoded)),
+                "X-Image-Assets": "complete" if assets_complete else "warming",
+                "X-Image-Asset-Ms": f"{asset_ms:.1f}",
+                "X-Image-Asset-Count": str(len(assets)),
+                "X-Image-Expected-Asset-Count": str(len(expected_asset_urls)),
+                "X-Image-Encode-Ms": f"{encode_ms:.1f}",
+                "X-Image-Render-Ms": f"{(time.perf_counter() - render_started) * 1000:.1f}",
+                "X-Image-Width": str(ARAM_IMAGE_WIDTH),
+                "X-Image-Height": str(height),
+                "Cache-Control": "no-store",
+            },
         )
     except Exception as exc:
         logger.exception("rich ARAM augment image generation failed: %s", exc)

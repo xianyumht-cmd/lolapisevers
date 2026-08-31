@@ -2,6 +2,7 @@ import hashlib
 import io
 import json
 import logging
+import time
 from typing import Any, Dict, List, Optional
 
 from fastapi.responses import Response
@@ -72,8 +73,11 @@ def _item_icon_url(item_id: Any) -> str:
 
 
 def build_cross_image_response(ctx: AppContext, payload: Dict[str, Any]) -> Response:
+    render_started = time.perf_counter()
+    cache_lookup_started = render_started
     cache_key = _battle_image_cache_key(payload)
     cached = _BATTLE_IMAGE_CACHE.get(cache_key)
+    cache_lookup_ms = (time.perf_counter() - cache_lookup_started) * 1000
     if isinstance(cached, bytes) and cached:
         return Response(
             content=cached,
@@ -82,6 +86,11 @@ def build_cross_image_response(ctx: AppContext, payload: Dict[str, Any]) -> Resp
                 "X-Image-Bytes": str(len(cached)),
                 "X-Image-Cache": "hit",
                 "X-Image-Assets": "complete",
+                "X-Image-Cache-Lookup-Ms": f"{cache_lookup_ms:.1f}",
+                "X-Image-Asset-Ms": "0.0",
+                "X-Image-Encode-Ms": "0.0",
+                "X-Image-Render-Ms": f"{(time.perf_counter() - render_started) * 1000:.1f}",
+                "X-Image-Width": "980",
                 "Cache-Control": "no-store",
             },
         )
@@ -155,7 +164,9 @@ def build_cross_image_response(ctx: AppContext, payload: Dict[str, Any]) -> Resp
                 if item_url:
                     asset_urls.append(item_url)
         asset_cache = getattr(ctx, "image_asset_cache", getattr(ctx, "aram_augment_cache", None))
+        asset_started = time.perf_counter()
         assets = prefetch_image_urls(asset_cache, asset_urls, timeout=3.5, max_workers=8, max_assets=72)
+        asset_ms = (time.perf_counter() - asset_started) * 1000
         expected_asset_urls = {url for url in asset_urls if url}
         assets_complete = all(url in assets for url in expected_asset_urls)
 
@@ -327,7 +338,9 @@ def build_cross_image_response(ctx: AppContext, payload: Dict[str, Any]) -> Resp
             anchor="ra",
         )
 
+        encode_started = time.perf_counter()
         encoded = encode_png_limited(image)
+        encode_ms = (time.perf_counter() - encode_started) * 1000
         if assets_complete:
             _BATTLE_IMAGE_CACHE.set(cache_key, encoded)
         return Response(
@@ -337,6 +350,14 @@ def build_cross_image_response(ctx: AppContext, payload: Dict[str, Any]) -> Resp
                 "X-Image-Bytes": str(len(encoded)),
                 "X-Image-Cache": "miss" if assets_complete else "warming",
                 "X-Image-Assets": "complete" if assets_complete else "warming",
+                "X-Image-Cache-Lookup-Ms": f"{cache_lookup_ms:.1f}",
+                "X-Image-Asset-Ms": f"{asset_ms:.1f}",
+                "X-Image-Asset-Count": str(len(assets)),
+                "X-Image-Expected-Asset-Count": str(len(expected_asset_urls)),
+                "X-Image-Encode-Ms": f"{encode_ms:.1f}",
+                "X-Image-Render-Ms": f"{(time.perf_counter() - render_started) * 1000:.1f}",
+                "X-Image-Width": str(width),
+                "X-Image-Height": str(height),
                 "Cache-Control": "no-store",
             },
         )
