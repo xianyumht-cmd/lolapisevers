@@ -24,13 +24,13 @@ def _calendar_rows(status: dict[str, object]) -> str:
     for patch_date, patch in PATCH_SCHEDULE_2026:
         iso_date = patch_date.isoformat()
         if patch_date == requested and bool(status.get("is_update_today")):
-            state = '<span class="status-pill status-pill-success">今天更新</span>'
+            state = '<span class="badge badge-success">今天更新</span>'
         elif iso_date == next_update:
-            state = '<span class="status-pill status-pill-warning">下一次</span>'
+            state = '<span class="badge badge-warning">下一次</span>'
         elif patch_date < requested:
-            state = '<span class="status-pill status-pill-neutral">已发布</span>'
+            state = '<span class="badge badge-neutral">已发布</span>'
         else:
-            state = '<span class="status-pill status-pill-neutral">计划</span>'
+            state = '<span class="badge badge-neutral">计划</span>'
         rows.append(
             "<tr>"
             f"<td><strong>{escape(patch)}</strong></td>"
@@ -68,7 +68,7 @@ def render_lol_patch_page() -> str:
     status = get_patch_status()
     is_update_day = bool(status.get("is_update_today"))
     update_label = "今天是更新日" if is_update_day else "今天不是更新日"
-    update_class = "status-pill-success" if is_update_day else "status-pill-neutral"
+    update_class = "badge-success" if is_update_day else "badge-neutral"
     next_summary = (
         f'{_text(status.get("next_patch"))} · {_text(status.get("next_update_date"))}'
         if status.get("next_patch")
@@ -90,7 +90,7 @@ def render_lol_patch_page() -> str:
 </header>
 <section class="metric-grid">
   <article class="metric-card"><div class="metric-icon">{icon("history")}</div><div><span>当前版本</span><strong>{_text(status.get("patch"))}</strong><small>按当前日期对应的计划版本</small></div></article>
-  <article class="metric-card"><div class="metric-icon">{icon("activity")}</div><div><span>今日状态</span><strong><span class="status-pill {update_class}">{update_label}</span></strong><small>{_text(status.get("date"))}</small></div></article>
+  <article class="metric-card"><div class="metric-icon">{icon("activity")}</div><div><span>今日状态</span><strong><span class="badge {update_class}">{update_label}</span></strong><small>{_text(status.get("date"))}</small></div></article>
   <article class="metric-card"><div class="metric-icon">{icon("arrow-up-right")}</div><div><span>下一版本</span><strong>{next_summary}</strong><small>Riot 2026 官方计划快照</small></div></article>
   <article class="metric-card"><div class="metric-icon">{icon("server")}</div><div><span>计划时区</span><strong>{_text(status.get("schedule_timezone"))}</strong><small>检查于 {_text(status.get("checked_at"))}</small></div></article>
 </section>
@@ -108,7 +108,7 @@ def render_lol_patch_page() -> str:
   </article>
   <article class="panel">
     <header class="panel-header"><div><h2>通知说明</h2><p>页面只负责观察版本计划</p></div></header>
-    <div class="panel-body"><div class="alert alert-info">真正的更新日 @全体 调度、授权群过滤、重试和去重仍由 GroupGuard 负责；这里不会主动发群消息。</div></div>
+    <div class="panel-body"><div class="alert">真正的更新日 @全体 调度、授权群过滤、重试和去重仍由 GroupGuard 负责；这里不会主动发群消息。</div></div>
   </article>
 </section>
 <section class="panel">
