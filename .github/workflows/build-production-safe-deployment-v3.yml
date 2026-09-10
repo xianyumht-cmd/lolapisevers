@@ -252,18 +252,28 @@ jobs:
             }
           }
 
-          foreach ($unsafeMarker in @(
-            '& (Resolve-GitExecutable) -C $ProjectRoot bundle verify',
-            '& (Resolve-GitExecutable) clone --no-checkout',
+          if ($deployText.Contains('& (Resolve-GitExecutable) -C $ProjectRoot bundle verify')) {
+            throw "V3 deployment still contains unsafe native bundle verify."
+          }
+          if ($deployText.Contains('& (Resolve-GitExecutable) clone --no-checkout')) {
+            throw "V3 deployment still contains unsafe native clone."
+          }
+          foreach ($unsafeNative in @(
             '& $BootstrapPython -m venv',
             '& $candidatePython',
             '& $node.Source --check',
-            '$bootstrapVersion = (& $bootstrapPython -c',
+            '$bootstrapVersion = (& $bootstrapPython -c'
+          )) {
+            if ($deployText.Contains($unsafeNative)) {
+              throw "V3 deployment still contains unsafe direct native invocation: $unsafeNative"
+            }
+          }
+          foreach ($unsafeAclProbe in @(
             'if (Test-Path -LiteralPath $productionPython -PathType Leaf)',
             'if (Test-Path -LiteralPath $oldVenv -PathType Container)'
           )) {
-            if ($deployText.Contains($unsafeMarker)) {
-              throw "V3 deployment still contains unsafe marker: $unsafeMarker"
+            if ($deployText.Contains($unsafeAclProbe)) {
+              throw "V3 deployment still contains unsafe runtime ACL probe: $unsafeAclProbe"
             }
           }
 
