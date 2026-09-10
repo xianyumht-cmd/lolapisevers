@@ -1,0 +1,155 @@
+name: Issue 103 runtime-aware V3 deployment candidate
+
+on:
+  push:
+    branches:
+      - fix/runtime-aware-local-deploy-20260910
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-runtime-aware-candidate:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      TARGET_COMMIT: 6e759fb4f134674a73ca6732ed51ad73bd0e682a
+
+    steps:
+      - name: Checkout Issue 103 task branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Verify immutable runtime target and run tests
+        shell: pwsh
+        run: |
+          git cat-file -e "$env:TARGET_COMMIT^{commit}"
+          if ($LASTEXITCODE -ne 0) { throw "Target runtime commit is unavailable." }
+          git worktree add --detach candidate-issue103 $env:TARGET_COMMIT
+          if ($LASTEXITCODE -ne 0) { throw "Unable to create immutable runtime worktree." }
+          python -m pip install --upgrade pip
+          python -m pip install -r candidate-issue103/requirements.txt
+          Push-Location candidate-issue103
+          try {
+            python -m compileall -q .
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            python -m unittest discover -s tests -p "test_*.py" -v
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            python tests/check_ui_assets.py
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            node --check ui_control.generated.js
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally {
+            Pop-Location
+          }
+
+      - name: Parse Issue 103 patch helper with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $file = Join-Path $pwd "ops\Patch-V3-RuntimeBootstrapAcl.ps1"
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors -and $errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "$file: $($_.Message)" }
+              exit 1
+          }
+          Write-Host "Issue 103 patch helper parses on Windows PowerShell 5.1."
+
+      - name: Build existing verified V3 package for accepted runtime commit
+        shell: powershell
+        run: |
+          .\ops\Build-FullBugRepairPackageV3.ps1 `
+              -RepositoryRoot "$pwd" `
+              -TargetCommit "$env:TARGET_COMMIT" `
+              -OutputRoot "$pwd\dist-issue103"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Apply existing WinPS5.1 native-process patch
+        shell: powershell
+        run: |
+          .\ops\Patch-V3-WinPS51ReleaseArtifact.ps1 -DistRoot "$pwd\dist-issue103"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Apply runtime bootstrap ACL patch
+        shell: powershell
+        run: |
+          .\ops\Patch-V3-RuntimeBootstrapAcl.ps1 -DistRoot "$pwd\dist-issue103"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify runtime-aware artifact, hashes and WinPS5.1 syntax
+        shell: powershell
+        run: |
+          $metadataFile = Get-ChildItem dist-issue103 -Filter *.metadata.json -File | Select-Object -First 1
+          $zipFile = Get-ChildItem dist-issue103 -Filter *.zip -File | Select-Object -First 1
+          if (-not $metadataFile -or -not $zipFile) { throw "Candidate artifact files are missing." }
+
+          $metadata = Get-Content $metadataFile.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+          if ("$($metadata.target_commit)" -ne $env:TARGET_COMMIT) { throw "Target commit mismatch." }
+          if (-not [bool]$metadata.runtime_bootstrap_acl_safe) { throw "runtime_bootstrap_acl_safe metadata flag is missing." }
+          if (-not [bool]$metadata.runtime_listener_bootstrap_discovery) { throw "runtime_listener_bootstrap_discovery metadata flag is missing." }
+          if ((Get-FileHash $zipFile.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -ne "$($metadata.zip_sha256)".ToLowerInvariant()) {
+              throw "Candidate ZIP SHA-256 mismatch."
+          }
+
+          $extract = Join-Path $env:RUNNER_TEMP "issue103-final-artifact"
+          if (Test-Path -LiteralPath $extract) { Remove-Item -LiteralPath $extract -Recurse -Force }
+          Expand-Archive -LiteralPath $zipFile.FullName -DestinationPath $extract -Force
+          $manifestFile = Get-ChildItem $extract -Filter manifest.json -File -Recurse | Select-Object -First 1
+          if (-not $manifestFile) { throw "Embedded manifest is missing." }
+          $manifest = Get-Content $manifestFile.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+          if (-not [bool]$manifest.deployment.runtime_bootstrap_acl_safe) { throw "Manifest ACL safety flag is missing." }
+          if (-not [bool]$manifest.deployment.runtime_listener_bootstrap_discovery) { throw "Manifest listener discovery flag is missing." }
+
+          foreach ($entry in @($manifest.files)) {
+              $path = Join-Path $manifestFile.Directory.FullName ("$($entry.path)".Replace("/", "\"))
+              if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Package file missing: $($entry.path)" }
+              if ((Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant() -ne "$($entry.sha256)".ToLowerInvariant()) {
+                  throw "Package hash mismatch: $($entry.path)"
+              }
+              if ([int64](Get-Item $path).Length -ne [int64]$entry.bytes) { throw "Package size mismatch: $($entry.path)" }
+          }
+
+          $deployFile = Join-Path $manifestFile.Directory.FullName "Deploy-FullBugRepairSafe.ps1"
+          $deployText = Get-Content $deployFile -Raw -Encoding UTF8
+          foreach ($marker in @(
+              'Get-NetTCPConnection -State Listen -LocalPort $listenerPort',
+              'Get-CimInstance Win32_Process',
+              'Production venv bootstrap is not readable; continuing with system Python discovery',
+              'Resolve-BootstrapPython -Root $ProjectRoot -BaseUrl $BaseUrl',
+              'Production was not stopped or changed',
+              'Automatic rollback is starting'
+          )) {
+              if (-not $deployText.Contains($marker)) { throw "Runtime-aware deployment marker is missing: $marker" }
+          }
+          if ($deployText.Contains('if (Test-Path -LiteralPath $productionPython -PathType Leaf)')) {
+              throw "Unsafe production venv Test-Path probe remains."
+          }
+
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile($deployFile, [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors -and $errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error "$deployFile: $($_.Message)" }
+              exit 1
+          }
+          Write-Host "Runtime-aware candidate artifact passed hash, manifest and WinPS5.1 parser verification."
+
+      - name: Upload Issue 103 runtime-aware deployment candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: LOLDataSystem-issue103-runtime-aware-v3
+          path: |
+            dist-issue103/*.zip
+            dist-issue103/*.metadata.json
+          if-no-files-found: error
+          retention-days: 7
