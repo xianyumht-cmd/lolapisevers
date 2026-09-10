@@ -13,16 +13,6 @@ from lanzou_update_push_api_server.control_ui.lol_patch import render_lol_patch_
 from lanzou_update_push_api_server.server import create_app
 
 
-ROOT = Path(__file__).resolve().parents[1]
-RELEASE_UPDATE_JS = (
-    ROOT
-    / "lanzou_update_push_api_server"
-    / "control_ui"
-    / "assets"
-    / "release-update.js"
-)
-
-
 class LolPatchWebUiTests(unittest.TestCase):
     def make_config(self, temp_dir: str) -> AppConfig:
         return AppConfig(
@@ -31,7 +21,7 @@ class LolPatchWebUiTests(unittest.TestCase):
             watchers=[WatcherConfig(id="demo", title="Demo", url="https://example.test")],
         )
 
-    def test_renderer_uses_patch_service_calendar_and_existing_update_controls(self) -> None:
+    def test_renderer_is_patch_status_only_and_links_to_system_update_page(self) -> None:
         status = {
             "date": "2026-09-10",
             "patch": "26.18",
@@ -62,7 +52,10 @@ class LolPatchWebUiTests(unittest.TestCase):
         self.assertIn("今天更新", page)
         self.assertIn("下一次", page)
         self.assertIn('/control-assets/operations.js', page)
-        self.assertIn('/control-assets/release-update.js', page)
+        self.assertIn('href="/system"', page)
+        self.assertIn("程序升级统一在“安全与回滚”页面管理", page)
+        self.assertNotIn('/control-assets/release-update.js', page)
+        self.assertNotIn("GitHub Release 一键升级", page)
         for element_id in (
             "releaseUpdateCheckButton",
             "releaseUpdateStartButton",
@@ -76,21 +69,7 @@ class LolPatchWebUiTests(unittest.TestCase):
             "releaseUpdateConfirmDialog",
             "releaseUpdateConfirmForm",
         ):
-            self.assertIn(f'id="{element_id}"', page)
-
-    def test_shared_release_updater_supports_system_and_lol_patch_pages(self) -> None:
-        text = RELEASE_UPDATE_JS.read_text(encoding="utf-8")
-        self.assertIn("['system', 'lol-patch'].includes(page)", text)
-        for endpoint in (
-            "/admin/update/status",
-            "/admin/update/token",
-            "/admin/update/start",
-        ):
-            self.assertIn(endpoint, text)
-        self.assertIn("`/admin/update/${action}`", text)
-        for action in ("pause", "resume", "reconnect", "reset"):
-            self.assertIn(f"controlUpdate('{action}'", text)
-        self.assertNotIn("document.body.dataset.consoleUi !== 'system'", text)
+            self.assertNotIn(f'id="{element_id}"', page)
 
     def test_lol_patch_route_and_shell_are_public_with_admin_token_enabled(self) -> None:
         with TemporaryDirectory() as temp_dir, patch.dict(
@@ -108,6 +87,9 @@ class LolPatchWebUiTests(unittest.TestCase):
         self.assertIn('data-console-ui="lol-patch"', page.text)
         self.assertIn("LOL 更新日", page.text)
         self.assertIn('href="/lol-patch" class="nav-link is-active"', page.text)
+        self.assertIn('href="/system"', page.text)
+        self.assertNotIn('/control-assets/release-update.js', page.text)
+        self.assertNotIn('id="releaseUpdateStartButton"', page.text)
         self.assertEqual(legacy_tab.status_code, 307)
         self.assertEqual(legacy_tab.headers.get("location"), "/lol-patch")
         self.assertEqual(protected.status_code, 401)
