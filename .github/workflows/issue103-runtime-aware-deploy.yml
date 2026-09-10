@@ -60,7 +60,7 @@ jobs:
           $errors = $null
           [System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$errors) | Out-Null
           if ($errors -and $errors.Count -gt 0) {
-              $errors | ForEach-Object { Write-Error "$file: $($_.Message)" }
+              $errors | ForEach-Object { Write-Error "${file}: $($_.Message)" }
               exit 1
           }
           Write-Host "Issue 103 patch helper parses on Windows PowerShell 5.1."
@@ -139,7 +139,7 @@ jobs:
           $errors = $null
           [System.Management.Automation.Language.Parser]::ParseFile($deployFile, [ref]$tokens, [ref]$errors) | Out-Null
           if ($errors -and $errors.Count -gt 0) {
-              $errors | ForEach-Object { Write-Error "$deployFile: $($_.Message)" }
+              $errors | ForEach-Object { Write-Error "${deployFile}: $($_.Message)" }
               exit 1
           }
           Write-Host "Runtime-aware candidate artifact passed hash, manifest and WinPS5.1 parser verification."
