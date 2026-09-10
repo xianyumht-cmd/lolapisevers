@@ -52,18 +52,20 @@ jobs:
             Pop-Location
           }
 
-      - name: Parse Issue 103 patch helper with Windows PowerShell 5.1
+      - name: Parse Issue 103 patch helpers with Windows PowerShell 5.1
         shell: powershell
         run: |
-          $file = Join-Path $pwd "ops\Patch-V3-RuntimeBootstrapAcl.ps1"
-          $tokens = $null
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$errors) | Out-Null
-          if ($errors -and $errors.Count -gt 0) {
-              $errors | ForEach-Object { Write-Error "${file}: $($_.Message)" }
-              exit 1
+          foreach ($name in @("Patch-V3-RuntimeBootstrapAcl.ps1", "Patch-V3-ProductionVenvAcl.ps1")) {
+            $file = Join-Path $pwd ("ops\" + $name)
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors -and $errors.Count -gt 0) {
+                $errors | ForEach-Object { Write-Error "${file}: $($_.Message)" }
+                exit 1
+            }
           }
-          Write-Host "Issue 103 patch helper parses on Windows PowerShell 5.1."
+          Write-Host "Issue 103 patch helpers parse on Windows PowerShell 5.1."
 
       - name: Build existing verified V3 package for accepted runtime commit
         shell: powershell
@@ -86,7 +88,13 @@ jobs:
           .\ops\Patch-V3-RuntimeBootstrapAcl.ps1 -DistRoot "$pwd\dist-issue103"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Verify runtime-aware artifact, hashes and WinPS5.1 syntax
+      - name: Apply production venv ACL lifecycle patch
+        shell: powershell
+        run: |
+          .\ops\Patch-V3-ProductionVenvAcl.ps1 -DistRoot "$pwd\dist-issue103"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify runtime-aware artifact hashes ACL lifecycle and WinPS5.1 syntax
         shell: powershell
         run: |
           $metadataFile = Get-ChildItem dist-issue103 -Filter *.metadata.json -File | Select-Object -First 1
@@ -95,8 +103,15 @@ jobs:
 
           $metadata = Get-Content $metadataFile.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
           if ("$($metadata.target_commit)" -ne $env:TARGET_COMMIT) { throw "Target commit mismatch." }
-          if (-not [bool]$metadata.runtime_bootstrap_acl_safe) { throw "runtime_bootstrap_acl_safe metadata flag is missing." }
-          if (-not [bool]$metadata.runtime_listener_bootstrap_discovery) { throw "runtime_listener_bootstrap_discovery metadata flag is missing." }
+          foreach ($flag in @(
+            "runtime_bootstrap_acl_safe",
+            "runtime_listener_bootstrap_discovery",
+            "production_venv_acl_recovery",
+            "installed_venv_acl_normalized",
+            "venv_acl_well_known_sids"
+          )) {
+            if (-not [bool]$metadata.$flag) { throw "Metadata flag is missing: $flag" }
+          }
           if ((Get-FileHash $zipFile.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -ne "$($metadata.zip_sha256)".ToLowerInvariant()) {
               throw "Candidate ZIP SHA-256 mismatch."
           }
@@ -107,8 +122,15 @@ jobs:
           $manifestFile = Get-ChildItem $extract -Filter manifest.json -File -Recurse | Select-Object -First 1
           if (-not $manifestFile) { throw "Embedded manifest is missing." }
           $manifest = Get-Content $manifestFile.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
-          if (-not [bool]$manifest.deployment.runtime_bootstrap_acl_safe) { throw "Manifest ACL safety flag is missing." }
-          if (-not [bool]$manifest.deployment.runtime_listener_bootstrap_discovery) { throw "Manifest listener discovery flag is missing." }
+          foreach ($flag in @(
+            "runtime_bootstrap_acl_safe",
+            "runtime_listener_bootstrap_discovery",
+            "production_venv_acl_recovery",
+            "installed_venv_acl_normalized",
+            "venv_acl_well_known_sids"
+          )) {
+            if (-not [bool]$manifest.deployment.$flag) { throw "Manifest flag is missing: $flag" }
+          }
 
           foreach ($entry in @($manifest.files)) {
               $path = Join-Path $manifestFile.Directory.FullName ("$($entry.path)".Replace("/", "\"))
@@ -126,13 +148,21 @@ jobs:
               'Get-CimInstance Win32_Process',
               'Production venv bootstrap is not readable; continuing with system Python discovery',
               'Resolve-BootstrapPython -Root $ProjectRoot -BaseUrl $BaseUrl',
+              'function Ensure-ManagedVenvAcl {',
+              '"*S-1-5-32-544:(OI)(CI)F"',
+              '"*S-1-5-18:(OI)(CI)F"',
+              'Ensure-ManagedVenvAcl -Path $oldVenv -Label "existing production venv"',
+              'Ensure-ManagedVenvAcl -Path $installedVenv -Label "installed production venv"',
               'Production was not stopped or changed',
               'Automatic rollback is starting'
           )) {
               if (-not $deployText.Contains($marker)) { throw "Runtime-aware deployment marker is missing: $marker" }
           }
-          if ($deployText.Contains('if (Test-Path -LiteralPath $productionPython -PathType Leaf)')) {
-              throw "Unsafe production venv Test-Path probe remains."
+          foreach ($unsafe in @(
+              'if (Test-Path -LiteralPath $productionPython -PathType Leaf)',
+              'if (Test-Path -LiteralPath $oldVenv -PathType Container)'
+          )) {
+              if ($deployText.Contains($unsafe)) { throw "Unsafe production venv probe remains: $unsafe" }
           }
 
           $tokens = $null
@@ -142,7 +172,7 @@ jobs:
               $errors | ForEach-Object { Write-Error "${deployFile}: $($_.Message)" }
               exit 1
           }
-          Write-Host "Runtime-aware candidate artifact passed hash, manifest and WinPS5.1 parser verification."
+          Write-Host "Runtime-aware candidate passed hashes, ACL lifecycle checks and WinPS5.1 parser verification."
 
       - name: Upload Issue 103 runtime-aware deployment candidate
         uses: actions/upload-artifact@v4
