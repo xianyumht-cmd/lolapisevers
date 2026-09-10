@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from datetime import date as Date
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
-from zoneinfo import ZoneInfo
 
 
 SCHEDULE_TIMEZONE = "Asia/Shanghai"
+SHANGHAI_TZ = timezone(timedelta(hours=8), name=SCHEDULE_TIMEZONE)
 RIOT_PATCH_SCHEDULE_URL = (
     "https://support-leagueoflegends.riotgames.com/hc/en-us/articles/"
     "360018987893-Patch-Schedule-League-of-Legends"
@@ -58,12 +58,13 @@ def _parse_requested_date(value: str) -> Date:
 
 
 def _shanghai_now(now: datetime | None = None) -> datetime:
-    timezone = ZoneInfo(SCHEDULE_TIMEZONE)
+    # Mainland China uses UTC+08 year-round. A fixed offset keeps this endpoint
+    # deterministic on Windows hosts that do not ship the IANA tzdata database.
     if now is None:
-        return datetime.now(timezone)
+        return datetime.now(SHANGHAI_TZ)
     if now.tzinfo is None:
-        return now.replace(tzinfo=timezone)
-    return now.astimezone(timezone)
+        return now.replace(tzinfo=SHANGHAI_TZ)
+    return now.astimezone(SHANGHAI_TZ)
 
 
 def get_patch_status(
