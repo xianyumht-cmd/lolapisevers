@@ -12,6 +12,7 @@ _NAVIGATION_GROUPS = (
     (
         "查询服务",
         (
+            ("lol-patch", "/lol-patch", "LOL 更新日", "history"),
             ("lolban", "/query-console/lolban", "封号查询", "shield"),
             ("parser-center", "/parser-center", "接口与解析中心", "workflow"),
             ("parser-secrets", "/parser-center/secrets", "Secret 与备份", "key"),

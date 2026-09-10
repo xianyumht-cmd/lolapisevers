@@ -18,6 +18,7 @@ from .control_ui import (
     render_diagnostics_page,
     render_lanzou_config_page,
     render_logs_page,
+    render_lol_patch_page,
     render_main_config_page,
     render_overview_page,
     render_system_page,
@@ -70,6 +71,7 @@ _MIGRATED_TAB_REDIRECTS = {
     "logs": "/logs",
     "diagnostics": "/diagnostics",
     "system": "/system",
+    "lolpatch": "/lol-patch",
 }
 _CONTROL_PAGE_ACTIVE = {
     "/parser-center": "parser-center",
@@ -183,6 +185,10 @@ def install_control_extensions(app: FastAPI, service) -> None:
     @app.get("/system", response_class=HTMLResponse, include_in_schema=False)
     async def system_page() -> str:
         return render_system_page()
+
+    @app.get("/lol-patch", response_class=HTMLResponse, include_in_schema=False)
+    async def lol_patch_page() -> str:
+        return render_lol_patch_page()
 
     parser_center_admin.render_parser_center_page = render_guarded_parser_center_page
     parser_center_admin.install_parser_center_routes(app)
