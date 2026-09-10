@@ -1,6 +1,15 @@
 # Project state
 
-更新时间：2026-08-28 +08:00
+更新时间：2026-09-10 +08:00
+
+## LOL patch-day status contract — 2026-09-10
+
+- `GET /lol/patch-status?date=YYYY-MM-DD` is the narrow read-only contract for GroupGuard patch-day notification reconciliation.
+- `services/lol_patch_schedule_service.py` owns the verified Riot 2026 patch schedule snapshot and returns deterministic `event_id=lol-patch-<patch>-<date>` only on an exact scheduled patch date.
+- Calendar evaluation uses China Standard Time semantics and reports `schedule_timezone="Asia/Shanghai"`. Runtime conversion uses fixed UTC+08 rather than depending on host IANA tzdata, keeping Windows and Linux behavior identical for 2026 China time.
+- The endpoint is side-effect free and does not send QQ messages. GroupGuard remains responsible for scheduling, licensed-group filtering, delivery, retry and deduplication.
+- Riot explicitly notes that scheduled dates can change. Future schedule refreshes belong in the schedule service without changing the HTTP contract consumed by GroupGuard.
+- This task does not expose the API publicly and does not deploy/restart production.
 
 ## Canonical development
 
