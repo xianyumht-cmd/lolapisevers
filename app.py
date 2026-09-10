@@ -27,6 +27,7 @@ from routers.cross_query import router as cross_query_router
 from routers.cross_session import router as cross_session_router
 from routers.groupguard_delivery import router as groupguard_delivery_router
 from routers.health import router as health_router
+from routers.lol_patch_status import router as lol_patch_status_router
 from routers.lolban import router as lolban_router
 from routers.query_admin import router as query_admin_router
 from routers.query_observability import router as query_observability_router
@@ -55,6 +56,7 @@ def build_app() -> FastAPI:
     app.state.db_config = config.db_config
 
     app.include_router(health_router)
+    app.include_router(lol_patch_status_router)
     app.include_router(cross_session_router)
     app.include_router(cross_query_router)
     app.include_router(shard_query_router)
