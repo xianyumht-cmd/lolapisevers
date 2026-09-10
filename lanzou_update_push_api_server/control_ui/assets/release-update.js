@@ -1,7 +1,8 @@
 (() => {
   'use strict';
 
-  if (document.body.dataset.consoleUi !== 'system') return;
+  const page = document.body.dataset.consoleUi || '';
+  if (!['system', 'lol-patch'].includes(page)) return;
 
   const TOKEN_KEY = 'lolapisevers_admin_token';
   const $ = (id) => document.getElementById(id);
