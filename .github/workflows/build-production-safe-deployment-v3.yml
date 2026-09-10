@@ -116,6 +116,22 @@ jobs:
               exit $LASTEXITCODE
           }
 
+      - name: Patch V3 runtime bootstrap ACL handling
+        shell: powershell
+        run: |
+          .\ops\Patch-V3-RuntimeBootstrapAcl.ps1 -DistRoot "$pwd\dist-v3"
+          if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+          }
+
+      - name: Patch V3 production venv ACL lifecycle
+        shell: powershell
+        run: |
+          .\ops\Patch-V3-ProductionVenvAcl.ps1 -DistRoot "$pwd\dist-v3"
+          if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+          }
+
       - name: Verify V3 package hashes and safety flags
         shell: pwsh
         run: |
@@ -132,17 +148,20 @@ jobs:
           if ([int]$metadata.package_revision -ne 3) {
             throw "V3 metadata revision mismatch."
           }
-          if (-not [bool]$metadata.powershell_utf8_parse_input) {
-            throw "V3 metadata is missing explicit UTF-8 parsing."
-          }
-          if (-not [bool]$metadata.baseline_aware_readiness) {
-            throw "V3 metadata is missing baseline-aware readiness."
-          }
-          if (-not [bool]$metadata.winps51_native_git_stderr_safe) {
-            throw "V3 metadata is missing native Git stderr safety."
-          }
-          if (-not [bool]$metadata.winps51_native_process_stderr_safe) {
-            throw "V3 metadata is missing native process stderr safety."
+          foreach ($flag in @(
+            "powershell_utf8_parse_input",
+            "baseline_aware_readiness",
+            "winps51_native_git_stderr_safe",
+            "winps51_native_process_stderr_safe",
+            "runtime_bootstrap_acl_safe",
+            "runtime_listener_bootstrap_discovery",
+            "production_venv_acl_recovery",
+            "installed_venv_acl_normalized",
+            "venv_acl_well_known_sids"
+          )) {
+            if (-not [bool]$metadata.$flag) {
+              throw "V3 metadata safety flag is missing: $flag"
+            }
           }
           $zipHash = (Get-FileHash $zipFile.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($zipHash -ne "$($metadata.zip_sha256)".ToLowerInvariant()) {
@@ -172,7 +191,12 @@ jobs:
             "powershell_utf8_parse_input",
             "baseline_aware_readiness",
             "winps51_native_git_stderr_safe",
-            "winps51_native_process_stderr_safe"
+            "winps51_native_process_stderr_safe",
+            "runtime_bootstrap_acl_safe",
+            "runtime_listener_bootstrap_discovery",
+            "production_venv_acl_recovery",
+            "installed_venv_acl_normalized",
+            "venv_acl_well_known_sids"
           )) {
             if (-not [bool]$manifest.deployment.$flag) {
               throw "V3 safety flag is missing: $flag"
@@ -212,7 +236,16 @@ jobs:
             'Invoke-Git -WorkingDirectory $ProjectRoot -Arguments @("clone", "--no-checkout", $bundlePath, $candidateRepository)',
             "function Invoke-NativeProcess {",
             'Invoke-NativeProcess -FilePath $candidatePython -Arguments @(',
-            '"-m", "unittest", "discover"'
+            '"-m", "unittest", "discover"',
+            'Get-NetTCPConnection -State Listen -LocalPort $listenerPort',
+            'Get-CimInstance Win32_Process',
+            'Production venv bootstrap is not readable; continuing with system Python discovery',
+            'Resolve-BootstrapPython -Root $ProjectRoot -BaseUrl $BaseUrl',
+            'function Ensure-ManagedVenvAcl {',
+            '"*S-1-5-32-544:(OI)(CI)F"',
+            '"*S-1-5-18:(OI)(CI)F"',
+            'Ensure-ManagedVenvAcl -Path $oldVenv -Label "existing production venv"',
+            'Ensure-ManagedVenvAcl -Path $installedVenv -Label "installed production venv"'
           )) {
             if (-not $deployText.Contains($marker)) {
               throw "V3 deployment marker is missing: $marker"
@@ -225,7 +258,6 @@ jobs:
           if ($deployText.Contains('& (Resolve-GitExecutable) clone --no-checkout')) {
             throw "V3 deployment still contains unsafe native clone."
           }
-
           foreach ($unsafeNative in @(
             '& $BootstrapPython -m venv',
             '& $candidatePython',
@@ -234,6 +266,14 @@ jobs:
           )) {
             if ($deployText.Contains($unsafeNative)) {
               throw "V3 deployment still contains unsafe direct native invocation: $unsafeNative"
+            }
+          }
+          foreach ($unsafeAclProbe in @(
+            'if (Test-Path -LiteralPath $productionPython -PathType Leaf)',
+            'if (Test-Path -LiteralPath $oldVenv -PathType Container)'
+          )) {
+            if ($deployText.Contains($unsafeAclProbe)) {
+              throw "V3 deployment still contains unsafe runtime ACL probe: $unsafeAclProbe"
             }
           }
 
