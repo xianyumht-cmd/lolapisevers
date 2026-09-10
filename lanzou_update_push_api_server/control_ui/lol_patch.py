@@ -9,7 +9,7 @@ from .components import icon, render_console_shell
 
 
 _STYLES = ("/control-assets/console.css", "/control-assets/operations.css")
-_SCRIPTS = ("/control-assets/operations.js", "/control-assets/release-update.js")
+_SCRIPTS = ("/control-assets/operations.js",)
 
 
 def _text(value: object | None, fallback: str = "-") -> str:
@@ -41,29 +41,6 @@ def _calendar_rows(status: dict[str, object]) -> str:
     return "".join(rows)
 
 
-def _update_confirm_dialog() -> str:
-    return f'''<dialog class="dialog" id="releaseUpdateConfirmDialog" aria-labelledby="releaseUpdateConfirmTitle">
-  <form class="dialog-card" id="releaseUpdateConfirmForm">
-    <header class="dialog-header">
-      <div>
-        <p class="eyebrow">Release 安全升级</p>
-        <h2 id="releaseUpdateConfirmTitle">确认一键升级</h2>
-      </div>
-      <button class="icon-button" id="releaseUpdateConfirmClose" type="button" aria-label="关闭对话框">{icon('x')}</button>
-    </header>
-    <div class="dialog-body">
-      <p class="dialog-description" id="releaseUpdateConfirmMessage">将下载并校验最新 V3 安全部署包。</p>
-      <div class="alert alert-warning">升级会短暂中断 5001 和 6178。部署器会先验证候选、备份生产，并在验证失败时自动回滚。</div>
-    </div>
-    <footer class="dialog-footer">
-      <span class="dialog-footer-spacer"></span>
-      <button class="button button-secondary" id="releaseUpdateConfirmCancel" type="button">取消</button>
-      <button class="button button-primary" id="releaseUpdateConfirmSubmit" type="submit">确认升级</button>
-    </footer>
-  </form>
-</dialog>'''
-
-
 def render_lol_patch_page() -> str:
     status = get_patch_status()
     is_update_day = bool(status.get("is_update_today"))
@@ -78,13 +55,13 @@ def render_lol_patch_page() -> str:
 
     actions = (
         f'<a class="button button-secondary" href="/lol-patch">{icon("refresh")}<span>刷新补丁状态</span></a>'
-        f'<button class="button button-primary" id="releaseUpdateCheckButton" type="button">{icon("activity")}<span>检查程序更新</span></button>'
+        f'<a class="button button-secondary" href="/system">{icon("lock")}<span>安全与回滚</span></a>'
     )
     content = f'''<header class="page-header">
   <div>
     <p class="eyebrow">LOL · 版本日历</p>
     <h1>LOL 更新日</h1>
-    <p>查看国服版本更新计划，并直接使用现有 GitHub Release V3 安全链路升级 LOLDataSystem。</p>
+    <p>查看国服版本更新计划与更新日通知状态。LOLDataSystem 程序升级统一在“安全与回滚”页面管理。</p>
   </div>
   <div class="page-actions">{actions}</div>
 </header>
@@ -112,34 +89,12 @@ def render_lol_patch_page() -> str:
   </article>
 </section>
 <section class="panel">
-  <header class="panel-header">
-    <div><h2>GitHub Release 一键升级</h2><p>与“安全与回滚”页共用同一套更新后端：前向提交校验、V3 metadata、SHA-256、候选测试、生产备份和失败自动回滚。</p></div>
-    <div class="page-actions">
-      <button class="button button-primary" id="releaseUpdateStartButton" type="button" disabled>{icon("activity")}<span>一键升级</span></button>
-    </div>
-  </header>
-  <div class="panel-body">
-    <section class="metric-grid metric-grid-3">
-      <article class="metric-card"><div><span>当前提交</span><strong id="releaseCurrentCommit" class="code">读取中</strong><small id="releaseCurrentName">等待 build-info</small></div></article>
-      <article class="metric-card"><div><span>最新 Release</span><strong id="releaseLatestName">读取中</strong><small id="releaseTargetCommit">等待目标提交</small></div></article>
-      <article class="metric-card"><div><span>更新状态</span><strong id="releaseUpdateState">读取中</strong><small id="releasePackageInfo">等待 Release metadata</small></div></article>
-    </section>
-    <div class="form-row form-row-4">
-      <label class="field field-span-2"><span>GitHub Release 只读 Token</span><input id="releaseTokenInput" type="password" autocomplete="off" spellcheck="false" placeholder="私有仓库首次配置；保存后不会回显"><small id="releaseTokenHint">Token 仅保存在生产机更新目录，不进入源码、页面或普通日志。</small></label>
-      <div class="field"><span>Token 状态</span><div class="inline-status" id="releaseTokenStatus"><span class="status-dot status-dot-neutral"></span><span>读取中</span></div></div>
-      <div class="field"><span>操作</span><button class="button button-secondary" id="releaseTokenSaveButton" type="button">保存 Token</button></div>
-    </div>
-    <pre class="operations-result" id="releaseUpdateResult">正在读取 Release 更新状态...</pre>
-  </div>
-</section>
-<section class="panel">
   <header class="panel-header"><div><h2>2026 更新日历</h2><p>来源为当前服务内置的 Riot 官方 2026 Patch Schedule 快照；官方日期若调整，只需更新 schedule service。</p></div></header>
   <div class="table-wrap"><table>
     <thead><tr><th>版本</th><th>计划日期</th><th>状态</th></tr></thead>
     <tbody>{_calendar_rows(status)}</tbody>
   </table></div>
-</section>
-{_update_confirm_dialog()}'''
+</section>'''
     return render_console_shell(
         active="lol-patch",
         title="LOL 更新日",
