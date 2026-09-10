@@ -20,6 +20,7 @@ class ControlSecurityTests(unittest.TestCase):
             app = self.make_app(Path(temp_dir) / "state.json")
             with TestClient(app) as client:
                 self.assertEqual(client.get("/").status_code, 200)
+                self.assertEqual(client.get("/lol-patch").status_code, 200)
                 self.assertEqual(client.get("/health").status_code, 200)
                 self.assertEqual(client.get("/security/status").status_code, 200)
                 self.assertEqual(client.get("/control-assets/console.css").status_code, 200)
@@ -54,12 +55,16 @@ class ControlSecurityTests(unittest.TestCase):
         ):
             app = self.make_app(Path(temp_dir) / "state.json")
             with TestClient(app) as client:
+                patch_page = client.get("/lol-patch")
+                update_denied = client.get("/admin/update/status")
                 denied = client.get("/admin/main-config")
                 allowed = client.get(
                     "/admin/main-config",
                     headers={"x-admin-token": "correct-token"},
                 )
 
+            self.assertEqual(patch_page.status_code, 200)
+            self.assertEqual(update_denied.status_code, 401)
             self.assertEqual(denied.status_code, 401)
             self.assertEqual(allowed.status_code, 200)
             self.assertTrue(allowed.json()["ok"])
