@@ -85,12 +85,11 @@ class LolPatchWebUiTests(unittest.TestCase):
             "/admin/update/status",
             "/admin/update/token",
             "/admin/update/start",
-            "/admin/update/pause",
-            "/admin/update/resume",
-            "/admin/update/reconnect",
-            "/admin/update/reset",
         ):
             self.assertIn(endpoint, text)
+        self.assertIn("`/admin/update/${action}`", text)
+        for action in ("pause", "resume", "reconnect", "reset"):
+            self.assertIn(f"controlUpdate('{action}'", text)
         self.assertNotIn("document.body.dataset.consoleUi !== 'system'", text)
 
     def test_lol_patch_route_and_shell_are_public_with_admin_token_enabled(self) -> None:
