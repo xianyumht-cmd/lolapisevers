@@ -21,6 +21,7 @@ PUBLIC_PATHS = {
     "/logs",
     "/diagnostics",
     "/system",
+    "/lol-patch",
     "/health",
     "/security/status",
     "/docs",
