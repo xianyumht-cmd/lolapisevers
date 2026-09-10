@@ -11,15 +11,15 @@
 - Riot explicitly notes that scheduled dates can change. Future schedule refreshes belong in the schedule service without changing the HTTP contract consumed by GroupGuard.
 - This task does not expose the API publicly and does not deploy/restart production.
 
-## LOL patch-day WebUI — Issue #105
+## LOL patch-day WebUI — Issues #105 / #108
 
 - The 6178 control panel exposes `/lol-patch` as the dedicated `LOL 更新日` page and sidebar entry.
 - The page reads `get_patch_status()` and `PATCH_SCHEDULE_2026` directly from the same patch schedule service used by `/lol/patch-status`, so the visible current/next patch and 2026 calendar cannot drift into a second hard-coded WebUI schedule.
 - The page is observational for QQ delivery: it displays patch/date/event/source state but does not send group messages. GroupGuard remains the only owner of patch-day scheduling, licensed-group filtering, retry and deduplication.
-- Program self-update on this page reuses the existing `/admin/update/*` GitHub Release V3 control plane. There is no browser `git pull`, source overwrite or second updater implementation.
-- `release-update.js` is shared by `/system` and `/lol-patch`, so Release Token handling, forward-only ancestry checks, pause/resume/reconnect/reset, V3 metadata/SHA-256 verification and external deployment behavior stay one contract.
-- The page shell remains readable like the other control pages, while `/admin/update/*` mutations continue to use the existing loopback/admin-token security policy.
-- Initial rollout is bootstrapped from the existing `/system` page: after this change is merged and a verified Release is published, an older production host can update once from `/system`; subsequent releases can be managed directly from `/lol-patch`.
+- Follow-up #108 removes the duplicated GitHub Release updater from `/lol-patch`. The page does not load `release-update.js` and does not render Release Token, check/update, pause/resume/reconnect/reset, or update confirmation controls.
+- `/system` remains the single canonical WebUI surface for LOLDataSystem one-click GitHub Release V3 upgrades. `/lol-patch` may link to `/system`, but it does not own or duplicate update controls.
+- Existing `/admin/update/*` backend and loopback/admin-token protection remain unchanged.
+- The page shell remains readable like the other control pages.
 - This repository task itself does not deploy or restart production.
 
 ## Canonical development
