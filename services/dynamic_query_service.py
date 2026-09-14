@@ -12,12 +12,14 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 import requests
 import urllib3
 from fastapi import HTTPException
+
+from services.provider_http_transport import ProviderHttpResponse, ProviderHttpTransport
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -189,7 +191,11 @@ class DynamicProviderCatalog:
 
 
 _catalog = DynamicProviderCatalog()
-_session = requests.Session()
+_private_provider_transport = ProviderHttpTransport(
+    session=requests.Session(),
+    max_response_bytes=_MAX_PROVIDER_BYTES,
+    connect_timeout=3.0,
+)
 
 
 def normalize_dynamic_parameters(value: Mapping[str, Any]) -> Dict[str, str]:
@@ -271,35 +277,8 @@ def _validate_destination(url: str, allow_private: bool) -> tuple[Any, str]:
     return parts, sorted(addresses, key=lambda item: (":" in item, item))[0]
 
 
-@dataclass(frozen=True)
-class _ProviderHttpResponse:
-    status_code: int
-    headers: Mapping[str, str]
-    body: bytes
-
-    @property
-    def ok(self) -> bool:
-        return 200 <= self.status_code < 400
-
-
-def _read_requests_response(response: requests.Response) -> bytes:
-    declared = str(response.headers.get("Content-Length") or "").strip()
-    if declared:
-        try:
-            if int(declared) > _MAX_PROVIDER_BYTES:
-                raise RuntimeError("provider_response_too_large")
-        except ValueError:
-            pass
-    chunks: List[bytes] = []
-    total = 0
-    for chunk in response.iter_content(chunk_size=64 * 1024):
-        if not chunk:
-            continue
-        total += len(chunk)
-        if total > _MAX_PROVIDER_BYTES:
-            raise RuntimeError("provider_response_too_large")
-        chunks.append(bytes(chunk))
-    return b"".join(chunks)
+# Backward-compatible private alias retained for existing tests and imports.
+_ProviderHttpResponse = ProviderHttpResponse
 
 
 def _request_once(
@@ -308,25 +287,22 @@ def _request_once(
     headers: Mapping[str, str],
     body: Mapping[str, str],
     timeout_seconds: float,
-) -> _ProviderHttpResponse:
+) -> ProviderHttpResponse:
     parts, address = _validate_destination(url, definition.allow_private)
     if definition.allow_private:
-        response: Optional[requests.Response] = None
-        try:
-            response = _session.request(
-                definition.method,
-                url,
-                headers=dict(headers) or None,
-                json=dict(body) if definition.method == "POST" and body else None,
-                timeout=(min(3.0, timeout_seconds), timeout_seconds),
-                allow_redirects=False,
-                stream=True,
-            )
-            return _ProviderHttpResponse(response.status_code, dict(response.headers), _read_requests_response(response))
-        finally:
-            if response is not None:
-                response.close()
+        return _private_provider_transport.request(
+            definition.method,
+            url,
+            headers=headers,
+            json_body=dict(body) if definition.method == "POST" and body else None,
+            timeout_seconds=timeout_seconds,
+            allow_redirects=False,
+        )
 
+    # Public dynamic providers keep the security-specific pinned transport. The
+    # validated IP is used for the socket while Host/TLS verification retains
+    # the original hostname, preventing a second DNS resolution after policy
+    # validation (DNS-rebinding/SSRF boundary).
     port = parts.port or (443 if parts.scheme == "https" else 80)
     host_header = parts.hostname or ""
     if parts.port and parts.port != (443 if parts.scheme == "https" else 80):
@@ -354,6 +330,7 @@ def _request_once(
     else:
         pool = urllib3.HTTPConnectionPool(address, port, maxsize=1, block=True)
     response = None
+    started = time.monotonic()
     try:
         response = pool.urlopen(
             definition.method,
@@ -367,14 +344,20 @@ def _request_once(
         declared = str(response.headers.get("Content-Length") or "").strip()
         if declared:
             try:
-                if int(declared) > _MAX_PROVIDER_BYTES:
-                    raise RuntimeError("provider_response_too_large")
+                declared_size = int(declared)
             except ValueError:
-                pass
+                declared_size = 0
+            if declared_size > _MAX_PROVIDER_BYTES:
+                raise RuntimeError("provider_response_too_large")
         raw = response.read(_MAX_PROVIDER_BYTES + 1, decode_content=True)
         if len(raw) > _MAX_PROVIDER_BYTES:
             raise RuntimeError("provider_response_too_large")
-        return _ProviderHttpResponse(int(response.status), dict(response.headers), bytes(raw))
+        return ProviderHttpResponse(
+            int(response.status),
+            dict(response.headers),
+            bytes(raw),
+            int((time.monotonic() - started) * 1000),
+        )
     finally:
         if response is not None:
             response.release_conn()
@@ -446,7 +429,7 @@ def _execute_provider(
     for attempt in range(2):
         try:
             url = initial_url
-            response: Optional[_ProviderHttpResponse] = None
+            response: Optional[ProviderHttpResponse] = None
             for redirect_index in range(_MAX_REDIRECTS + 1):
                 response = _request_once(definition, url, headers, body, timeout_seconds)
                 if response.status_code in {301, 302, 303, 307, 308}:

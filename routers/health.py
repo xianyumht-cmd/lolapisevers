@@ -4,7 +4,7 @@ from typing import Any
 from fastapi import APIRouter, Request, Response, status
 
 from core.build_info import load_build_info
-from services.lolban_service import get_lolban_health
+from services.lolban_runtime import get_lolban_service
 from services.so1_readiness_service import ensure_so1_readiness
 
 
@@ -63,7 +63,7 @@ async def _so1_dependency(so1_client: Any) -> dict[str, Any]:
 
 def _lolban_dependency() -> dict[str, Any]:
     try:
-        health = get_lolban_health()
+        health = get_lolban_service().health()
     except Exception as exc:
         return {
             "required": False,

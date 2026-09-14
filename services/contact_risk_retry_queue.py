@@ -24,9 +24,19 @@ class ContactRiskRetryQueue:
     def __init__(self, path: Optional[Path] = None) -> None:
         configured = str(os.getenv("CONTACT_RISK_DB_PATH") or "").strip()
         self.path = Path(path or configured or DEFAULT_DB_PATH).expanduser().resolve()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
-        self._init_schema()
+        self._schema_ready = False
+
+    def start(self) -> None:
+        """Create the SQLite directory/schema explicitly and idempotently."""
+        if self._schema_ready:
+            return
+        with self._lock:
+            if self._schema_ready:
+                return
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self._init_schema()
+            self._schema_ready = True
 
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:
@@ -93,6 +103,7 @@ class ContactRiskRetryQueue:
         error_class: str = "",
         delay_seconds: int = 60,
     ) -> Dict[str, Any]:
+        self.start()
         now = int(time.time() * 1000)
         next_at = now + max(0, min(int(delay_seconds), 86400)) * 1000
         payload = json.dumps(dict(parameters), ensure_ascii=False, separators=(",", ":"))
@@ -128,6 +139,7 @@ class ContactRiskRetryQueue:
         return self._row(row)
 
     def list(self, *, state: str = "", limit: int = 100) -> list[Dict[str, Any]]:
+        self.start()
         capped = max(1, min(int(limit), 1000))
         query = "SELECT * FROM contact_risk_submission_queue"
         parameters: tuple[Any, ...] = ()
@@ -141,6 +153,7 @@ class ContactRiskRetryQueue:
         return [self._row(row) for row in rows]
 
     def due(self, *, limit: int = 20, queue_id: int = 0) -> list[Dict[str, Any]]:
+        self.start()
         capped = max(1, min(int(limit), 100))
         now = int(time.time() * 1000)
         with self._lock, self._connection() as connection:
@@ -159,6 +172,7 @@ class ContactRiskRetryQueue:
         return [self._row(row) for row in rows]
 
     def mark_success(self, queue_id: int) -> None:
+        self.start()
         now = int(time.time() * 1000)
         with self._lock, self._connection() as connection:
             connection.execute(
@@ -168,6 +182,7 @@ class ContactRiskRetryQueue:
             connection.commit()
 
     def mark_rejected(self, queue_id: int) -> None:
+        self.start()
         now = int(time.time() * 1000)
         with self._lock, self._connection() as connection:
             connection.execute(
@@ -183,6 +198,7 @@ class ContactRiskRetryQueue:
         error_class: str,
         max_attempts: int = 8,
     ) -> Dict[str, Any]:
+        self.start()
         now = int(time.time() * 1000)
         with self._lock, self._connection() as connection:
             row = connection.execute(
@@ -213,6 +229,7 @@ class ContactRiskRetryQueue:
         return self._row(updated)
 
     def remove(self, queue_id: int) -> bool:
+        self.start()
         with self._lock, self._connection() as connection:
             cursor = connection.execute(
                 "DELETE FROM contact_risk_submission_queue WHERE queue_id=?",

@@ -32,9 +32,19 @@ class ContactRiskStore:
     def __init__(self, path: Optional[Path] = None) -> None:
         configured = str(os.getenv("CONTACT_RISK_DB_PATH") or "").strip()
         self.path = Path(path or configured or DEFAULT_DB_PATH).expanduser().resolve()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
-        self._init_schema()
+        self._schema_ready = False
+
+    def start(self) -> None:
+        """Create the SQLite directory/schema explicitly and idempotently."""
+        if self._schema_ready:
+            return
+        with self._lock:
+            if self._schema_ready:
+                return
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self._init_schema()
+            self._schema_ready = True
 
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:
@@ -113,6 +123,7 @@ class ContactRiskStore:
         *,
         touch: bool = True,
     ) -> Optional[Dict[str, Any]]:
+        self.start()
         now = int(time.time() * 1000)
         with self._lock, self._connection() as connection:
             row = connection.execute(
@@ -147,6 +158,7 @@ class ContactRiskStore:
         actor_id: str = "",
         group_id: str = "",
     ) -> Tuple[Dict[str, Any], bool]:
+        self.start()
         try:
             normalized_request_id = validate_request_id(request_id, required=True)
         except ValueError as exc:

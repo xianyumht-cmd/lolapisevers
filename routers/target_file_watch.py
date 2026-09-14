@@ -5,8 +5,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 
 from services.main_control_security import require_control_access
-from services.target_file_watch_service import TargetFileWatchError
-from services.target_file_watch_runtime import target_file_watch_service
+from services.target_file_watch_service import TargetFileWatchError, TargetFileWatchService
 
 
 router = APIRouter(prefix="/api/v1/target-file-watch", tags=["target-file-watch"])
@@ -16,23 +15,30 @@ def _require(request: Request) -> None:
     require_control_access(request)
 
 
+def _service(request: Request) -> TargetFileWatchService:
+    service = getattr(request.app.state, "target_file_watch_service", None)
+    if service is None:
+        raise HTTPException(status_code=503, detail="定向文件监控服务尚未初始化")
+    return service
+
+
 @router.get("/status")
 async def target_file_watch_status(request: Request) -> dict[str, Any]:
     _require(request)
-    return target_file_watch_service.status()
+    return _service(request).status()
 
 
 @router.get("/config")
 async def target_file_watch_config(request: Request) -> dict[str, Any]:
     _require(request)
-    return {"ok": True, "config": target_file_watch_service.sanitized_config()}
+    return {"ok": True, "config": _service(request).sanitized_config()}
 
 
 @router.put("/config")
 async def target_file_watch_save_config(request: Request, body: dict[str, Any]) -> dict[str, Any]:
     _require(request)
     try:
-        return target_file_watch_service.save_config(body)
+        return _service(request).save_config(body)
     except TargetFileWatchError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -41,9 +47,11 @@ async def target_file_watch_save_config(request: Request, body: dict[str, Any]) 
 async def target_file_watch_check(request: Request) -> dict[str, Any]:
     _require(request)
     try:
-        return await target_file_watch_service.check_once()
+        return await _service(request).check_once()
     except TargetFileWatchError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"定向文件检查失败：{type(exc).__name__}") from exc
 
@@ -51,4 +59,4 @@ async def target_file_watch_check(request: Request) -> dict[str, Any]:
 @router.post("/rebaseline")
 async def target_file_watch_rebaseline(request: Request) -> dict[str, Any]:
     _require(request)
-    return target_file_watch_service.rebaseline()
+    return _service(request).rebaseline()

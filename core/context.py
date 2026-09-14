@@ -7,6 +7,7 @@ from db import Database
 from so1_client import So1Client
 
 from core.config import AppConfig, load_config
+from services.contact_risk_retry_queue import get_contact_risk_retry_queue
 from services.contact_risk_store import ContactRiskStore
 from services.image_asset_store import PersistentImageAssetCache
 from services.persistent_snapshot_store import PersistentSnapshotStore
@@ -34,21 +35,11 @@ class AppContext:
             ttl_seconds=self.aram_image_cache_seconds,
             max_size=128,
         )
-        self._aram_image_locks = [
-            threading.Lock()
-            for _ in range(64)
-        ]
-        # All business services share one named upstream client and one atomic
-        # snapshot store. Public URLs stay inside the Windows service boundary.
+        self._aram_image_locks = [threading.Lock() for _ in range(64)]
         self.upstream_http_client = UpstreamHttpClient(logger=self.logger)
         self.upstream_snapshot_store = PersistentSnapshotStore()
-        # Risk records and idempotent report events are owned by the Windows
-        # service. This SQLite database is independent from the optional LOL
-        # MySQL database so a MySQL outage never disables scammer/peer storage.
         self.contact_risk_store = ContactRiskStore()
-        # Existing renderers still use the same get/set contract. Positive image
-        # bytes are persisted by stable resource ID on disk, while the bounded
-        # memory layer keeps hot reads fast.
+        self.contact_risk_retry_queue = get_contact_risk_retry_queue()
         self.image_asset_cache = PersistentImageAssetCache(
             ttl_seconds=max(config.aram_augment_cache_seconds, 3600),
             max_size=512,
@@ -59,12 +50,9 @@ class AppContext:
             headless=config.so1_headless,
             timeout_ms=config.so1_timeout_ms,
         )
-        self.ensure_db()
 
     def aram_image_lock(self, key: str) -> threading.Lock:
-        return self._aram_image_locks[
-            hash(key) % len(self._aram_image_locks)
-        ]
+        return self._aram_image_locks[hash(key) % len(self._aram_image_locks)]
 
     def ensure_db(self) -> Optional[Database]:
         if self.db is not None:
@@ -80,6 +68,12 @@ class AppContext:
                 self.db_error_message = str(exc)
                 self.logger.error("数据库初始化/重连失败: %s", exc)
                 return None
+
+    def start(self) -> None:
+        """Initialize persistent runtime dependencies from the app lifespan."""
+        self.contact_risk_store.start()
+        self.contact_risk_retry_queue.start()
+        self.ensure_db()
 
 
 def create_app_context(

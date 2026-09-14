@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, MutableMapping, Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-import requests
+from services.provider_http_transport import ProviderHttpTransport
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -37,6 +37,7 @@ _PUBLIC_FORBIDDEN_FIELDS = {
     "request_url",
     "provider_url",
 }
+_PROVIDER_HTTP_TRANSPORT = ProviderHttpTransport()
 
 
 class ParserCenterError(RuntimeError):
@@ -330,19 +331,39 @@ def prepare_request(
     )
 
 
-def execute_request(prepared: PreparedRequest) -> ProviderExecution:
-    started = time.monotonic()
-    response = requests.request(prepared.method, prepared.url, **prepared.requests_kwargs())
-    elapsed_ms = int((time.monotonic() - started) * 1000)
-    text = response.content.decode("utf-8", errors="replace").strip().lstrip("\ufeff")
-    content_type = str(response.headers.get("content-type") or "")
+def execute_request(
+    prepared: PreparedRequest,
+    *,
+    transport: ProviderHttpTransport | None = None,
+) -> ProviderExecution:
+    kwargs = prepared.requests_kwargs()
+    response = (transport or _PROVIDER_HTTP_TRANSPORT).request(
+        prepared.method,
+        prepared.url,
+        headers=kwargs.get("headers"),
+        params=kwargs.get("params"),
+        data=kwargs.get("data"),
+        json_body=kwargs.get("json"),
+        files=kwargs.get("files"),
+        timeout_seconds=float(kwargs.get("timeout") or prepared.timeout_seconds),
+        allow_redirects=False,
+    )
+    text = response.body.decode("utf-8", errors="replace").strip().lstrip("\ufeff")
+    content_type = next(
+        (
+            str(value)
+            for key, value in response.headers.items()
+            if str(key).strip().lower() == "content-type"
+        ),
+        "",
+    )
     try:
         payload: Any = json.loads(text) if text else {}
     except json.JSONDecodeError:
         payload = text
     return ProviderExecution(
         status_code=int(response.status_code),
-        elapsed_ms=elapsed_ms,
+        elapsed_ms=int(response.elapsed_ms),
         content_type=content_type,
         payload=payload,
         text=text,

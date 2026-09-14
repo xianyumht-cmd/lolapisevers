@@ -4,7 +4,8 @@ from typing import Any, Dict
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 
-from services.lolban_service import apply_compat_payload, format_lolban_text, get_lolban_result, valid_qq
+from services.lolban_runtime import get_lolban_service
+from services.lolban_service import apply_compat_payload, format_lolban_text, valid_qq
 
 router = APIRouter()
 logger = logging.getLogger("LOLDataSystem")
@@ -37,7 +38,7 @@ async def lolban(
     if not valid_qq(qq):
         return _error("请输入有效的QQ号（5-11位数字）", output, 400)
     try:
-        payload, source, _ = await get_lolban_result(qq)
+        payload, source, _ = await get_lolban_service().get_result(qq)
         logger.info("lolban query qq=%s status=%s source=%s compat=%s", qq, payload.get("data", {}).get("status"), source, compat)
         return _response(payload, output, compat)
     except Exception as exc:

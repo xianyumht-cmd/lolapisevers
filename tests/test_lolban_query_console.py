@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import unittest
 from unittest.mock import patch
 from urllib.parse import parse_qsl, urlsplit
@@ -9,6 +8,7 @@ from fastapi import HTTPException
 
 from lanzou_update_push_api_server import management
 from lanzou_update_push_api_server.control_extensions import _register_sensitive_lolban_fields
+from lanzou_update_push_api_server.control_ui import ASSET_DIRECTORY
 from lanzou_update_push_api_server.lolban_console import (
     _merge_masked,
     _merge_masked_url,
@@ -21,9 +21,9 @@ from lanzou_update_push_api_server.lolban_console import (
 )
 from lanzou_update_push_api_server.ui_theme import apply_ios_glass_theme
 from routers.query_admin import (
-    _apply_reload_environment,
     _provider_error_diagnostic,
     _redact,
+    _reload_environment,
 )
 from services.api_parser_center import ParserConfigError
 
@@ -105,16 +105,27 @@ class LolbanQueryConsoleTests(unittest.TestCase):
         self.assertIn("封号查询配置页", spec["label"])
 
     def test_reload_environment_is_strictly_allowlisted(self):
-        with patch.dict(os.environ, {}, clear=False):
-            changed = _apply_reload_environment(
-                {"environment": {"LOL_BAN_TIMEOUT": "12", "LOL_BAN_SNAPSHOT_ENABLED": "1", "LOLMAP_API_TOKEN": "primary-secret", "LOL_BAN_4PNG_TOKEN": "backup-secret"}}
-            )
-            self.assertEqual(changed, ["LOL_BAN_TIMEOUT", "LOL_BAN_SNAPSHOT_ENABLED", "LOLMAP_API_TOKEN", "LOL_BAN_4PNG_TOKEN"])
-            self.assertEqual(os.environ["LOL_BAN_TIMEOUT"], "12")
-            self.assertEqual(os.environ["LOLMAP_API_TOKEN"], "primary-secret")
-            self.assertEqual(os.environ["LOL_BAN_4PNG_TOKEN"], "backup-secret")
+        updates = _reload_environment(
+            {
+                "environment": {
+                    "LOL_BAN_TIMEOUT": "12",
+                    "LOL_BAN_SNAPSHOT_ENABLED": "1",
+                    "LOLMAP_API_TOKEN": "primary-secret",
+                    "LOL_BAN_4PNG_TOKEN": "backup-secret",
+                }
+            }
+        )
+        self.assertEqual(
+            updates,
+            {
+                "LOL_BAN_TIMEOUT": "12",
+                "LOL_BAN_SNAPSHOT_ENABLED": "1",
+                "LOLMAP_API_TOKEN": "primary-secret",
+                "LOL_BAN_4PNG_TOKEN": "backup-secret",
+            },
+        )
         with self.assertRaises(HTTPException):
-            _apply_reload_environment({"environment": {"PATH": "unsafe"}})
+            _reload_environment({"environment": {"PATH": "unsafe"}})
 
     def test_provider_identity_exposes_operational_fields_only(self):
         identity = _provider_identity(
@@ -139,7 +150,6 @@ class LolbanQueryConsoleTests(unittest.TestCase):
                 "url": "https://example.test/query/$qq",
             },
         )
-
 
     def test_provider_tokens_save_hot_reload_without_returning_values(self):
         for provider_id, secret_name in (
@@ -200,19 +210,36 @@ class LolbanQueryConsoleTests(unittest.TestCase):
         self.assertIn("5001", diagnostic["message"])
         self.assertNotIn("LOL_BAN_4PNG_TOKEN", diagnostic["message"])
 
-    def test_dedicated_page_contains_required_diagnostics(self):
+    def test_dedicated_page_uses_external_assets_and_keeps_diagnostics_contract(self):
         page = render_lolban_console_page()
-        self.assertIn("封号查询配置与实时诊断", page)
-        self.assertIn("Provider 直连", page)
-        self.assertIn("5001 正式链路", page)
-        self.assertIn("/admin/query-console/lolban/save", page)
-        self.assertIn("/admin/query-console/lolban/test", page)
-        self.assertIn("测试所选 Provider", page)
-        self.assertIn("测试正式链路", page)
-        self.assertIn("data-secret-provider", page)
-        self.assertIn("providerSecrets", page)
-        self.assertIn("/admin/query-console/lolban/provider-secret", page)
-        self.assertIn("providerSecretControl", page)
+        script = (ASSET_DIRECTORY / "lolban.js").read_text(encoding="utf-8")
+
+        for marker in (
+            "封号查询配置与实时诊断",
+            "Provider 直连",
+            "5001 正式链路",
+            "测试所选 Provider",
+            "测试正式链路",
+            'id="providerResult"',
+            'id="formalResult"',
+        ):
+            self.assertIn(marker, page)
+        self.assertIn('/control-assets/lolban.css', page)
+        self.assertIn('/control-assets/lolban.js', page)
+        self.assertNotIn('<style>', page)
+        self.assertNotIn('const S=', page)
+
+        for marker in (
+            "/admin/query-console/lolban/save",
+            "/admin/query-console/lolban/test",
+            "/admin/query-console/lolban/provider-secret",
+            "parser_providers",
+            "legacy_providers",
+            "data-secret-provider",
+            "providerSecrets",
+            "providerSecretControl",
+        ):
+            self.assertIn(marker, script)
 
     def test_root_dashboard_theme_injects_lolban_entry(self):
         page = apply_ios_glass_theme(

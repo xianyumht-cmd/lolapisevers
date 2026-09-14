@@ -9,7 +9,8 @@ from services.aram_upstream_state import (
     aram_snapshot_max_age_seconds,
     hero_snapshot_max_age_seconds,
 )
-from services.lolban_service import STALE_CACHE_SECONDS, get_lolban_health
+from services.lolban_runtime import get_lolban_service
+from services.lolban_service import STALE_CACHE_SECONDS
 from services.shard_service import SHARD_DATA_SOURCE_ID, SHARD_HERO_SOURCE_ID
 
 
@@ -374,7 +375,11 @@ def _aram_mode(
     return "unavailable"
 
 
-def _safe_lolban(health_loader: Callable[[], Dict[str, Any]]) -> Dict[str, Any]:
+def _safe_lolban(
+    health_loader: Callable[[], Dict[str, Any]],
+    *,
+    stale_cache_seconds: int,
+) -> Dict[str, Any]:
     try:
         raw = health_loader()
         health = raw if isinstance(raw, dict) else {}
@@ -426,7 +431,7 @@ def _safe_lolban(health_loader: Callable[[], Dict[str, Any]]) -> Dict[str, Any]:
             "write_error_class": _safe_error_class(
                 health.get("persistent_snapshot_write_error_class")
             ),
-            "max_age_seconds": _safe_non_negative_int(STALE_CACHE_SECONDS),
+            "max_age_seconds": _safe_non_negative_int(stale_cache_seconds),
         },
     }
 
@@ -454,7 +459,7 @@ def _overall_status(modes: Iterable[str]) -> tuple[str, Dict[str, int]]:
 def build_query_observability(
     ctx: Any,
     *,
-    lolban_health_loader: Callable[[], Dict[str, Any]] = get_lolban_health,
+    lolban_health_loader: Optional[Callable[[], Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     if ctx is None:
         return {
@@ -472,6 +477,14 @@ def build_query_observability(
             "sources": {},
             "caches": {},
         }
+
+    if lolban_health_loader is None:
+        lolban_service = get_lolban_service()
+        health_loader = lolban_service.health
+        lolban_stale_cache_seconds = lolban_service.stale_cache_seconds
+    else:
+        health_loader = lolban_health_loader
+        lolban_stale_cache_seconds = STALE_CACHE_SECONDS
 
     states, monotonic_now = _client_state(ctx)
     store = getattr(ctx, "upstream_snapshot_store", None)
@@ -533,7 +546,10 @@ def build_query_observability(
         },
         "snapshots": aram_snapshots,
     }
-    lolban = _safe_lolban(lolban_health_loader)
+    lolban = _safe_lolban(
+        health_loader,
+        stale_cache_seconds=lolban_stale_cache_seconds,
+    )
 
     sources = {
         "shard_data": shard_data,

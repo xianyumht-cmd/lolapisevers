@@ -10,6 +10,7 @@ from .configuration import (
     render_watchers_page,
 )
 from .lol_patch import render_lol_patch_page
+from .lolban import render_lolban_console_page
 from .operations import render_diagnostics_page, render_logs_page, render_system_page
 from .pages import render_overview_page as _render_overview_page
 from .target_file_watch import render_target_file_watch_page
@@ -34,6 +35,7 @@ __all__ = [
     "render_lanzou_config_page",
     "render_logs_page",
     "render_lol_patch_page",
+    "render_lolban_console_page",
     "render_main_config_page",
     "render_overview_page",
     "render_system_page",
