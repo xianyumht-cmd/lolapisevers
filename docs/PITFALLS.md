@@ -75,7 +75,7 @@
 - **现象**：83 MB Release ZIP 已下载到 100%，WebUI 显示 `scheduled / 独立部署进程已启动` 数分钟不变；staging 中有 ZIP、`extracted` 和 `Start-VerifiedReleaseUpdate.ps1`，却没有 `update.log`。生产 commit 仍停在旧版本。
 - **根因**：旧状态机在 `subprocess.Popen()` 成功返回 PID 后立即把 `scheduled` 当作终态；worker 随后退出，WebUI 也停止轮询。它既不检查 detached PowerShell PID，也不检查生产 commit 是否切换；stdout/stderr 被送到 `DEVNULL`，所以 PowerShell 如果在 `Start-Transcript` 之前退出会完全没有诊断证据。
 - **防止复发**：
-  1. `scheduled` 只能是过渡态，后续 status 必须同时检查 detached PID 与当前 production commit。
+  1. `scheduled` 只能是过渡态，后续 status 必须同时检查 detached PID 与当前生产 commit。
   2. PID 存活时显示 `deploying`；PID 退出且 commit 已切到目标才标记 `complete`；PID 退出且 commit 未切换必须标记 `failed`。
   3. 外部 PowerShell stdout/stderr 写入 staging `launch.log`，`update.log` 继续记录正式部署 transcript；启动前失败也必须可诊断。
   4. Popen 后短暂检查 `poll()`，立即退出直接记录 `deployment_launch_failed`，禁止展示“部署已启动”假成功。
