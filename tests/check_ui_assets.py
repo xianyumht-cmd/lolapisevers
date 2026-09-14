@@ -42,9 +42,12 @@ try:
     configuration_script = configuration_script_path.read_text(encoding="utf-8")
     target_watch_script_path = ASSET_DIRECTORY / "target-file-watch.js"
     target_watch_script = target_watch_script_path.read_text(encoding="utf-8")
+    lolban_script_path = ASSET_DIRECTORY / "lolban.js"
+    lolban_script = lolban_script_path.read_text(encoding="utf-8")
     console_css = (ASSET_DIRECTORY / "console.css").read_text(encoding="utf-8")
     operations_css = (ASSET_DIRECTORY / "operations.css").read_text(encoding="utf-8")
     configuration_css = (ASSET_DIRECTORY / "configuration.css").read_text(encoding="utf-8")
+    lolban_css = (ASSET_DIRECTORY / "lolban.css").read_text(encoding="utf-8")
     icon_sprite = (ASSET_DIRECTORY / "icons.svg").read_text(encoding="utf-8")
     logs_html = render_logs_page()
     diagnostics_html = render_diagnostics_page()
@@ -106,7 +109,6 @@ for name, (page_html, markers) in operations_pages.items():
         raise SystemExit(f"{name} page is missing operations assets")
     if "/control-assets/console.js" in page_html:
         raise SystemExit(f"{name} page incorrectly loads overview-only JavaScript")
-
 
 configuration_pages = {
     "main-config": (main_config_html, ["主接口配置", 'data-console-ui="main-config"', "mainConfigForm"]),
@@ -212,34 +214,39 @@ for icon_marker in (
     if icon_marker not in icon_sprite:
         raise SystemExit(f"new control UI is missing SVG symbol: {icon_marker}")
 
-lolban_scripts = extract_scripts(lolban_html)
-lolban_script = next(
-    (
-        candidate
-        for candidate in lolban_scripts
-        if "/admin/query-console/lolban/save" in candidate
-        and "/admin/query-console/lolban/test" in candidate
-        and "providerResult" in candidate
-    ),
-    "",
-)
-if not lolban_script:
-    raise SystemExit("lolban console JavaScript block was not found")
+lolban_html_markers = [
+    "/control-assets/lolban.css",
+    "/control-assets/lolban.js",
+    "测试所选 Provider",
+    "测试正式链路",
+    "Provider 直连",
+    "5001 正式链路",
+    'id="providerResult"',
+    'id="formalResult"',
+]
+lolban_html_missing = [marker for marker in lolban_html_markers if marker not in lolban_html]
+if lolban_html_missing:
+    raise SystemExit(f"lolban console HTML is missing required controls: {lolban_html_missing}")
+if "<style>" in lolban_html or "const S=" in lolban_html:
+    raise SystemExit("lolban console still contains embedded style or application JavaScript")
 
-lolban_markers = [
+lolban_script_markers = [
     "/admin/query-console/lolban",
     "/admin/query-console/lolban/save",
     "/admin/query-console/lolban/test",
-    "测试所选 Provider",
-    "测试正式链路",
+    "/admin/query-console/lolban/provider-secret",
     "parser_providers",
     "legacy_providers",
-    "Provider 直连",
-    "5001 正式链路",
+    "providerResult",
+    "providerSecrets",
+    "providerSecretControl",
+    "data-secret-provider",
 ]
-lolban_missing = [marker for marker in lolban_markers if marker not in lolban_html]
-if lolban_missing:
-    raise SystemExit(f"lolban console is missing required controls: {lolban_missing}")
+lolban_script_missing = [marker for marker in lolban_script_markers if marker not in lolban_script]
+if lolban_script_missing:
+    raise SystemExit(f"lolban console JavaScript is missing required behavior: {lolban_script_missing}")
+if ".provider-secret" not in lolban_css or ".admin-token-input" not in lolban_css:
+    raise SystemExit("lolban console stylesheet is missing required layout rules")
 
 parser_scripts = extract_scripts(parser_center_html)
 parser_script = next(
@@ -269,20 +276,18 @@ if parser_missing:
     raise SystemExit(f"parser center is missing required controls: {parser_missing}")
 
 Path("ui_control.generated.js").write_text(console_script, encoding="utf-8")
-lolban_path = Path("ui_lolban_console.generated.js")
-lolban_path.write_text(lolban_script, encoding="utf-8")
 parser_path = Path("ui_parser_center.generated.js")
 parser_path.write_text(parser_script, encoding="utf-8")
 subprocess.run(["node", "--check", str(operations_script_path)], check=True)
 subprocess.run(["node", "--check", str(configuration_script_path)], check=True)
 subprocess.run(["node", "--check", str(target_watch_script_path)], check=True)
-subprocess.run(["node", "--check", str(lolban_path)], check=True)
+subprocess.run(["node", "--check", str(lolban_script_path)], check=True)
 subprocess.run(["node", "--check", str(parser_path)], check=True)
 print(
     "wrote "
     f"{len(console_script)} new-console JavaScript characters, validated "
-    f"{len(operations_script)} operations, {len(configuration_script)} configuration, and "
-    f"{len(target_watch_script)} target-file-watch JavaScript characters, and wrote "
-    f"{len(lolban_script)} lolban-console and "
-    f"{len(parser_script)} parser-center JavaScript characters for syntax validation"
+    f"{len(operations_script)} operations, {len(configuration_script)} configuration, "
+    f"{len(target_watch_script)} target-file-watch, and {len(lolban_script)} lolban-console "
+    f"JavaScript characters, and wrote {len(parser_script)} parser-center JavaScript characters "
+    "for syntax validation"
 )
