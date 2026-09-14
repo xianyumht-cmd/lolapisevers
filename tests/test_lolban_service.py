@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import threading
 import time
@@ -8,8 +9,8 @@ from unittest.mock import patch
 from cache import TTLCache
 from services.lolban_service import (
     LolBanService,
-    _create_default_service,
     clean_payload,
+    create_lolban_service,
 )
 
 
@@ -160,13 +161,13 @@ class LolBanServiceTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(RuntimeError, "qq mismatch"):
             clean_payload("10001", wrong_account)
 
-    def test_invalid_optional_provider_config_does_not_break_service_import(self):
+    def test_invalid_optional_provider_config_degrades_initial_factory(self):
         with patch.dict(
             os.environ,
             {"LOL_BAN_PROVIDERS_JSON": "{"},
             clear=False,
         ):
-            service = _create_default_service()
+            service = create_lolban_service()
 
         health = service.health()
         self.assertFalse(health["configured"])
@@ -178,6 +179,40 @@ class LolBanServiceTests(unittest.IsolatedAsyncioTestCase):
             health["configuration_error_class"],
             "RuntimeError",
         )
+
+    def test_strict_factory_rejects_invalid_provider_config(self):
+        with patch.dict(
+            os.environ,
+            {"LOL_BAN_PROVIDERS_JSON": "{"},
+            clear=False,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "invalid JSON"):
+                create_lolban_service(strict_configuration=True)
+
+    def test_provider_timeout_is_read_from_current_environment(self):
+        provider_json = json.dumps(
+            [
+                {
+                    "id": "runtime-timeout",
+                    "url": "https://example.test/query",
+                    "method": "GET",
+                }
+            ]
+        )
+        environment = {
+            "LOL_BAN_PROVIDERS_JSON": provider_json,
+            "LOL_BAN_UPSTREAM_URL": "",
+            "LOL_BAN_TIMEOUT": "17.5",
+            "LOL_BAN_SNAPSHOT_ENABLED": "0",
+        }
+        with patch.dict(os.environ, environment, clear=False), patch(
+            "services.lolban_service.enabled_providers",
+            return_value=[],
+        ):
+            service = create_lolban_service(strict_configuration=True)
+
+        self.assertEqual(len(service.providers), 1)
+        self.assertEqual(service.providers[0].timeout_seconds, 17.5)
 
 
 if __name__ == "__main__":
