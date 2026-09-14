@@ -13,6 +13,24 @@ class FakeService:
 
 
 class LolBanRuntimeTests(unittest.TestCase):
+    def test_runtime_is_lazy_until_first_access(self) -> None:
+        calls = 0
+        initial = FakeService("initial")
+
+        def initialize() -> FakeService:
+            nonlocal calls
+            calls += 1
+            return initial
+
+        runtime = LolBanRuntime(initial_service_factory=initialize)
+
+        self.assertEqual(calls, 0)
+        self.assertIs(runtime.service(), initial)
+        self.assertEqual(calls, 1)
+        self.assertIs(runtime.service(), initial)
+        self.assertEqual(calls, 1)
+        self.assertTrue(runtime.loaded_at())
+
     def test_successful_reload_swaps_service_and_environment(self) -> None:
         original = FakeService("old")
         replacement = FakeService("new")
@@ -47,6 +65,29 @@ class LolBanRuntimeTests(unittest.TestCase):
             self.assertEqual(runtime.loaded_at(), loaded_at)
             self.assertEqual(os.environ["LOL_BAN_TIMEOUT"], "10")
             self.assertNotIn("LOL_BAN_4PNG_TOKEN", os.environ)
+
+    def test_process_control_exception_rolls_back_environment(self) -> None:
+        for error_type in (KeyboardInterrupt, SystemExit):
+            with self.subTest(error_type=error_type.__name__):
+                original = FakeService("old")
+
+                def fail() -> FakeService:
+                    raise error_type()
+
+                runtime = LolBanRuntime(original, service_factory=fail)
+                loaded_at = runtime.loaded_at()
+                with patch.dict(os.environ, {"LOL_BAN_TIMEOUT": "10"}, clear=False):
+                    with self.assertRaises(error_type):
+                        runtime.reload(
+                            {
+                                "LOL_BAN_TIMEOUT": "22",
+                                "LOL_BAN_4PNG_TOKEN": "temporary-secret",
+                            }
+                        )
+                    self.assertIs(runtime.service(), original)
+                    self.assertEqual(runtime.loaded_at(), loaded_at)
+                    self.assertEqual(os.environ["LOL_BAN_TIMEOUT"], "10")
+                    self.assertNotIn("LOL_BAN_4PNG_TOKEN", os.environ)
 
 
 if __name__ == "__main__":
