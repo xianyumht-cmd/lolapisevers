@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -11,6 +12,11 @@ async def lifespan(app: FastAPI):
     logger = logging.getLogger("LOLDataSystem")
     ctx = getattr(app.state, "ctx", None)
     client = getattr(ctx, "so1_client", None) or getattr(app.state, "so1_client", None)
+    if ctx is not None:
+        try:
+            await asyncio.to_thread(ctx.start)
+        except Exception as exc:
+            logger.error("startup application context failed: %s", type(exc).__name__)
     try:
         if client is not None:
             await client.init_browser()
