@@ -1,519 +1,24 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import re
 import threading
 import time
 import uuid
 from dataclasses import asdict
-from pathlib import Path
 from typing import Any
 
 import requests
 
 from .config import AppConfig, WatcherConfig
-from .providers import (
-    FileEntry,
-    ProviderChain,
-    ShareSnapshot,
-    canonical_file_key,
-    snapshot_from_state,
-    utc_now_iso,
+from .monitor_diff import compare_snapshots
+from .monitor_errors import (
+    safe_class_name as _safe_class_name,
+    safe_code as _safe_code,
+    safe_failure as _safe_failure,
+    sanitize_persisted_errors as _sanitize_persisted_errors,
 )
-
-STATE_SCHEMA_VERSION = 5
-_SAFE_CODE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$")
-_ERROR_CONTEXT_KEYS = {
-    "body",
-    "exception",
-    "exception_message",
-    "headers",
-    "message",
-    "query",
-    "request_body",
-    "request_headers",
-    "request_query",
-    "request_url",
-    "response_body",
-    "response_headers",
-    "response_url",
-    "url",
-}
-
-
-def _safe_code(value: Any, fallback: str) -> str:
-    candidate = str(value or "").strip().lower()
-    return candidate if _SAFE_CODE_PATTERN.fullmatch(candidate) else fallback
-
-
-def _safe_class_name(value: Any, fallback: str) -> str:
-    candidate = re.sub(r"[^a-zA-Z0-9_.-]+", "-", str(value or "").strip()).strip("-")
-    return candidate[:64] or fallback
-
-
-def _safe_failure(exc: Exception, fallback_code: str) -> dict[str, Any]:
-    status_code = None
-    configured_code = getattr(exc, "error_code", "")
-    configured_retryable = getattr(exc, "retryable", None)
-    configured_status_code = getattr(exc, "status_code", None)
-    if isinstance(configured_status_code, int):
-        status_code = configured_status_code
-    if configured_code:
-        error_code = _safe_code(configured_code, fallback_code)
-    elif isinstance(exc, requests.ConnectTimeout):
-        error_code = "connect_timeout"
-    elif isinstance(exc, requests.ReadTimeout):
-        error_code = "read_timeout"
-    elif isinstance(exc, requests.Timeout):
-        error_code = "timeout"
-    elif isinstance(exc, requests.ConnectionError):
-        error_code = "connection_error"
-    elif isinstance(exc, requests.HTTPError):
-        error_code = "http_status"
-        response = getattr(exc, "response", None)
-        candidate = getattr(response, "status_code", None)
-        status_code = int(candidate) if isinstance(candidate, int) else None
-    elif isinstance(exc, (json.JSONDecodeError, ValueError)):
-        error_code = "invalid_response"
-    else:
-        error_code = fallback_code
-
-    if configured_retryable is None:
-        retryable = not isinstance(exc, (json.JSONDecodeError, ValueError))
-        if status_code is not None:
-            retryable = status_code == 429 or status_code >= 500
-    else:
-        retryable = bool(configured_retryable)
-    result: dict[str, Any] = {
-        "error_code": error_code,
-        "error_class": _safe_class_name(type(exc).__name__, "MonitorError"),
-        "retryable": retryable,
-    }
-    if status_code is not None:
-        result["status_code"] = status_code
-    return result
-
-
-def _sanitize_persisted_errors(value: Any) -> bool:
-    """Remove legacy free-form exception data from persisted monitor state."""
-    changed = False
-    if isinstance(value, list):
-        for item in value:
-            changed = _sanitize_persisted_errors(item) or changed
-        return changed
-    if not isinstance(value, dict):
-        return False
-
-    is_error_record = value.get("ok") is False or any(
-        key in value
-        for key in ("error", "error_code", "error_class", "exception")
-    )
-    if "error" in value:
-        value.pop("error", None)
-        value.setdefault("error_code", "legacy_error_redacted")
-        value.setdefault("error_class", "LegacyPersistedError")
-        value.setdefault("retryable", True)
-        changed = True
-        is_error_record = True
-    if is_error_record:
-        for key in list(value):
-            if str(key).strip().lower() in _ERROR_CONTEXT_KEYS:
-                value.pop(key, None)
-                changed = True
-    for item in list(value.values()):
-        changed = _sanitize_persisted_errors(item) or changed
-    return changed
-
-
-def compare_snapshots(previous: ShareSnapshot, current: ShareSnapshot) -> dict[str, list[dict[str, Any]]]:
-    use_provider_fingerprint = previous.provider == current.provider
-
-    def fingerprint(item: FileEntry) -> dict[str, str]:
-        return (
-            item.fingerprint_payload()
-            if use_provider_fingerprint
-            else item.canonical_fingerprint_payload()
-        )
-
-    def grouped(files: list[FileEntry]) -> dict[str, list[FileEntry]]:
-        result: dict[str, list[FileEntry]] = {}
-        for item in files:
-            result.setdefault(canonical_file_key(item), []).append(item)
-        for values in result.values():
-            values.sort(
-                key=lambda item: json.dumps(
-                    fingerprint(item),
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                )
-            )
-        return result
-
-    previous_map = grouped(previous.files)
-    current_map = grouped(current.files)
-    added: list[dict[str, Any]] = []
-    removed: list[dict[str, Any]] = []
-    changed: list[dict[str, Any]] = []
-    for key in sorted(set(previous_map) | set(current_map)):
-        old_items = previous_map.get(key, [])
-        new_items = current_map.get(key, [])
-        paired_count = min(len(old_items), len(new_items))
-        for index in range(paired_count):
-            old = old_items[index]
-            new = new_items[index]
-            if fingerprint(old) != fingerprint(new):
-                changed.append({"before": asdict(old), "after": asdict(new)})
-        removed.extend(asdict(item) for item in old_items[paired_count:])
-        added.extend(asdict(item) for item in new_items[paired_count:])
-    return {"added": added, "removed": removed, "changed": changed}
-
-
-class StateStore:
-    def __init__(self, path: Path):
-        self.path = path
-        self.lock = threading.RLock()
-        self._needs_migration = False
-        self.data: dict[str, Any] = self._load()
-        if self._needs_migration:
-            self.save()
-
-    def _load(self) -> dict[str, Any]:
-        if not self.path.exists():
-            return {
-                "version": STATE_SCHEMA_VERSION,
-                "snapshots": {},
-                "events": [],
-                "last_scan": {},
-                "pending_deliveries": {},
-                "orphaned_watchers": {},
-                "guard_candidates": {},
-            }
-        with self.path.open("r", encoding="utf-8-sig") as handle:
-            data = json.load(handle)
-        if not isinstance(data, dict):
-            return {
-                "version": STATE_SCHEMA_VERSION,
-                "snapshots": {},
-                "events": [],
-                "last_scan": {},
-                "pending_deliveries": {},
-                "orphaned_watchers": {},
-                "guard_candidates": {},
-            }
-        try:
-            loaded_version = int(data.get("version") or 1)
-        except (TypeError, ValueError):
-            loaded_version = 1
-            self._needs_migration = True
-        self._needs_migration = (
-            self._needs_migration
-            or loaded_version < STATE_SCHEMA_VERSION
-            or "orphaned_watchers" not in data
-        )
-        data["version"] = max(loaded_version, STATE_SCHEMA_VERSION)
-        expected_containers = {
-            "snapshots": dict,
-            "events": list,
-            "last_scan": dict,
-            "pending_deliveries": dict,
-            "orphaned_watchers": dict,
-            "guard_candidates": dict,
-        }
-        for key, expected_type in expected_containers.items():
-            if not isinstance(data.get(key), expected_type):
-                data[key] = expected_type()
-                self._needs_migration = True
-        self._needs_migration = _sanitize_persisted_errors(data) or self._needs_migration
-        return data
-
-    def save(self) -> None:
-        with self.lock:
-            _sanitize_persisted_errors(self.data)
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            temp_path = self.path.with_suffix(f"{self.path.suffix}.tmp")
-            with temp_path.open("w", encoding="utf-8") as handle:
-                json.dump(self.data, handle, ensure_ascii=False, indent=2)
-                handle.write("\n")
-            temp_path.replace(self.path)
-
-    def snapshot_for(self, watcher_id: str) -> ShareSnapshot | None:
-        with self.lock:
-            raw = self.data.get("snapshots", {}).get(watcher_id)
-            if not isinstance(raw, dict):
-                return None
-            return snapshot_from_state(raw)
-
-    def set_snapshot(self, snapshot: ShareSnapshot) -> None:
-        self.record_scan_success(snapshot, commit_snapshot=True)
-
-    def record_scan_success(
-        self,
-        snapshot: ShareSnapshot,
-        *,
-        commit_snapshot: bool,
-        notification_pending: bool = False,
-        rebaseline_reason: str = "",
-    ) -> None:
-        with self.lock:
-            if commit_snapshot:
-                self.data.setdefault("snapshots", {})[snapshot.watcher_id] = snapshot.to_dict()
-            scan_record = {
-                "ok": True,
-                "at": utc_now_iso(),
-                "provider": snapshot.provider,
-                "file_count": len(snapshot.files),
-                "snapshot_committed": commit_snapshot,
-                "notification_pending": notification_pending,
-            }
-            if rebaseline_reason:
-                scan_record["rebaseline"] = True
-                scan_record["rebaseline_reason"] = rebaseline_reason
-            self.data.setdefault("last_scan", {})[snapshot.watcher_id] = scan_record
-            self.save()
-
-    def set_scan_error(self, watcher_id: str, failure: dict[str, Any]) -> None:
-        with self.lock:
-            self.data.setdefault("last_scan", {})[watcher_id] = {
-                "ok": False,
-                "at": utc_now_iso(),
-                "error_code": _safe_code(
-                    failure.get("error_code"),
-                    "scan_failed",
-                ),
-                "error_class": _safe_class_name(
-                    failure.get("error_class"),
-                    "MonitorError",
-                ),
-                "retryable": failure.get("retryable") is True,
-            }
-            status_code = failure.get("status_code")
-            if isinstance(status_code, int):
-                self.data["last_scan"][watcher_id]["status_code"] = status_code
-            self.save()
-
-    def record_guarded_scan(
-        self,
-        snapshot: ShareSnapshot,
-        *,
-        error_code: str,
-        seen_count: int,
-    ) -> None:
-        with self.lock:
-            self.data.setdefault("last_scan", {})[snapshot.watcher_id] = {
-                "ok": False,
-                "at": utc_now_iso(),
-                "provider": snapshot.provider,
-                "file_count": len(snapshot.files),
-                "snapshot_committed": False,
-                "notification_pending": False,
-                "guard_pending": True,
-                "guard_seen_count": max(1, int(seen_count)),
-                "error_code": _safe_code(
-                    error_code,
-                    "snapshot_confirmation_pending",
-                ),
-                "error_class": "SnapshotGuardPending",
-                "retryable": True,
-            }
-            self.save()
-
-    def append_event(self, event: dict[str, Any], max_events: int = 200) -> None:
-        with self.lock:
-            events = self.data.setdefault("events", [])
-            event_id = str(event.get("id") or "")
-            if event_id:
-                events[:] = [item for item in events if str(item.get("id") or "") != event_id]
-            events.insert(
-                0,
-                json.loads(json.dumps(event, ensure_ascii=False)),
-            )
-            del events[max_events:]
-            self.save()
-
-    def pending_delivery_for(self, event_id: str) -> dict[str, Any] | None:
-        with self.lock:
-            raw = self.data.setdefault("pending_deliveries", {}).get(event_id)
-            return json.loads(json.dumps(raw, ensure_ascii=False)) if isinstance(raw, dict) else None
-
-    def set_pending_delivery(self, event_id: str, value: dict[str, Any]) -> None:
-        with self.lock:
-            self.data.setdefault("pending_deliveries", {})[event_id] = value
-            self.save()
-
-    def clear_pending_delivery(self, event_id: str) -> None:
-        with self.lock:
-            self.data.setdefault("pending_deliveries", {}).pop(event_id, None)
-            self.save()
-
-    def guard_candidate_for(self, watcher_id: str) -> dict[str, Any] | None:
-        with self.lock:
-            raw = self.data.setdefault("guard_candidates", {}).get(watcher_id)
-            return (
-                json.loads(json.dumps(raw, ensure_ascii=False))
-                if isinstance(raw, dict)
-                else None
-            )
-
-    def set_guard_candidate(
-        self,
-        watcher_id: str,
-        value: dict[str, Any],
-    ) -> None:
-        with self.lock:
-            self.data.setdefault("guard_candidates", {})[watcher_id] = value
-            self.save()
-
-    def clear_guard_candidate(self, watcher_id: str) -> bool:
-        with self.lock:
-            removed = (
-                self.data.setdefault("guard_candidates", {}).pop(
-                    watcher_id,
-                    None,
-                )
-                is not None
-            )
-            if removed:
-                self.save()
-            return removed
-
-    def clear_pending_for_watcher(self, watcher_id: str) -> int:
-        with self.lock:
-            pending = self.data.setdefault("pending_deliveries", {})
-            event_ids = [
-                event_id
-                for event_id, value in pending.items()
-                if isinstance(value, dict) and str(value.get("watcher_id") or "") == watcher_id
-            ]
-            for event_id in event_ids:
-                pending.pop(event_id, None)
-            if event_ids:
-                self.save()
-            return len(event_ids)
-
-    def supersede_pending_for_watcher(
-        self,
-        watcher_id: str,
-        *,
-        active_event_id: str = "",
-        reason: str = "source_advanced",
-    ) -> int:
-        """Keep at most one active delivery per watcher and retain audit history."""
-        with self.lock:
-            pending = self.data.setdefault("pending_deliveries", {})
-            superseded_ids = [
-                event_id
-                for event_id, value in pending.items()
-                if event_id != active_event_id
-                and isinstance(value, dict)
-                and str(value.get("watcher_id") or "") == watcher_id
-            ]
-            if not superseded_ids:
-                return 0
-
-            superseded_at = utc_now_iso()
-            safe_reason = _safe_code(reason, "source_advanced")
-            events = self.data.setdefault("events", [])
-            for event_id in superseded_ids:
-                pending.pop(event_id, None)
-                for event in events:
-                    if (
-                        not isinstance(event, dict)
-                        or str(event.get("id") or event.get("event_id") or "") != event_id
-                    ):
-                        continue
-                    event["delivery_state"] = "superseded"
-                    event["superseded_at"] = superseded_at
-                    event["superseded_reason"] = safe_reason
-                    if active_event_id:
-                        event["superseded_by_event_id"] = active_event_id
-                    break
-            self.save()
-            return len(superseded_ids)
-
-    def reconcile_watchers(
-        self,
-        active_watcher_ids: set[str],
-        watcher_metadata: dict[str, dict[str, Any]] | None = None,
-    ) -> None:
-        """Archive removed watcher state and restore it when the ID returns."""
-        with self.lock:
-            snapshots = self.data.setdefault("snapshots", {})
-            last_scan = self.data.setdefault("last_scan", {})
-            pending = self.data.setdefault("pending_deliveries", {})
-            orphans = self.data.setdefault("orphaned_watchers", {})
-            guards = self.data.setdefault("guard_candidates", {})
-            changed = False
-
-            for watcher_id in sorted(active_watcher_ids):
-                archived = orphans.pop(watcher_id, None)
-                if not isinstance(archived, dict):
-                    continue
-                if watcher_id not in snapshots and isinstance(archived.get("snapshot"), dict):
-                    snapshots[watcher_id] = archived["snapshot"]
-                if watcher_id not in last_scan and isinstance(archived.get("last_scan"), dict):
-                    last_scan[watcher_id] = archived["last_scan"]
-                archived_pending = archived.get("pending_deliveries")
-                if isinstance(archived_pending, dict):
-                    for event_id, value in archived_pending.items():
-                        if isinstance(value, dict):
-                            pending.setdefault(event_id, value)
-                archived_guard = archived.get("guard_candidate")
-                if watcher_id not in guards and isinstance(archived_guard, dict):
-                    guards[watcher_id] = archived_guard
-                changed = True
-
-            tracked_ids = set(snapshots) | set(last_scan) | set(guards)
-            tracked_ids.update(
-                str(value.get("watcher_id") or "")
-                for value in pending.values()
-                if isinstance(value, dict) and value.get("watcher_id")
-            )
-            for watcher_id in sorted(tracked_ids - active_watcher_ids):
-                archived = orphans.get(watcher_id)
-                record = dict(archived) if isinstance(archived, dict) else {}
-                moved = False
-                snapshot = snapshots.pop(watcher_id, None)
-                if isinstance(snapshot, dict):
-                    record["snapshot"] = snapshot
-                    moved = True
-                scan = last_scan.pop(watcher_id, None)
-                if isinstance(scan, dict):
-                    record["last_scan"] = scan
-                    moved = True
-                archived_pending = record.get("pending_deliveries")
-                archived_pending = dict(archived_pending) if isinstance(archived_pending, dict) else {}
-                for event_id, value in list(pending.items()):
-                    if not isinstance(value, dict) or str(value.get("watcher_id") or "") != watcher_id:
-                        continue
-                    archived_pending[event_id] = pending.pop(event_id)
-                    moved = True
-                if archived_pending:
-                    record["pending_deliveries"] = archived_pending
-                guard = guards.pop(watcher_id, None)
-                if isinstance(guard, dict):
-                    record["guard_candidate"] = guard
-                    moved = True
-                metadata = (watcher_metadata or {}).get(watcher_id)
-                if isinstance(metadata, dict):
-                    record["watcher"] = metadata
-                if moved:
-                    record.setdefault("archived_at", utc_now_iso())
-                    orphans[watcher_id] = record
-                    changed = True
-
-            if changed:
-                self.save()
-
-    def recent_events(self, limit: int = 50) -> list[dict[str, Any]]:
-        with self.lock:
-            return json.loads(
-                json.dumps(
-                    list(self.data.get("events", []))[: max(1, min(200, limit))],
-                    ensure_ascii=False,
-                )
-            )
+from .monitor_state import STATE_SCHEMA_VERSION, StateStore
+from .providers import FileEntry, ProviderChain, ShareSnapshot, utc_now_iso
 
 
 class LanzouMonitorService:
@@ -584,7 +89,8 @@ class LanzouMonitorService:
         pending_ids = {
             str(value.get("watcher_id") or "")
             for value in pending_deliveries.values()
-            if isinstance(value, dict) and str(value.get("watcher_id") or "") in enabled_ids
+            if isinstance(value, dict)
+            and str(value.get("watcher_id") or "") in enabled_ids
         }
         pending_ids.update(
             watcher_id
@@ -600,7 +106,8 @@ class LanzouMonitorService:
             and not self.config.scan_on_start
             and never_scanned_ids
             and self._started_monotonic
-            and time.monotonic() - self._started_monotonic < self.config.scan_interval_seconds
+            and time.monotonic() - self._started_monotonic
+            < self.config.scan_interval_seconds
         )
         counts = {
             "enabled": len(enabled_ids),
@@ -664,24 +171,41 @@ class LanzouMonitorService:
                 await self.scan_all(notify=True, staggered=True)
                 first = False
             try:
-                await asyncio.wait_for(self._stop_event.wait(), timeout=self.config.scan_interval_seconds)
+                await asyncio.wait_for(
+                    self._stop_event.wait(),
+                    timeout=self.config.scan_interval_seconds,
+                )
             except asyncio.TimeoutError:
                 pass
 
-    async def scan_all(self, notify: bool = True, staggered: bool = False) -> list[dict[str, Any]]:
-        enabled_watchers = [watcher for watcher in self.config.watchers if watcher.enabled]
+    async def scan_all(
+        self,
+        notify: bool = True,
+        staggered: bool = False,
+    ) -> list[dict[str, Any]]:
+        enabled_watchers = [
+            watcher for watcher in self.config.watchers if watcher.enabled
+        ]
         results = []
         batch_size = self.config.scan_batch_size if staggered else 0
         pause_seconds = self.config.scan_batch_pause_seconds if staggered else 0
         for index, watcher in enumerate(enabled_watchers):
             results.append(await self.scan_watcher(watcher.id, notify=notify))
             is_last = index >= len(enabled_watchers) - 1
-            should_pause = batch_size > 0 and pause_seconds > 0 and (index + 1) % batch_size == 0
+            should_pause = (
+                batch_size > 0
+                and pause_seconds > 0
+                and (index + 1) % batch_size == 0
+            )
             if should_pause and not is_last:
                 await asyncio.sleep(pause_seconds)
         return results
 
-    async def scan_watcher(self, watcher_id: str, notify: bool = True) -> dict[str, Any]:
+    async def scan_watcher(
+        self,
+        watcher_id: str,
+        notify: bool = True,
+    ) -> dict[str, Any]:
         watcher = self.watcher_map().get(watcher_id)
         if not watcher:
             return {"ok": False, "watcher_id": watcher_id, "error": "watcher_not_found"}
@@ -689,7 +213,11 @@ class LanzouMonitorService:
             return {"ok": False, "watcher_id": watcher_id, "error": "watcher_disabled"}
         return await asyncio.to_thread(self._scan_watcher_sync, watcher, notify)
 
-    def _scan_watcher_sync(self, watcher: WatcherConfig, notify: bool) -> dict[str, Any]:
+    def _scan_watcher_sync(
+        self,
+        watcher: WatcherConfig,
+        notify: bool,
+    ) -> dict[str, Any]:
         with self._lock_for_watcher(watcher.id):
             return self._scan_watcher_unlocked_sync(watcher, notify)
 
@@ -735,7 +263,11 @@ class LanzouMonitorService:
         )
         return seen_count >= 2, seen_count
 
-    def _scan_watcher_unlocked_sync(self, watcher: WatcherConfig, notify: bool) -> dict[str, Any]:
+    def _scan_watcher_unlocked_sync(
+        self,
+        watcher: WatcherConfig,
+        notify: bool,
+    ) -> dict[str, Any]:
         started = time.time()
         try:
             current = self.provider_chain.fetch(watcher)
@@ -790,7 +322,11 @@ class LanzouMonitorService:
             rebaseline_reason = ""
             if previous_url != current_url:
                 rebaseline_reason = "watcher_url_changed"
-            elif previous.provider and current.provider != previous.provider and current.signature != previous.signature:
+            elif (
+                previous.provider
+                and current.provider != previous.provider
+                and current.signature != previous.signature
+            ):
                 if empty_confirmed:
                     rebaseline_reason = "provider_changed_with_confirmed_empty_snapshot"
                 else:
@@ -818,7 +354,9 @@ class LanzouMonitorService:
                             "snapshot_committed": False,
                             "elapsed_ms": int((time.time() - started) * 1000),
                         }
-                    rebaseline_reason = "provider_changed_with_non_equivalent_snapshot"
+                    rebaseline_reason = (
+                        "provider_changed_with_non_equivalent_snapshot"
+                    )
             if rebaseline_reason:
                 self.store.clear_guard_candidate(watcher.id)
                 discarded_pending = self.store.supersede_pending_for_watcher(
@@ -847,7 +385,11 @@ class LanzouMonitorService:
             self.store.clear_guard_candidate(watcher.id)
             diff = compare_snapshots(previous, current)
             changed = bool(diff["added"] or diff["removed"] or diff["changed"])
-            event = self._build_event(watcher, current, previous, diff) if changed else None
+            event = (
+                self._build_event(watcher, current, previous, diff)
+                if changed
+                else None
+            )
             if event:
                 superseded_pending = self.store.supersede_pending_for_watcher(
                     watcher.id,
@@ -865,15 +407,26 @@ class LanzouMonitorService:
             notification_pending = False
             if event and notify:
                 pending = self.store.pending_delivery_for(event["id"]) or {}
-                previous_results = pending.get("target_results") if isinstance(pending.get("target_results"), dict) else {}
-                enabled_target_names = [target.name for target in self.config.notify_targets if target.enabled]
+                previous_results = (
+                    pending.get("target_results")
+                    if isinstance(pending.get("target_results"), dict)
+                    else {}
+                )
+                enabled_target_names = [
+                    target.name
+                    for target in self.config.notify_targets
+                    if target.enabled
+                ]
                 remaining_target_names = {
                     name
                     for name in enabled_target_names
                     if not isinstance(previous_results.get(name), dict)
                     or previous_results[name].get("ok") is not True
                 }
-                attempted_results = self._notify_targets(event, remaining_target_names)
+                attempted_results = self._notify_targets(
+                    event,
+                    remaining_target_names,
+                )
                 merged_results = dict(previous_results)
                 for result in attempted_results:
                     merged_results[str(result.get("target") or "")] = result
@@ -885,7 +438,13 @@ class LanzouMonitorService:
                 if not enabled_target_names:
                     delivery_state = "skipped"
                 else:
-                    successful = len([result for result in event["notify_results"] if result.get("ok") is True])
+                    successful = len(
+                        [
+                            result
+                            for result in event["notify_results"]
+                            if result.get("ok") is True
+                        ]
+                    )
                     delivery_state = (
                         "complete"
                         if successful == len(enabled_target_names)
@@ -909,7 +468,8 @@ class LanzouMonitorService:
                             "current_signature": current.provider_signature,
                             "previous_canonical_signature": previous.signature,
                             "current_canonical_signature": current.signature,
-                            "created_at": pending.get("created_at") or event["created_at"],
+                            "created_at": pending.get("created_at")
+                            or event["created_at"],
                             "updated_at": utc_now_iso(),
                             "delivery_state": delivery_state,
                             "target_results": merged_results,
@@ -946,7 +506,11 @@ class LanzouMonitorService:
                 "elapsed_ms": int((time.time() - started) * 1000),
             }
 
-    def _render_message(self, watcher: WatcherConfig, snapshot: ShareSnapshot) -> str:
+    def _render_message(
+        self,
+        watcher: WatcherConfig,
+        snapshot: ShareSnapshot,
+    ) -> str:
         values = {
             "title": snapshot.title or watcher.title,
             "name": snapshot.title or watcher.title,
@@ -1061,7 +625,10 @@ class LanzouMonitorService:
                                 or response.status_code >= 500,
                             }
                         )
-                    elif not isinstance(response_body, dict) or response_body.get("ok") is not True:
+                    elif (
+                        not isinstance(response_body, dict)
+                        or response_body.get("ok") is not True
+                    ):
                         result.update(
                             {
                                 "error_code": "callback_not_acknowledged",
@@ -1089,7 +656,10 @@ class LanzouMonitorService:
                 )
         return results
 
-    async def send_test_event(self, watcher_id: str | None = None) -> dict[str, Any]:
+    async def send_test_event(
+        self,
+        watcher_id: str | None = None,
+    ) -> dict[str, Any]:
         watcher = self.config.watchers[0] if self.config.watchers else None
         if watcher_id:
             watcher = self.watcher_map().get(watcher_id)
@@ -1115,13 +685,28 @@ class LanzouMonitorService:
             "url": watcher.url,
             "message": self._render_message(watcher, current),
             "provider": "test",
-            "diff": {"added": [asdict(fake_file)], "removed": [], "changed": []},
+            "diff": {
+                "added": [asdict(fake_file)],
+                "removed": [],
+                "changed": [],
+            },
             "files": [asdict(fake_file)],
         }
         event["event_id"] = event["id"]
-        event["notify_results"] = await asyncio.to_thread(self._notify_targets, event)
-        enabled_target_count = len([target for target in self.config.notify_targets if target.enabled])
-        successful = len([result for result in event["notify_results"] if result.get("ok") is True])
+        event["notify_results"] = await asyncio.to_thread(
+            self._notify_targets,
+            event,
+        )
+        enabled_target_count = len(
+            [target for target in self.config.notify_targets if target.enabled]
+        )
+        successful = len(
+            [
+                result
+                for result in event["notify_results"]
+                if result.get("ok") is True
+            ]
+        )
         event["delivery_state"] = (
             "complete"
             if enabled_target_count > 0 and successful == enabled_target_count
