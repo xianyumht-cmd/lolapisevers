@@ -31,7 +31,6 @@ lanzou_update_push_api_server/*.bak-*
 lanzou_update_push_api_server/*.bad.*
 
 # One-shot release workspaces and generated checks
-/.deployment-package/
 /artifact/
 /target/
 /ui_control.generated.js
