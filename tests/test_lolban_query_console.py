@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import unittest
 from unittest.mock import patch
 from urllib.parse import parse_qsl, urlsplit
@@ -21,9 +20,9 @@ from lanzou_update_push_api_server.lolban_console import (
 )
 from lanzou_update_push_api_server.ui_theme import apply_ios_glass_theme
 from routers.query_admin import (
-    _apply_reload_environment,
     _provider_error_diagnostic,
     _redact,
+    _reload_environment,
 )
 from services.api_parser_center import ParserConfigError
 
@@ -105,16 +104,27 @@ class LolbanQueryConsoleTests(unittest.TestCase):
         self.assertIn("封号查询配置页", spec["label"])
 
     def test_reload_environment_is_strictly_allowlisted(self):
-        with patch.dict(os.environ, {}, clear=False):
-            changed = _apply_reload_environment(
-                {"environment": {"LOL_BAN_TIMEOUT": "12", "LOL_BAN_SNAPSHOT_ENABLED": "1", "LOLMAP_API_TOKEN": "primary-secret", "LOL_BAN_4PNG_TOKEN": "backup-secret"}}
-            )
-            self.assertEqual(changed, ["LOL_BAN_TIMEOUT", "LOL_BAN_SNAPSHOT_ENABLED", "LOLMAP_API_TOKEN", "LOL_BAN_4PNG_TOKEN"])
-            self.assertEqual(os.environ["LOL_BAN_TIMEOUT"], "12")
-            self.assertEqual(os.environ["LOLMAP_API_TOKEN"], "primary-secret")
-            self.assertEqual(os.environ["LOL_BAN_4PNG_TOKEN"], "backup-secret")
+        updates = _reload_environment(
+            {
+                "environment": {
+                    "LOL_BAN_TIMEOUT": "12",
+                    "LOL_BAN_SNAPSHOT_ENABLED": "1",
+                    "LOLMAP_API_TOKEN": "primary-secret",
+                    "LOL_BAN_4PNG_TOKEN": "backup-secret",
+                }
+            }
+        )
+        self.assertEqual(
+            updates,
+            {
+                "LOL_BAN_TIMEOUT": "12",
+                "LOL_BAN_SNAPSHOT_ENABLED": "1",
+                "LOLMAP_API_TOKEN": "primary-secret",
+                "LOL_BAN_4PNG_TOKEN": "backup-secret",
+            },
+        )
         with self.assertRaises(HTTPException):
-            _apply_reload_environment({"environment": {"PATH": "unsafe"}})
+            _reload_environment({"environment": {"PATH": "unsafe"}})
 
     def test_provider_identity_exposes_operational_fields_only(self):
         identity = _provider_identity(
@@ -139,7 +149,6 @@ class LolbanQueryConsoleTests(unittest.TestCase):
                 "url": "https://example.test/query/$qq",
             },
         )
-
 
     def test_provider_tokens_save_hot_reload_without_returning_values(self):
         for provider_id, secret_name in (
