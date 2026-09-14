@@ -7,7 +7,11 @@ from lanzou_update_push_api_server.control_navigation import (
     apply_control_navigation,
     select_parser_center_section,
 )
-from lanzou_update_push_api_server.control_ui import render_overview_page, render_target_file_watch_page
+from lanzou_update_push_api_server.control_ui import (
+    ASSET_DIRECTORY,
+    render_overview_page,
+    render_target_file_watch_page,
+)
 from lanzou_update_push_api_server.lolban_console import render_lolban_console_page
 from lanzou_update_push_api_server.parser_center_ui_guard import render_parser_center_page
 from lanzou_update_push_api_server.server import _control_page
@@ -56,10 +60,13 @@ class ControlNavigationTests(unittest.TestCase):
     def test_lolban_page_keeps_provider_tokens_inside_provider_cards(self):
         raw = render_lolban_console_page()
         page = _decorate_control_page("/query-console/lolban", raw)
-        self.assertIn('data-secret-provider', page)
-        self.assertIn('providerSecrets', page)
-        self.assertIn('/admin/query-console/lolban/provider-secret', page)
-        self.assertIn('providerSecretControl', page)
+        script = (ASSET_DIRECTORY / "lolban.js").read_text(encoding="utf-8")
+
+        self.assertIn('/control-assets/lolban.js', page)
+        self.assertIn('data-secret-provider', script)
+        self.assertIn('providerSecrets', script)
+        self.assertIn('/admin/query-console/lolban/provider-secret', script)
+        self.assertIn('providerSecretControl', script)
         self.assertNotIn('id="fourPngSecretPanel"', page)
         self.assertIn('class="control-sidebar"', page)
         self.assertIn('/target-file-watch', page)
