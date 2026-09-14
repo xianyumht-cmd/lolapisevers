@@ -8,6 +8,7 @@ from fastapi import HTTPException
 
 from lanzou_update_push_api_server import management
 from lanzou_update_push_api_server.control_extensions import _register_sensitive_lolban_fields
+from lanzou_update_push_api_server.control_ui import ASSET_DIRECTORY
 from lanzou_update_push_api_server.lolban_console import (
     _merge_masked,
     _merge_masked_url,
@@ -209,19 +210,36 @@ class LolbanQueryConsoleTests(unittest.TestCase):
         self.assertIn("5001", diagnostic["message"])
         self.assertNotIn("LOL_BAN_4PNG_TOKEN", diagnostic["message"])
 
-    def test_dedicated_page_contains_required_diagnostics(self):
+    def test_dedicated_page_uses_external_assets_and_keeps_diagnostics_contract(self):
         page = render_lolban_console_page()
-        self.assertIn("封号查询配置与实时诊断", page)
-        self.assertIn("Provider 直连", page)
-        self.assertIn("5001 正式链路", page)
-        self.assertIn("/admin/query-console/lolban/save", page)
-        self.assertIn("/admin/query-console/lolban/test", page)
-        self.assertIn("测试所选 Provider", page)
-        self.assertIn("测试正式链路", page)
-        self.assertIn("data-secret-provider", page)
-        self.assertIn("providerSecrets", page)
-        self.assertIn("/admin/query-console/lolban/provider-secret", page)
-        self.assertIn("providerSecretControl", page)
+        script = (ASSET_DIRECTORY / "lolban.js").read_text(encoding="utf-8")
+
+        for marker in (
+            "封号查询配置与实时诊断",
+            "Provider 直连",
+            "5001 正式链路",
+            "测试所选 Provider",
+            "测试正式链路",
+            'id="providerResult"',
+            'id="formalResult"',
+        ):
+            self.assertIn(marker, page)
+        self.assertIn('/control-assets/lolban.css', page)
+        self.assertIn('/control-assets/lolban.js', page)
+        self.assertNotIn('<style>', page)
+        self.assertNotIn('const S=', page)
+
+        for marker in (
+            "/admin/query-console/lolban/save",
+            "/admin/query-console/lolban/test",
+            "/admin/query-console/lolban/provider-secret",
+            "parser_providers",
+            "legacy_providers",
+            "data-secret-provider",
+            "providerSecrets",
+            "providerSecretControl",
+        ):
+            self.assertIn(marker, script)
 
     def test_root_dashboard_theme_injects_lolban_entry(self):
         page = apply_ios_glass_theme(
