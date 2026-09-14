@@ -215,6 +215,13 @@ class UpstreamHttpClientTests(unittest.TestCase):
         self.assertFalse(invalid.ok)
         self.assertEqual(invalid.error.error_class, "invalid_url")
 
+    def test_process_control_exceptions_propagate(self):
+        for exc_type in (KeyboardInterrupt, SystemExit):
+            with self.subTest(exc_type=exc_type.__name__):
+                client = self.make_client(SequenceSession([exc_type()]), attempts=1)
+                with self.assertRaises(exc_type):
+                    client.get_json("control-signal", "https://example.invalid/data")
+
     def test_error_payload_does_not_expose_url(self):
         secret_url = "https://user:password@example.invalid/private?token=secret"
         session = SequenceSession([requests.exceptions.ReadTimeout("read timed out")])
