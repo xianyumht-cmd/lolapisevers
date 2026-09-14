@@ -5,27 +5,18 @@ import threading
 from datetime import datetime, timezone
 from typing import Callable, Mapping
 
-from services.lolban_service import LolBanService, _create_default_service
+from services.lolban_service import LolBanService, create_lolban_service
 
 
 _MISSING = object()
 
 
-def _env_int(name: str, default: int, *, minimum: int) -> int:
-    try:
-        value = int(str(os.getenv(name, default)).strip())
-    except (TypeError, ValueError):
-        value = default
-    return max(minimum, value)
-
-
 def _service_from_environment() -> LolBanService:
-    return LolBanService(
-        normal_cache_seconds=_env_int("LOL_BAN_NORMAL_CACHE_SECONDS", 60, minimum=1),
-        banned_cache_seconds=_env_int("LOL_BAN_BANNED_CACHE_SECONDS", 300, minimum=1),
-        stale_cache_seconds=_env_int("LOL_BAN_STALE_CACHE_SECONDS", 86400, minimum=0),
-        max_stale_entries=_env_int("LOL_BAN_MAX_STALE_ENTRIES", 1024, minimum=1),
-    )
+    return create_lolban_service(strict_configuration=True)
+
+
+def _initial_service_from_environment() -> LolBanService:
+    return create_lolban_service(strict_configuration=False)
 
 
 class LolBanRuntime:
@@ -36,18 +27,31 @@ class LolBanRuntime:
         initial_service: LolBanService | None = None,
         *,
         service_factory: Callable[[], LolBanService] = _service_from_environment,
+        initial_service_factory: Callable[[], LolBanService] = _initial_service_from_environment,
     ) -> None:
         self._lock = threading.RLock()
         self._service_factory = service_factory
-        self._service = initial_service or _create_default_service()
-        self._loaded_at = datetime.now(timezone.utc).isoformat()
+        self._initial_service_factory = initial_service_factory
+        self._service = initial_service
+        self._loaded_at = (
+            datetime.now(timezone.utc).isoformat()
+            if initial_service is not None
+            else ""
+        )
+
+    def _ensure_service_locked(self) -> LolBanService:
+        if self._service is None:
+            self._service = self._initial_service_factory()
+            self._loaded_at = datetime.now(timezone.utc).isoformat()
+        return self._service
 
     def service(self) -> LolBanService:
         with self._lock:
-            return self._service
+            return self._ensure_service_locked()
 
     def loaded_at(self) -> str:
         with self._lock:
+            self._ensure_service_locked()
             return self._loaded_at
 
     def reload(self, environment: Mapping[str, str] | None = None) -> LolBanService:
@@ -57,7 +61,7 @@ class LolBanRuntime:
             try:
                 os.environ.update(updates)
                 candidate = self._service_factory()
-            except Exception:
+            except BaseException:
                 for key, value in previous.items():
                     if value is _MISSING:
                         os.environ.pop(key, None)
