@@ -25,8 +25,9 @@ from services.contact_risk_service import (
 )
 from services.cross_query_service import query_cross
 from services.dynamic_query_service import dynamic_meta, format_dynamic_text, query_dynamic
-from services.lolban_service import format_lolban_text, get_lolban_result, valid_qq
 from services.groupguard_protocol import canonical_feature, canonical_report_feature
+from services.lolban_runtime import get_lolban_service
+from services.lolban_service import format_lolban_text, valid_qq
 from services.main_control_security import require_control_access
 from services.query_delivery import (
     choose_text_delivery,
@@ -258,7 +259,7 @@ async def groupguard_query(request: Request, body: Dict[str, Any]):
                     client_request_id=client_request_id,
                     server_request_id=server_request_id,
                 )
-            payload, _source, _ttl = await get_lolban_result(qq)
+            payload, _source, _ttl = await get_lolban_service().get_result(qq)
             text = format_lolban_text(payload)
         elif feature == "dynamic":
             command_id = str(parameters.get("command_id") or "").strip()
