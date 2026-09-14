@@ -7,6 +7,10 @@ from typing import Any, Mapping
 import requests
 
 
+class ProviderResponseTooLargeError(ValueError, RuntimeError):
+    """Provider response exceeded the configured hard byte limit."""
+
+
 @dataclass(frozen=True)
 class ProviderHttpResponse:
     status_code: int
@@ -86,7 +90,7 @@ class ProviderHttpTransport:
             except ValueError:
                 declared_size = 0
             if declared_size > self.max_response_bytes:
-                raise ValueError("provider_response_too_large")
+                raise ProviderResponseTooLargeError("provider_response_too_large")
 
         chunks: list[bytes] = []
         total = 0
@@ -95,6 +99,6 @@ class ProviderHttpTransport:
                 continue
             total += len(chunk)
             if total > self.max_response_bytes:
-                raise ValueError("provider_response_too_large")
+                raise ProviderResponseTooLargeError("provider_response_too_large")
             chunks.append(bytes(chunk))
         return b"".join(chunks)
