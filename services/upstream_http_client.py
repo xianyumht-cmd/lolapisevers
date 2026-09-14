@@ -342,6 +342,10 @@ class UpstreamHttpClient:
             if flight is not None and not flight.done():
                 flight.set_result(result)
             return result
+        except BaseException as exc:
+            if flight is not None and not flight.done():
+                flight.set_exception(exc)
+            raise
         finally:
             if singleflight:
                 with self._lock:
