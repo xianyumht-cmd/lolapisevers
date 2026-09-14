@@ -7,6 +7,7 @@ from db import Database
 from so1_client import So1Client
 
 from core.config import AppConfig, load_config
+from services.contact_risk_retry_queue import get_contact_risk_retry_queue
 from services.contact_risk_store import ContactRiskStore
 from services.image_asset_store import PersistentImageAssetCache
 from services.persistent_snapshot_store import PersistentSnapshotStore
@@ -38,6 +39,7 @@ class AppContext:
         self.upstream_http_client = UpstreamHttpClient(logger=self.logger)
         self.upstream_snapshot_store = PersistentSnapshotStore()
         self.contact_risk_store = ContactRiskStore()
+        self.contact_risk_retry_queue = get_contact_risk_retry_queue()
         self.image_asset_cache = PersistentImageAssetCache(
             ttl_seconds=max(config.aram_augment_cache_seconds, 3600),
             max_size=512,
@@ -68,6 +70,9 @@ class AppContext:
                 return None
 
     def start(self) -> None:
+        """Initialize persistent runtime dependencies from the app lifespan."""
+        self.contact_risk_store.start()
+        self.contact_risk_retry_queue.start()
         self.ensure_db()
 
 

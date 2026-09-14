@@ -124,4 +124,10 @@ class SafeTargetFileWatchService(TargetFileWatchService):
         return self.status()
 
 
-target_file_watch_service = SafeTargetFileWatchService()
+def create_target_file_watch_service() -> SafeTargetFileWatchService:
+    """Create the watcher explicitly from application startup code.
+
+    Keeping construction behind a factory prevents importing this module from
+    reading runtime config/state files or creating background-task state.
+    """
+    return SafeTargetFileWatchService()

@@ -10,7 +10,6 @@ def build_app() -> FastAPI:
 
     from core.build_info import load_build_info
     from core.config import load_config
-    from core.context import create_app_context
     from core.lifespan import lifespan
     from services.parser_center_multipart import install_parser_center_multipart_support
 
@@ -42,8 +41,11 @@ def build_app() -> FastAPI:
     )
     app.state.config = config
     app.state.build_info = build_info
-    app.state.ctx = create_app_context(config=config)
-    app.state.so1_client = app.state.ctx.so1_client
+    # Runtime resources are created by the FastAPI lifespan, not while the
+    # application object and router graph are merely being assembled.
+    app.state.ctx = None
+    app.state.so1_client = None
+    app.state.target_file_watch_service = None
     app.state.db_config = config.db_config
 
     app.include_router(health_router)
