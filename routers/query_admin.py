@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
-import importlib
 import json
 import os
 import re
@@ -16,11 +15,15 @@ from fastapi import APIRouter, HTTPException, Request
 
 from services import lolban_service
 from services.api_parser_center import ParserConfigError, ProviderResponseError, prepare_request
+from services.lolban_runtime import (
+    get_lolban_loaded_at,
+    get_lolban_service,
+    reload_lolban_service,
+)
 from services.main_control_security import require_control_access
 
 
 router = APIRouter()
-_RUNTIME_LOADED_AT = datetime.now(timezone.utc).isoformat()
 _MASK = "***"
 _SECRET_REF_RE = re.compile(r"^\$secret:([A-Za-z_][A-Za-z0-9_]*)$")
 _SENSITIVE_KEY_RE = re.compile(
@@ -153,14 +156,14 @@ def _signature(providers: list[dict[str, Any]]) -> str:
 
 
 def lolban_runtime_snapshot() -> dict[str, Any]:
-    service = lolban_service._default_service
+    service = get_lolban_service()
     providers = [
         _provider_snapshot(provider, index)
         for index, provider in enumerate(service.providers, start=1)
     ]
     return {
         "ok": True,
-        "loaded_at": _RUNTIME_LOADED_AT,
+        "loaded_at": get_lolban_loaded_at(),
         "provider_count": len(providers),
         "providers": providers,
         "provider_signature": _signature(providers),
@@ -173,8 +176,7 @@ def lolban_runtime_snapshot() -> dict[str, Any]:
 
 
 def _select_provider(provider_id: str) -> tuple[Any, int]:
-    service = lolban_service._default_service
-    providers = list(service.providers)
+    providers = list(get_lolban_service().providers)
     if not providers:
         raise HTTPException(status_code=503, detail="封号查询没有已加载的 Provider")
     requested = str(provider_id or "").strip()
@@ -192,24 +194,19 @@ def _request_preview(provider: Any, index: int, qq: str) -> dict[str, Any]:
     return _redact(prepared.redacted())
 
 
-def _apply_reload_environment(payload: Mapping[str, Any]) -> list[str]:
+def _reload_environment(payload: Mapping[str, Any]) -> dict[str, str]:
     supplied = payload.get("environment")
     if supplied is None:
-        return []
+        return {}
     if not isinstance(supplied, Mapping):
         raise HTTPException(status_code=400, detail="environment 必须是对象")
-    changed: list[str] = []
+    updates: dict[str, str] = {}
     for raw_key, raw_value in supplied.items():
         key = str(raw_key or "").strip()
         if key not in _ALLOWED_RELOAD_ENV_KEYS:
             raise HTTPException(status_code=400, detail=f"不允许热加载环境字段：{key}")
-        os.environ[key] = str(raw_value if raw_value is not None else "")
-        changed.append(key)
-    return changed
-
-
-def _reload_lolban_module() -> None:
-    importlib.reload(lolban_service)
+        updates[key] = str(raw_value if raw_value is not None else "")
+    return updates
 
 
 def _provider_error_diagnostic(exc: Exception) -> dict[str, Any]:
@@ -293,17 +290,15 @@ async def admin_lolban_provider_test(request: Request, payload: dict[str, Any]) 
 @router.post("/admin/query/lolban/reload")
 async def admin_lolban_reload(request: Request, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     require_control_access(request)
-    changed_environment = _apply_reload_environment(payload or {})
-    global _RUNTIME_LOADED_AT
+    environment = _reload_environment(payload or {})
     try:
-        await asyncio.to_thread(_reload_lolban_module)
+        await asyncio.to_thread(reload_lolban_service, environment)
     except Exception as exc:
         raise HTTPException(
             status_code=400,
             detail=f"封号 Provider 重新加载失败：{type(exc).__name__}",
         ) from exc
-    _RUNTIME_LOADED_AT = datetime.now(timezone.utc).isoformat()
     snapshot = lolban_runtime_snapshot()
     snapshot["reloaded"] = True
-    snapshot["changed_environment"] = changed_environment
+    snapshot["changed_environment"] = list(environment)
     return snapshot
