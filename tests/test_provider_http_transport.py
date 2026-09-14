@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from services.provider_http_transport import ProviderHttpTransport
+from services.provider_http_transport import ProviderHttpResponse, ProviderHttpTransport
 
 
 class FakeResponse:
@@ -35,6 +35,7 @@ class ProviderHttpTransportTests(unittest.TestCase):
         response = FakeResponse(chunks=[b'{"ok":true}'])
         session = FakeSession(response)
         transport = ProviderHttpTransport(session=session, connect_timeout=2.5)
+        files = [("evidence", (None, "text"))]
 
         result = transport.request(
             "post",
@@ -43,6 +44,7 @@ class ProviderHttpTransportTests(unittest.TestCase):
             params={"qq": "1"},
             data={"form": "value"},
             json_body={"json": True},
+            files=files,
             timeout_seconds=8,
         )
 
@@ -53,7 +55,9 @@ class ProviderHttpTransportTests(unittest.TestCase):
         self.assertEqual(kwargs["params"], {"qq": "1"})
         self.assertEqual(kwargs["data"], {"form": "value"})
         self.assertEqual(kwargs["json"], {"json": True})
+        self.assertIs(kwargs["files"], files)
         self.assertFalse(kwargs["allow_redirects"])
+        self.assertTrue(kwargs["stream"])
         self.assertTrue(response.closed)
 
     def test_declared_oversize_response_is_rejected_and_closed(self) -> None:
@@ -71,6 +75,22 @@ class ProviderHttpTransportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "provider_response_too_large"):
             transport.request("GET", "https://example.invalid/query")
         self.assertTrue(response.closed)
+
+    def test_invalid_content_length_does_not_disable_stream_limit(self) -> None:
+        response = FakeResponse(
+            chunks=[b"a" * 800, b"b" * 800],
+            headers={"Content-Length": "not-a-number"},
+        )
+        transport = ProviderHttpTransport(session=FakeSession(response), max_response_bytes=1024)
+
+        with self.assertRaisesRegex(ValueError, "provider_response_too_large"):
+            transport.request("GET", "https://example.invalid/query")
+        self.assertTrue(response.closed)
+
+    def test_response_elapsed_defaults_for_legacy_three_argument_construction(self) -> None:
+        response = ProviderHttpResponse(302, {"Location": "/next"}, b"")
+        self.assertEqual(response.elapsed_ms, 0)
+        self.assertTrue(response.ok)
 
 
 if __name__ == "__main__":

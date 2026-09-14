@@ -12,7 +12,7 @@ class ProviderHttpResponse:
     status_code: int
     headers: Mapping[str, str]
     body: bytes
-    elapsed_ms: int
+    elapsed_ms: int = 0
 
     @property
     def ok(self) -> bool:
@@ -20,16 +20,21 @@ class ProviderHttpResponse:
 
 
 class ProviderHttpTransport:
-    """Bounded standard HTTP transport for configurable provider requests."""
+    """Bounded standard HTTP transport for configurable provider requests.
+
+    The default transport delegates to ``requests.request`` so it does not keep
+    mutable cross-request session state. Callers that intentionally own a
+    Session can inject it explicitly.
+    """
 
     def __init__(
         self,
         *,
-        session: requests.Session | None = None,
+        session: Any = None,
         max_response_bytes: int = 2 * 1024 * 1024,
         connect_timeout: float = 3.0,
     ) -> None:
-        self.session = session or requests.Session()
+        self.session = session or requests
         self.max_response_bytes = max(1024, int(max_response_bytes))
         self.connect_timeout = max(0.1, float(connect_timeout))
 
@@ -42,6 +47,7 @@ class ProviderHttpTransport:
         params: Mapping[str, Any] | None = None,
         data: Mapping[str, Any] | None = None,
         json_body: Any = None,
+        files: Any = None,
         timeout_seconds: float = 10.0,
         allow_redirects: bool = False,
     ) -> ProviderHttpResponse:
@@ -56,6 +62,7 @@ class ProviderHttpTransport:
                 params=dict(params or {}) or None,
                 data=dict(data or {}) or None,
                 json=json_body,
+                files=files,
                 timeout=(min(self.connect_timeout, timeout), timeout),
                 allow_redirects=allow_redirects,
                 stream=True,
@@ -75,11 +82,11 @@ class ProviderHttpTransport:
         declared = str(response.headers.get("Content-Length") or "").strip()
         if declared:
             try:
-                if int(declared) > self.max_response_bytes:
-                    raise ValueError("provider_response_too_large")
-            except ValueError as exc:
-                if str(exc) == "provider_response_too_large":
-                    raise
+                declared_size = int(declared)
+            except ValueError:
+                declared_size = 0
+            if declared_size > self.max_response_bytes:
+                raise ValueError("provider_response_too_large")
 
         chunks: list[bytes] = []
         total = 0
