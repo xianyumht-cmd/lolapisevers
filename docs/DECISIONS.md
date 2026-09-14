@@ -123,3 +123,21 @@ For effective values, an explicit group override must be distinguishable from a 
 - Changes to configurable runtime behavior must update every affected control-plane surface in the same task/PR.
 - Regression tests for changed configuration behavior must cover relevant global, feature/profile, explicit group override, and inherited/no-override cases and assert parity between runtime and WebUI/API effective values.
 - Issue #98 tracks the current GroupGuard query-output precedence defect; production configuration is not force-overwritten as a workaround.
+
+## 2026-09-14 — Python lint adoption is incremental and correctness-first
+
+**Decision**
+
+Adopt Ruff as a required Python CI gate, but start with correctness-oriented rules only (`E9`, `F63`, `F7`, `F82`). Repository-wide formatting, style normalization, stricter rule families, typing and complexity thresholds are separate follow-up work and must not be bundled into the first hygiene PR.
+
+**Reasons**
+
+- The repository already has broad Linux/Windows unit coverage and deployment validation, but no static Python quality gate that prevents obvious syntax/name mistakes from accumulating.
+- Enabling a large style preset in one step would create a high-volume diff unrelated to runtime behavior, making review harder and increasing the chance that “de-AI cleanup” hides real changes.
+- A small fail-fast baseline proves Ruff integrates cleanly with the current codebase and can then be expanded deliberately with measured remediation.
+
+**Consequences**
+
+- CI installs a pinned Ruff version and runs the correctness baseline on pull requests targeting `master` and on `master` pushes.
+- New rule families require their own review of false positives and repository impact before becoming blocking.
+- Formatting changes are not mixed into behavior/safety fixes unless a task explicitly owns that migration.
