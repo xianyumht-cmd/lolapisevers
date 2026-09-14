@@ -183,6 +183,11 @@ class ApiParserCenterTests(unittest.TestCase):
         self.assertIn("token=%2A%2A%2A", safe["url"])
         self.assertNotIn("secret", str(safe))
 
+    def test_redaction_fails_closed_for_malformed_url(self):
+        safe = redact({"url": "https://[broken?token=top-secret-token"})
+        self.assertEqual(safe["url"], "***")
+        self.assertNotIn("top-secret-token", str(safe))
+
     def test_template_defaults(self):
         rendered = render_template("原因：{reason|未提供}", {}, [])
         self.assertEqual(rendered, "原因：未提供")
