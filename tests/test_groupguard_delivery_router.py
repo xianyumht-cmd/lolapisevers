@@ -123,9 +123,12 @@ class GroupGuardDeliveryRouterTests(unittest.IsolatedAsyncioTestCase):
             "stale_origin": "persistent_snapshot",
             "stale_age_seconds": 30,
         }
+        service = SimpleNamespace(
+            get_result=AsyncMock(return_value=(payload, "stale", 0))
+        )
         with patch(
-            "routers.groupguard_delivery.get_lolban_result",
-            new=AsyncMock(return_value=(payload, "stale", 0)),
+            "routers.groupguard_delivery.get_lolban_service",
+            return_value=service,
         ):
             response = await groupguard_query(
                 request_with_ctx(),
@@ -144,6 +147,7 @@ class GroupGuardDeliveryRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("账号状态：正常", body["delivery"]["segments"][0]["text"])
         self.assertEqual(body["meta"]["stale_origin"], "persistent_snapshot")
         self.assertNotIn("data", body)
+        service.get_result.assert_awaited_once_with("2621735529")
 
     async def test_invalid_feature_returns_user_visible_non_retryable_error(self):
         response = await groupguard_query(
@@ -191,9 +195,8 @@ class GroupGuardDeliveryRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("token=abc", str(body))
 
     async def test_no_declared_delivery_capability_returns_406(self):
-        with patch(
-            "routers.groupguard_delivery.get_lolban_result",
-            new=AsyncMock(
+        service = SimpleNamespace(
+            get_result=AsyncMock(
                 return_value=(
                     {
                         "msg": "此账号状态正常",
@@ -207,7 +210,11 @@ class GroupGuardDeliveryRouterTests(unittest.IsolatedAsyncioTestCase):
                     "live",
                     60,
                 )
-            ),
+            )
+        )
+        with patch(
+            "routers.groupguard_delivery.get_lolban_service",
+            return_value=service,
         ):
             response = await groupguard_query(
                 request_with_ctx(),
@@ -221,6 +228,7 @@ class GroupGuardDeliveryRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 406)
         self.assertFalse(body["ok"])
         self.assertFalse(body["retry"]["allowed"])
+        service.get_result.assert_awaited_once_with("2621735529")
 
 
 if __name__ == "__main__":
