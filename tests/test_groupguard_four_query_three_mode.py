@@ -36,11 +36,14 @@ class FourQueryThreeModeTests(unittest.IsolatedAsyncioTestCase):
             "status": "safe",
             "count": 1,
         }
+        lolban_service = SimpleNamespace(
+            get_result=AsyncMock(return_value=(payload, "live", 60))
+        )
         with ExitStack() as stack:
             stack.enter_context(
                 patch(
-                    "routers.groupguard_delivery.get_lolban_result",
-                    new=AsyncMock(return_value=(payload, "live", 60)),
+                    "routers.groupguard_delivery.get_lolban_service",
+                    return_value=lolban_service,
                 )
             )
             stack.enter_context(
