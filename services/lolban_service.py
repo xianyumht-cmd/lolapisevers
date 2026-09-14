@@ -24,11 +24,11 @@ from services.api_parser_center import (
 from services.persistent_snapshot_store import PersistentSnapshotStore
 
 
-TIMEOUT = float(os.getenv("LOL_BAN_TIMEOUT", "10"))
-NORMAL_CACHE_SECONDS = int(os.getenv("LOL_BAN_NORMAL_CACHE_SECONDS", "60"))
-BANNED_CACHE_SECONDS = int(os.getenv("LOL_BAN_BANNED_CACHE_SECONDS", "300"))
-STALE_CACHE_SECONDS = int(os.getenv("LOL_BAN_STALE_CACHE_SECONDS", "86400"))
-MAX_STALE_ENTRIES = int(os.getenv("LOL_BAN_MAX_STALE_ENTRIES", "1024"))
+TIMEOUT = 10.0
+NORMAL_CACHE_SECONDS = 60
+BANNED_CACHE_SECONDS = 300
+STALE_CACHE_SECONDS = 86400
+MAX_STALE_ENTRIES = 1024
 LOL_BAN_SNAPSHOT_SOURCE_ID = "lolban-last-known-v1"
 _DEFAULT_SNAPSHOT_STORE = object()
 
@@ -58,6 +58,32 @@ UNSAFE_MESSAGE_WORDS = (
 def _env_bool(name: str, default: bool) -> bool:
     value = str(os.getenv(name, "1" if default else "0")).strip().lower()
     return value not in {"0", "false", "no", "off"}
+
+
+def _env_int(name: str, default: int, *, minimum: int) -> int:
+    try:
+        value = int(str(os.getenv(name, default)).strip())
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, value)
+
+
+def _env_float(
+    name: str,
+    default: float,
+    *,
+    minimum: float,
+    maximum: float,
+) -> float:
+    try:
+        value = float(str(os.getenv(name, default)).strip())
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(value, maximum))
+
+
+def _configured_timeout_seconds() -> float:
+    return _env_float("LOL_BAN_TIMEOUT", TIMEOUT, minimum=1.0, maximum=60.0)
 
 
 def valid_qq(value: str) -> bool:
@@ -295,6 +321,7 @@ def _provider_from_raw(raw: Mapping[str, Any], index: int) -> Optional[LolBanPro
     query = request_spec.get("query") if isinstance(request_spec.get("query"), Mapping) else {}
     parser = raw.get("parser") if isinstance(raw.get("parser"), Mapping) else {}
     json_body = request_spec.get("json") if "json" in request_spec else request_spec.get("json_body")
+    default_timeout = _configured_timeout_seconds()
     try:
         timeout_seconds = max(
             1.0,
@@ -302,13 +329,13 @@ def _provider_from_raw(raw: Mapping[str, Any], index: int) -> Optional[LolBanPro
                 float(
                     request_spec.get("timeout_seconds")
                     or raw.get("timeout_seconds")
-                    or TIMEOUT
+                    or default_timeout
                 ),
                 60.0,
             ),
         )
     except (TypeError, ValueError):
-        timeout_seconds = TIMEOUT
+        timeout_seconds = default_timeout
     return LolBanProvider(
         name=_safe_provider_name(raw.get("id") or raw.get("name"), f"provider-{index}"),
         url=url,
@@ -354,6 +381,7 @@ def load_providers() -> List[LolBanProvider]:
                 url=legacy_url,
                 method="POST",
                 qq_param="qq",
+                timeout_seconds=_configured_timeout_seconds(),
                 form={"action": "query_lol"},
                 headers={
                     "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
@@ -667,22 +695,46 @@ class LolBanService:
         }
 
 
-def _create_default_service() -> LolBanService:
+def _service_settings_from_environment() -> dict[str, int]:
+    return {
+        "normal_cache_seconds": _env_int(
+            "LOL_BAN_NORMAL_CACHE_SECONDS",
+            NORMAL_CACHE_SECONDS,
+            minimum=1,
+        ),
+        "banned_cache_seconds": _env_int(
+            "LOL_BAN_BANNED_CACHE_SECONDS",
+            BANNED_CACHE_SECONDS,
+            minimum=1,
+        ),
+        "stale_cache_seconds": _env_int(
+            "LOL_BAN_STALE_CACHE_SECONDS",
+            STALE_CACHE_SECONDS,
+            minimum=0,
+        ),
+        "max_stale_entries": _env_int(
+            "LOL_BAN_MAX_STALE_ENTRIES",
+            MAX_STALE_ENTRIES,
+            minimum=1,
+        ),
+    }
+
+
+def create_lolban_service(*, strict_configuration: bool = False) -> LolBanService:
+    """Build a service from the current process environment.
+
+    Initial startup is tolerant so an optional provider configuration error does
+    not break the whole API process. Runtime reloads use strict mode so a bad
+    candidate cannot replace the last known working service.
+    """
+
+    settings = _service_settings_from_environment()
     try:
-        return LolBanService()
+        return LolBanService(**settings)
     except Exception as exc:
-        service = LolBanService([])
+        if strict_configuration:
+            raise
+        service = LolBanService([], **settings)
         service._configuration_error_code = "invalid_provider_configuration"
         service._configuration_error_class = type(exc).__name__
         return service
-
-
-_default_service = _create_default_service()
-
-
-async def get_lolban_result(qq: str) -> Tuple[Dict[str, Any], str, int]:
-    return await _default_service.get_result(qq)
-
-
-def get_lolban_health() -> Dict[str, Any]:
-    return _default_service.health()
