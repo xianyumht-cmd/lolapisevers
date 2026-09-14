@@ -128,3 +128,24 @@ The Task Scheduler action contains only local verified staging paths; the GitHub
 Resetting a partial download is confined to the updater home and a strictly validated V3 package filename. Pause/reconnect/resume never weaken the package integrity or commit-relationship gates.
 
 The V3 deployer remains the final authority for candidate testing, production backup, service switch, readiness verification and automatic rollback.
+
+## Development verification gates
+
+### Ruff correctness gate
+
+`.github/workflows/tests.yml` runs a mandatory `python-quality` job for pull requests targeting `master` and for pushes to `master`. The job installs the pinned Ruff version and executes:
+
+```text
+ruff check . --output-format=github
+```
+
+For local parity, use the same pinned version declared in the workflow:
+
+```text
+python -m pip install ruff==0.16.7
+ruff check . --output-format=github
+```
+
+Ruff policy lives in `pyproject.toml`. Phase 1 intentionally enables correctness-oriented rules only (`E9`, `F63`, `F7`, `F82`) so this gate catches real Python mistakes without mixing in a repository-wide formatting rewrite.
+
+When updating Ruff, change the pinned version in `.github/workflows/tests.yml`, run that exact version locally with `ruff check . --output-format=github`, run the normal unit-test/compile verification for the affected change, and update this runbook if the command, selected rules, or verification procedure changes. Do not silently widen lint rules in an unrelated feature PR.

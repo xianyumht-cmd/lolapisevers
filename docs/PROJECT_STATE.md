@@ -1,6 +1,15 @@
 # Project state
 
-更新时间：2026-09-10 +08:00
+更新时间：2026-09-14 +08:00
+
+## Phase 1 code hygiene and safety gate — PR #110
+
+- 第一阶段保持业务/架构边界不变，修复 `UpstreamHttpClient` 误吞 `KeyboardInterrupt` / `SystemExit`，并将 Parser Center / query-admin 的 URL 脱敏异常路径改为 fail-closed。
+- 新增对应回归测试：进程控制异常必须向上传播；畸形 IPv6 URL 和非法端口 URL 不得把原始敏感字符串返回给管理接口。
+- Python CI 新增 Ruff 0.16.7 correctness-only 基线（`E9`、`F63`、`F7`、`F82`），暂不做全仓格式化或大范围风格改写；PR target 统一为 canonical `master`。
+- `.gitignore` 已移除历史误写的 `2.0.0`、`26.0.1`、`cryptography)`、`pip` 条目。
+- `.deployment-package/full-bug-repair-20260801/chunk-00..03.txt` 已由 CI 证明仍是活动 V3 verifier 重建/哈希验证输入；一次清理尝试触发 `test_v3_baseline_readiness` 失败后，原 blob SHA 已无损恢复，当前不得按“历史生成物”删除。
+- 本阶段不修改生产配置、不重启服务、不部署生产；HTTP 基础设施收敛、Provider registry、生命周期/DB 初始化重构、God-module 拆分和 WebUI asset/layout 重构留到后续阶段。
 
 ## LOL patch-day status contract — 2026-09-10
 

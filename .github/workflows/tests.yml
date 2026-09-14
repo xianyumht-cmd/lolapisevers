@@ -2,16 +2,33 @@ name: tests
 
 on:
   pull_request:
-    branches:
-      - master
-      - codex/production-integration-audit-20260726
-      - docs/intranet-query-boundary-20260728
-      - "feat/**"
+    branches: [master]
   push:
     branches: [master]
   workflow_dispatch:
 
 jobs:
+  python-quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Ruff
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ruff==0.16.7
+
+      - name: Run correctness-oriented Ruff checks
+        run: ruff check . --output-format=github
+
   linux-unittest:
     runs-on: ubuntu-latest
     timeout-minutes: 20

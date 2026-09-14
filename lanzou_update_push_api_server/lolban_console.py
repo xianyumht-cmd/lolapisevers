@@ -93,23 +93,23 @@ def _redact_url(value: Any) -> str:
         return ""
     try:
         parts = urlsplit(text)
-    except ValueError:
-        return text
-    if not parts.scheme or not parts.netloc:
-        return text
+        if not parts.scheme or not parts.netloc:
+            return text
 
-    hostname = parts.hostname or ""
-    netloc = hostname
-    if parts.port:
-        netloc = f"{netloc}:{parts.port}"
-    if parts.username is not None or parts.password is not None:
-        netloc = f"{_MASK}@{netloc}"
+        hostname = parts.hostname or ""
+        netloc = hostname
+        if parts.port:
+            netloc = f"{netloc}:{parts.port}"
+        if parts.username is not None or parts.password is not None:
+            netloc = f"{_MASK}@{netloc}"
 
-    query: list[tuple[str, str]] = []
-    for key, item in parse_qsl(parts.query, keep_blank_values=True):
-        query.append((key, _MASK if _SENSITIVE_KEY_RE.search(key) else item))
-    fragment = _MASK if _SENSITIVE_KEY_RE.search(parts.fragment) else parts.fragment
-    return urlunsplit((parts.scheme, netloc, parts.path, urlencode(query), fragment))
+        query: list[tuple[str, str]] = []
+        for key, item in parse_qsl(parts.query, keep_blank_values=True):
+            query.append((key, _MASK if _SENSITIVE_KEY_RE.search(key) else item))
+        fragment = _MASK if _SENSITIVE_KEY_RE.search(parts.fragment) else parts.fragment
+        return urlunsplit((parts.scheme, netloc, parts.path, urlencode(query), fragment))
+    except Exception:
+        return _MASK
 
 
 def _merge_masked_url(value: Any, previous: Any) -> str:

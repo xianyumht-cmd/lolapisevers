@@ -1,5 +1,16 @@
 # PITFALLS
 
+## 2026-09-14 — 安全边界必须 fail-closed，生成物删除前必须先证明不是活动构建输入
+
+- **现象**：第一阶段代码卫生审查同时发现两个边界问题：`UpstreamHttpClient` 的外层 `except BaseException` 会把 `KeyboardInterrupt` / `SystemExit` 转成普通上游失败；URL 脱敏函数在解析异常时会返回原始字符串。清理仓库时又一度把 `.deployment-package/full-bug-repair-20260801/chunk-00..03.txt` 当成历史 Base64 包删除，随后 `test_v3_baseline_readiness` 立即因缺少 4 个 chunk 失败。
+- **根因**：异常捕获和脱敏 fallback 采用了“尽量继续运行”的宽松策略；仓库清理又仅凭目录名/文件形态判断“生成物”，没有先检查测试、构建脚本和哈希合同。实际上这 4 个 chunk 仍是 V3 verifier 重建和 SHA-256 验证的活动输入。
+- **防止复发**：
+  1. 普通业务边界默认只捕获 `Exception`；`KeyboardInterrupt`、`SystemExit` 等进程控制异常必须继续向上传播，除非该层明确拥有关闭协议。
+  2. 脱敏、安全过滤、权限检查等 security primitive 发生解析异常时必须 fail-closed；无法安全解析的 URL 返回整体遮蔽值，不能回退原文。
+  3. 删除任何“看起来像生成物/旧包”的已跟踪文件前，必须先搜索代码、测试、workflow、manifest/hash 校验和构建脚本引用；存在活动引用时先迁移合同，再删除文件。
+  4. 对构建输入的清理结论以 CI 和可验证引用为准，不以目录名推断。若清理导致既有完整性测试失败，应恢复原 blob，而不是修改测试去迎合删除。
+  5. Python 代码卫生门禁采用增量策略：先用 Ruff 的 correctness 规则阻止确定性错误，再单独规划格式化/风格扩展，避免“去 AI 化”演变成大面积无行为价值的 diff。
+
 ## 2026-08-11 — OP.GG ARAM 平衡卡的实时 HTML 不能按单一展示形态解析
 
 - **现象**：海符榜基础 ARAM 层在真实环境中把亚索显示为“完整平衡暂不可用”，而 OP.GG 当前实际有攻速 `+2.5%`；库奇能拿到平衡值但版本显示“未校验”。

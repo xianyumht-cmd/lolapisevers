@@ -277,7 +277,7 @@ def _redact_url(value: str) -> str:
             query.append((key, "***" if _SENSITIVE_KEY_RE.search(key) else item))
         return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
     except Exception:
-        return value
+        return "***"
 
 
 def redact(value: Any, *, key: str = "") -> Any:
