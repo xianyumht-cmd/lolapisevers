@@ -335,7 +335,7 @@ class UpstreamHttpClient:
             if flight is not None and not flight.done():
                 flight.set_result(result)
             return result
-        except BaseException as exc:
+        except Exception as exc:
             error = _redact_error(classify_request_exception(exc), normalized_url)
             circuit = self._failure(source, error) if error.retryable else gate_state
             result = UpstreamResponse(False, source, "failed", error=error, circuit_state=circuit)
