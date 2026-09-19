@@ -156,13 +156,13 @@ def render_watchers_page() -> str:
     content = _page_header(
         eyebrow="P3B · 蓝奏监控",
         title="监控项目",
-        description="新增、编辑、扫描、测试推送和查看文件快照。网盘密码不回显，留空表示保留原值。",
+        description="新增、编辑、扫描、测试推送和查看文件快照；每次原有扫描都会同步检查网盘“话说”中的群号和联系方式。网盘密码不回显，留空表示保留原值。",
         actions=actions,
     ) + '''
 <section class="metric-grid metric-grid-3">
   <article class="metric-card"><div class="metric-icon">''' + icon("radar") + '''</div><div><span>监控项目</span><strong id="watcherCount" class="skeleton-text">0</strong><small>当前配置总数</small></div></article>
   <article class="metric-card"><div class="metric-icon">''' + icon("check") + '''</div><div><span>已启用</span><strong id="watcherEnabledCount" class="skeleton-text">0</strong><small>参与自动扫描</small></div></article>
-  <article class="metric-card"><div class="metric-icon">''' + icon("alert") + '''</div><div><span>需要关注</span><strong id="watcherIssueCount" class="skeleton-text">0</strong><small>最近扫描失败或待推送</small></div></article>
+  <article class="metric-card"><div class="metric-icon">''' + icon("alert") + '''</div><div><span>风险 / 异常</span><strong id="watcherIssueCount" class="skeleton-text">0</strong><small>引流风险、扫描失败或待推送</small></div></article>
 </section>
 <section class="panel">
   <header class="panel-header"><div><h2>监控项目列表</h2><p>修改 ID 时会按原位置保留未重新填写的密码</p></div><span class="badge badge-warning">保存前自动备份</span></header>
