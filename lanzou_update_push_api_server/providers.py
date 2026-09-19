@@ -284,7 +284,7 @@ def _extract_title(page_html: str, fallback: str) -> str:
 def _extract_share_notice(page_html: str) -> tuple[str, bool]:
     patterns = (
         r'<span[^>]+id=["\']filename["\'][^>]*>(.*?)</span>',
-        r'<div[^>]+class=["\'][^"\']*\\buser-radio-\\d+\\b[^"\']*["\'][^>]*>\\s*</div>\\s*(.*?)</div>',
+        r'<div[^>]+class=["\'][^"\']*\buser-radio-\d+\b[^"\']*["\'][^>]*>\s*</div>\s*(.*?)</div>',
     )
     for pattern in patterns:
         match = re.search(pattern, page_html, re.I | re.S)
