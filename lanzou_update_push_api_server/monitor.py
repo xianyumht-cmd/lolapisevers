@@ -146,8 +146,6 @@ class LanzouMonitorService:
             "never_scanned": len(never_scanned_ids),
             "orphan": orphan_count,
             "guarded": len(guarded_ids),
-            "content_risk": len(risk_ids),
-            "content_risk_suspected": len(suspected_ids),
         }
         degraded_reasons = []
         if not running:
@@ -176,8 +174,8 @@ class LanzouMonitorService:
             "never_scanned_watcher_count": counts["never_scanned"],
             "orphan_watcher_count": counts["orphan"],
             "guarded_watcher_count": counts["guarded"],
-            "content_risk_watcher_count": counts["content_risk"],
-            "content_risk_suspected_watcher_count": counts["content_risk_suspected"],
+            "content_risk_watcher_count": len(risk_ids),
+            "content_risk_suspected_watcher_count": len(suspected_ids),
             "watchers": counts,
             "notify_target_count": len(self.config.notify_targets),
             "state_path": str(self.config.state_path),
