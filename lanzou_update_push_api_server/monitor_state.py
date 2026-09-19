@@ -9,7 +9,7 @@ from .monitor_errors import safe_class_name, safe_code, sanitize_persisted_error
 from .providers import ShareSnapshot, snapshot_from_state, utc_now_iso
 
 
-STATE_SCHEMA_VERSION = 5
+STATE_SCHEMA_VERSION = 6
 
 
 class StateStore:
@@ -31,6 +31,7 @@ class StateStore:
             "pending_deliveries": {},
             "orphaned_watchers": {},
             "guard_candidates": {},
+            "content_risk": {},
         }
 
     def _load(self) -> dict[str, Any]:
@@ -58,6 +59,7 @@ class StateStore:
             "pending_deliveries": dict,
             "orphaned_watchers": dict,
             "guard_candidates": dict,
+            "content_risk": dict,
         }
         for key, expected_type in expected_containers.items():
             if not isinstance(data.get(key), expected_type):
@@ -181,6 +183,45 @@ class StateStore:
             self.data.setdefault("pending_deliveries", {}).pop(event_id, None)
             self.save()
 
+    def content_risk_for(self, watcher_id: str) -> dict[str, Any] | None:
+        with self.lock:
+            raw = self.data.setdefault("content_risk", {}).get(watcher_id)
+            return (
+                json.loads(json.dumps(raw, ensure_ascii=False))
+                if isinstance(raw, dict)
+                else None
+            )
+
+    def set_content_risk(self, watcher_id: str, value: dict[str, Any]) -> None:
+        with self.lock:
+            self.data.setdefault("content_risk", {})[watcher_id] = json.loads(
+                json.dumps(value, ensure_ascii=False)
+            )
+            self.save()
+
+    def mark_event_superseded(
+        self,
+        event_id: str,
+        *,
+        active_event_id: str = "",
+        reason: str = "source_advanced",
+    ) -> bool:
+        with self.lock:
+            for event in self.data.setdefault("events", []):
+                if (
+                    not isinstance(event, dict)
+                    or str(event.get("id") or event.get("event_id") or "") != event_id
+                ):
+                    continue
+                event["delivery_state"] = "superseded"
+                event["superseded_at"] = utc_now_iso()
+                event["superseded_reason"] = safe_code(reason, "source_advanced")
+                if active_event_id:
+                    event["superseded_by_event_id"] = active_event_id
+                self.save()
+                return True
+            return False
+
     def guard_candidate_for(self, watcher_id: str) -> dict[str, Any] | None:
         with self.lock:
             raw = self.data.setdefault("guard_candidates", {}).get(watcher_id)
@@ -273,6 +314,7 @@ class StateStore:
             pending = self.data.setdefault("pending_deliveries", {})
             orphans = self.data.setdefault("orphaned_watchers", {})
             guards = self.data.setdefault("guard_candidates", {})
+            content_risk = self.data.setdefault("content_risk", {})
             changed = False
 
             for watcher_id in sorted(active_watcher_ids):
@@ -291,9 +333,12 @@ class StateStore:
                 archived_guard = archived.get("guard_candidate")
                 if watcher_id not in guards and isinstance(archived_guard, dict):
                     guards[watcher_id] = archived_guard
+                archived_risk = archived.get("content_risk")
+                if watcher_id not in content_risk and isinstance(archived_risk, dict):
+                    content_risk[watcher_id] = archived_risk
                 changed = True
 
-            tracked_ids = set(snapshots) | set(last_scan) | set(guards)
+            tracked_ids = set(snapshots) | set(last_scan) | set(guards) | set(content_risk)
             tracked_ids.update(
                 str(value.get("watcher_id") or "")
                 for value in pending.values()
@@ -330,6 +375,10 @@ class StateStore:
                 guard = guards.pop(watcher_id, None)
                 if isinstance(guard, dict):
                     record["guard_candidate"] = guard
+                    moved = True
+                risk = content_risk.pop(watcher_id, None)
+                if isinstance(risk, dict):
+                    record["content_risk"] = risk
                     moved = True
                 metadata = (watcher_metadata or {}).get(watcher_id)
                 if isinstance(metadata, dict):

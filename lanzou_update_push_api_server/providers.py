@@ -209,6 +209,8 @@ class ShareSnapshot:
     provider: str
     fetched_at: str
     files: list[FileEntry]
+    share_notice: str = ""
+    share_notice_available: bool = False
     raw_status: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -249,6 +251,8 @@ class ShareSnapshot:
             "signature": self.signature,
             "file_count": len(self.files),
             "files": [file.__dict__ for file in self.files],
+            "share_notice": self.share_notice,
+            "share_notice_available": self.share_notice_available,
             "raw_status": self.raw_status,
         }
 
@@ -275,6 +279,18 @@ def _extract_title(page_html: str, fallback: str) -> str:
         if value:
             return value
     return fallback
+
+
+def _extract_share_notice(page_html: str) -> tuple[str, bool]:
+    patterns = (
+        r'<span[^>]+id=["\']filename["\'][^>]*>(.*?)</span>',
+        r'<div[^>]+class=["\'][^"\']*\buser-radio-\d+\b[^"\']*["\'][^>]*>\s*</div>\s*(.*?)</div>',
+    )
+    for pattern in patterns:
+        match = re.search(pattern, page_html, re.I | re.S)
+        if match:
+            return _clean_html_text(match.group(1)), True
+    return "", False
 
 
 def _extract_js_vars(page_html: str) -> dict[str, str]:
@@ -338,6 +354,7 @@ class LanzouWebProvider:
         else:
             raise ProviderError(last_error_code)
 
+        share_notice, share_notice_available = _extract_share_notice(page_html)
         ajax_url = urljoin(response.url, ajax_match.group(1))
         variables = _extract_js_vars(page_html)
         base_payload = {
@@ -405,6 +422,8 @@ class LanzouWebProvider:
             provider=self.name,
             fetched_at=utc_now_iso(),
             files=files,
+            share_notice=share_notice,
+            share_notice_available=share_notice_available,
             raw_status={
                 "ajax_url": ajax_url,
                 "browser_profile": profile["name"],
@@ -581,5 +600,7 @@ def snapshot_from_state(value: dict[str, Any]) -> ShareSnapshot:
             for item in value.get("files", [])
             if isinstance(item, dict)
         ],
+        share_notice=str(value.get("share_notice") or ""),
+        share_notice_available=value.get("share_notice_available") is True,
         raw_status=value.get("raw_status") if isinstance(value.get("raw_status"), dict) else {},
     )

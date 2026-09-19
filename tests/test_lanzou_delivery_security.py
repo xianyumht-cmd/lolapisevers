@@ -202,7 +202,7 @@ class LanzouDeliverySecurityTests(unittest.TestCase):
             store = StateStore(path)
             persisted = path.read_text(encoding="utf-8")
 
-        self.assertEqual(store.data["version"], 5)
+        self.assertEqual(store.data["version"], 6)
         self.assertNotIn(marker, persisted)
         self.assertNotIn(
             "error",

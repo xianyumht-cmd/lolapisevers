@@ -165,6 +165,10 @@ configuration_missing = [marker for marker in required_configuration_endpoints i
 if configuration_missing:
     raise SystemExit(f"configuration JavaScript is missing endpoints: {configuration_missing}")
 
+for marker in ("content_risk_status", "引流风险", "说明未知"):
+    if marker not in configuration_script:
+        raise SystemExit(f"configuration JavaScript is missing Lanzou risk marker: {marker}")
+
 required_operations_endpoints = [
     "/admin/logs",
     "/admin/diagnostics",

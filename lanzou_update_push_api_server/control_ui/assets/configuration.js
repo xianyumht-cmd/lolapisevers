@@ -368,9 +368,27 @@
 
   function watcherStatus(watcher) {
     const live = state.overview?.lanzou?.health?.last_scan?.[watcher.id] || {};
+    const riskStatus = String(live.content_risk_status || 'unknown');
+    const riskCoverage = String(live.content_risk_coverage || 'unknown');
+    const riskSummary = String(live.content_risk_summary || '');
+    const riskPending = live.content_risk_notification_pending === true;
+    const coverageNote = riskCoverage === 'unavailable' ? '；本轮未读取到“话说”，保留上次结果' : '';
+    const pendingNote = riskPending ? '；风险通知待重试' : '';
+    if (riskStatus === 'risk') {
+      return { label: '引流风险', kind: 'danger', detail: `${riskSummary || '发现联系方式'}${coverageNote}${pendingNote}` };
+    }
+    if (riskStatus === 'suspected') {
+      return { label: '疑似引流', kind: 'warning', detail: `${riskSummary || '发现疑似联系方式'}${coverageNote}${pendingNote}` };
+    }
     if (!live.at) return { label: '暂无', kind: 'neutral', detail: '尚无扫描记录' };
-    if (!live.ok) return { label: '失败', kind: 'danger', detail: live.error || '最近扫描失败' };
-    if (live.notification_pending) return { label: '待推送', kind: 'warning', detail: '存在尚未完成的通知' };
+    if (!live.ok) return { label: '失败', kind: 'danger', detail: live.error_code || '最近扫描失败' };
+    if (live.notification_pending) return { label: '待推送', kind: 'warning', detail: '存在尚未完成的文件更新通知' };
+    if (riskCoverage === 'unavailable') {
+      return { label: '说明未知', kind: 'warning', detail: '本轮 Provider 未读取到网盘“话说”' };
+    }
+    if (riskStatus === 'clear') {
+      return { label: '正常', kind: 'success', detail: `引流检测正常 · ${live.provider || live.at || ''}` };
+    }
     return { label: '成功', kind: 'success', detail: live.provider || live.at || '' };
   }
 
