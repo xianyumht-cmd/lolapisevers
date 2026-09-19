@@ -296,7 +296,7 @@ class LanzouMonitorGuardTests(unittest.TestCase):
             first_archive = json.loads(json.dumps(service.store.data["orphaned_watchers"]["demo"]))
             service.reload_config(AppConfig(state_path=path, watchers=[]))
 
-            self.assertEqual(service.store.data["version"], 5)
+            self.assertEqual(service.store.data["version"], 6)
             self.assertNotIn("demo", service.store.data["snapshots"])
             self.assertNotIn("demo", service.store.data["last_scan"])
             self.assertNotIn("event-1", service.store.data["pending_deliveries"])
@@ -413,7 +413,7 @@ class LanzouMonitorGuardTests(unittest.TestCase):
             StateStore(path)
             migrated = json.loads(path.read_text(encoding="utf-8"))
 
-            self.assertEqual(migrated["version"], 5)
+            self.assertEqual(migrated["version"], 6)
             self.assertEqual(migrated["orphaned_watchers"], {})
 
 
