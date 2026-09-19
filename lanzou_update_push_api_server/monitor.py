@@ -10,6 +10,7 @@ from typing import Any
 import requests
 
 from .config import AppConfig, WatcherConfig
+from .content_risk import scan_share_notice
 from .monitor_diff import compare_snapshots
 from .monitor_errors import (
     safe_class_name as _safe_class_name,
@@ -75,10 +76,19 @@ class LanzouMonitorService:
     def status(self) -> dict[str, Any]:
         enabled_ids = {watcher.id for watcher in self.config.watchers if watcher.enabled}
         with self.store.lock:
-            last_scan = dict(self.store.data.get("last_scan", {}))
+            last_scan = {
+                watcher_id: dict(value)
+                for watcher_id, value in self.store.data.get("last_scan", {}).items()
+                if isinstance(value, dict)
+            }
             pending_deliveries = dict(self.store.data.get("pending_deliveries", {}))
             orphan_count = len(self.store.data.get("orphaned_watchers", {}))
             guard_candidates = dict(self.store.data.get("guard_candidates", {}))
+            content_risk = {
+                watcher_id: dict(value)
+                for watcher_id, value in self.store.data.get("content_risk", {}).items()
+                if isinstance(value, dict)
+            }
         failed_ids = {
             watcher_id
             for watcher_id in enabled_ids
@@ -100,6 +110,26 @@ class LanzouMonitorService:
         )
         never_scanned_ids = enabled_ids - set(last_scan)
         guarded_ids = enabled_ids & set(guard_candidates)
+        risk_ids = {
+            watcher_id
+            for watcher_id in enabled_ids
+            if content_risk.get(watcher_id, {}).get("status") == "risk"
+        }
+        suspected_ids = {
+            watcher_id
+            for watcher_id in enabled_ids
+            if content_risk.get(watcher_id, {}).get("status") == "suspected"
+        }
+        for watcher_id in enabled_ids:
+            risk = content_risk.get(watcher_id)
+            scan = last_scan.get(watcher_id)
+            if not isinstance(risk, dict) or not isinstance(scan, dict):
+                continue
+            scan["content_risk_status"] = str(risk.get("status") or "unknown")
+            scan["content_risk_coverage"] = str(risk.get("coverage") or "unknown")
+            scan["content_risk_summary"] = str(risk.get("summary") or "")
+            scan["content_risk_finding_count"] = len(risk.get("findings") or [])
+            scan["content_risk_notification_pending"] = risk.get("notification_pending") is True
         running = self._task is not None and not self._task.done()
         warming_up = bool(
             running
@@ -116,6 +146,8 @@ class LanzouMonitorService:
             "never_scanned": len(never_scanned_ids),
             "orphan": orphan_count,
             "guarded": len(guarded_ids),
+            "content_risk": len(risk_ids),
+            "content_risk_suspected": len(suspected_ids),
         }
         degraded_reasons = []
         if not running:
@@ -144,6 +176,8 @@ class LanzouMonitorService:
             "never_scanned_watcher_count": counts["never_scanned"],
             "orphan_watcher_count": counts["orphan"],
             "guarded_watcher_count": counts["guarded"],
+            "content_risk_watcher_count": counts["content_risk"],
+            "content_risk_suspected_watcher_count": counts["content_risk_suspected"],
             "watchers": counts,
             "notify_target_count": len(self.config.notify_targets),
             "state_path": str(self.config.state_path),
@@ -263,6 +297,277 @@ class LanzouMonitorService:
         )
         return seen_count >= 2, seen_count
 
+    def _build_content_risk_event(
+        self,
+        watcher: WatcherConfig,
+        snapshot: ShareSnapshot,
+        risk: dict[str, Any],
+        *,
+        cleared: bool,
+        previous_summary: str = "",
+        previous_fingerprint: str = "",
+    ) -> dict[str, Any]:
+        kind = "content_risk_cleared" if cleared else "content_risk"
+        fingerprint = previous_fingerprint if cleared else str(risk.get("fingerprint") or "")
+        event_id = str(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"lanzou-{kind}:{watcher.id}:{fingerprint}",
+            )
+        )
+        title = snapshot.title or watcher.title
+        if cleared:
+            message = (
+                f"✅ 蓝奏引流风险已清除\n"
+                f"产品：{title}\n"
+                f"上次命中：{previous_summary or '联系方式或引流内容'}\n"
+                f"网盘：{watcher.url}"
+            )
+            severity = "info"
+            status = "clear"
+            findings: list[dict[str, Any]] = []
+        else:
+            status = str(risk.get("status") or "suspected")
+            summary = str(risk.get("summary") or "疑似联系方式")
+            if status == "risk":
+                message = (
+                    f"🚨 蓝奏引流风险\n"
+                    f"产品：{title}\n"
+                    f"命中：{summary}\n"
+                    f"建议：立即检查并下架对应产品\n"
+                    f"网盘：{watcher.url}"
+                )
+            else:
+                message = (
+                    f"⚠️ 蓝奏疑似引流\n"
+                    f"产品：{title}\n"
+                    f"命中：{summary}\n"
+                    f"建议：人工核对，确认是联系方式后下架\n"
+                    f"网盘：{watcher.url}"
+                )
+            severity = str(risk.get("severity") or "warning")
+            findings = list(risk.get("findings") or [])
+        return {
+            "id": event_id,
+            "event_id": event_id,
+            "type": "lanzou_update",
+            "kind": kind,
+            "created_at": utc_now_iso(),
+            "watcher_id": watcher.id,
+            "title": title,
+            "name": title,
+            "url": watcher.url,
+            "message": message,
+            "provider": snapshot.provider,
+            "severity": severity,
+            "risk_status": status,
+            "risk_fingerprint": fingerprint,
+            "findings": findings,
+            "diff": {"added": [], "removed": [], "changed": []},
+            "files": [],
+        }
+
+    def _deliver_content_risk_event(
+        self,
+        event: dict[str, Any],
+        previous_results: dict[str, Any],
+    ) -> tuple[str, dict[str, Any]]:
+        enabled_target_names = [
+            target.name for target in self.config.notify_targets if target.enabled
+        ]
+        remaining_target_names = {
+            name
+            for name in enabled_target_names
+            if not isinstance(previous_results.get(name), dict)
+            or previous_results[name].get("ok") is not True
+        }
+        attempted_results = self._notify_targets(event, remaining_target_names)
+        merged_results = dict(previous_results)
+        for result in attempted_results:
+            merged_results[str(result.get("target") or "")] = result
+        event["notify_results"] = [
+            merged_results[name]
+            for name in enabled_target_names
+            if isinstance(merged_results.get(name), dict)
+        ]
+        if not enabled_target_names:
+            delivery_state = "skipped"
+        else:
+            successful = len(
+                [result for result in event["notify_results"] if result.get("ok") is True]
+            )
+            delivery_state = (
+                "complete"
+                if successful == len(enabled_target_names)
+                else "partial"
+                if successful > 0
+                else "failed"
+            )
+        event["delivery_state"] = delivery_state
+        self.store.append_event(event)
+        return delivery_state, merged_results
+
+    def _scan_content_risk(
+        self,
+        watcher: WatcherConfig,
+        snapshot: ShareSnapshot,
+        notify: bool,
+    ) -> dict[str, Any]:
+        now = utc_now_iso()
+        existing = self.store.content_risk_for(watcher.id) or {}
+        pending_event = (
+            dict(existing.get("pending_event"))
+            if isinstance(existing.get("pending_event"), dict)
+            else None
+        )
+
+        if not snapshot.share_notice_available:
+            state = dict(existing)
+            state.update(
+                {
+                    "watcher_id": watcher.id,
+                    "coverage": "unavailable",
+                    "last_checked_at": now,
+                }
+            )
+            state.setdefault("status", "unknown")
+            state.setdefault("summary", "")
+            state.setdefault("findings", [])
+            if pending_event and state.get("notification_pending") is True and notify:
+                previous_results = (
+                    dict(state.get("target_results"))
+                    if isinstance(state.get("target_results"), dict)
+                    else {}
+                )
+                delivery_state, merged_results = self._deliver_content_risk_event(
+                    pending_event,
+                    previous_results,
+                )
+                state["delivery_state"] = delivery_state
+                state["target_results"] = merged_results
+                if delivery_state == "complete":
+                    state["notification_pending"] = False
+                    state.pop("pending_event", None)
+                    state["last_notified_status"] = str(
+                        pending_event.get("risk_status") or state.get("status") or "unknown"
+                    )
+                    state["last_notified_at"] = now
+            self.store.set_content_risk(watcher.id, state)
+            return {
+                "status": str(state.get("status") or "unknown"),
+                "coverage": "unavailable",
+                "summary": str(state.get("summary") or ""),
+                "notification_pending": state.get("notification_pending") is True,
+                "event": pending_event if notify else None,
+            }
+
+        risk = scan_share_notice(snapshot.share_notice)
+        previous_status = str(existing.get("status") or "unknown")
+        previous_fingerprint = str(existing.get("fingerprint") or "")
+        fingerprint = str(risk.get("fingerprint") or "")
+        changed = (
+            previous_status != risk["status"]
+            or previous_fingerprint != fingerprint
+        )
+        event: dict[str, Any] | None = None
+        if changed and risk["status"] in {"risk", "suspected"}:
+            event = self._build_content_risk_event(
+                watcher,
+                snapshot,
+                risk,
+                cleared=False,
+            )
+        elif (
+            changed
+            and risk["status"] == "clear"
+            and str(existing.get("last_notified_status") or "") in {"risk", "suspected"}
+        ):
+            event = self._build_content_risk_event(
+                watcher,
+                snapshot,
+                risk,
+                cleared=True,
+                previous_summary=str(existing.get("summary") or ""),
+                previous_fingerprint=previous_fingerprint,
+            )
+        elif (
+            not changed
+            and existing.get("notification_pending") is True
+            and pending_event
+        ):
+            event = pending_event
+
+        state = dict(existing)
+        state.update(
+            {
+                "watcher_id": watcher.id,
+                "coverage": "available",
+                "status": risk["status"],
+                "severity": risk["severity"],
+                "fingerprint": fingerprint,
+                "summary": risk["summary"],
+                "findings": risk["findings"],
+                "last_checked_at": now,
+                "last_seen_at": now,
+            }
+        )
+        if changed and risk["status"] in {"risk", "suspected"}:
+            state["first_seen_at"] = now
+        elif risk["status"] == "clear":
+            state.pop("first_seen_at", None)
+
+        old_pending_id = str(pending_event.get("id") or "") if pending_event else ""
+        new_event_id = str(event.get("id") or "") if event else ""
+        if old_pending_id and new_event_id and old_pending_id != new_event_id:
+            self.store.mark_event_superseded(
+                old_pending_id,
+                active_event_id=new_event_id,
+                reason="content_risk_changed",
+            )
+
+        if event and notify:
+            same_pending = old_pending_id == new_event_id
+            previous_results = (
+                dict(existing.get("target_results"))
+                if same_pending and isinstance(existing.get("target_results"), dict)
+                else {}
+            )
+            delivery_state, merged_results = self._deliver_content_risk_event(
+                event,
+                previous_results,
+            )
+            state["delivery_state"] = delivery_state
+            state["target_results"] = merged_results
+            if delivery_state == "complete":
+                state["notification_pending"] = False
+                state.pop("pending_event", None)
+                state["last_notified_status"] = str(event.get("risk_status") or risk["status"])
+                state["last_notified_at"] = now
+            else:
+                state["notification_pending"] = True
+                state["pending_event"] = event
+        elif event:
+            event["delivery_state"] = "skipped"
+            state["notification_pending"] = True
+            state["pending_event"] = event
+            if old_pending_id != new_event_id:
+                state["target_results"] = {}
+        elif changed:
+            state["notification_pending"] = False
+            state.pop("pending_event", None)
+            state["target_results"] = {}
+            state["delivery_state"] = "complete"
+
+        self.store.set_content_risk(watcher.id, state)
+        return {
+            "status": risk["status"],
+            "coverage": "available",
+            "summary": risk["summary"],
+            "finding_count": len(risk["findings"]),
+            "notification_pending": state.get("notification_pending") is True,
+            "event": event,
+        }
+
     def _scan_watcher_unlocked_sync(
         self,
         watcher: WatcherConfig,
@@ -271,6 +576,7 @@ class LanzouMonitorService:
         started = time.time()
         try:
             current = self.provider_chain.fetch(watcher)
+            content_risk = self._scan_content_risk(watcher, current, notify)
             previous = self.store.snapshot_for(watcher.id)
             empty_confirmed = False
             if not current.files and (previous is None or previous.files):
@@ -296,6 +602,7 @@ class LanzouMonitorService:
                         "error_class": "SnapshotGuardPending",
                         "retryable": True,
                         "snapshot_committed": False,
+                        "content_risk": content_risk,
                         "elapsed_ms": int((time.time() - started) * 1000),
                     }
             elif current.files:
@@ -315,6 +622,7 @@ class LanzouMonitorService:
                     "baseline": True,
                     "file_count": len(current.files),
                     "provider": current.provider,
+                    "content_risk": content_risk,
                     "elapsed_ms": int((time.time() - started) * 1000),
                 }
             previous_url = previous.url.strip().rstrip("/")
@@ -352,6 +660,7 @@ class LanzouMonitorService:
                             "error_class": "SnapshotGuardPending",
                             "retryable": True,
                             "snapshot_committed": False,
+                            "content_risk": content_risk,
                             "elapsed_ms": int((time.time() - started) * 1000),
                         }
                     rebaseline_reason = (
@@ -380,6 +689,7 @@ class LanzouMonitorService:
                     "file_count": len(current.files),
                     "provider": current.provider,
                     "snapshot_committed": True,
+                    "content_risk": content_risk,
                     "elapsed_ms": int((time.time() - started) * 1000),
                 }
             self.store.clear_guard_candidate(watcher.id)
@@ -494,6 +804,7 @@ class LanzouMonitorService:
                 "event": event,
                 "snapshot_committed": snapshot_committed,
                 "notification_pending": notification_pending,
+                "content_risk": content_risk,
                 "elapsed_ms": int((time.time() - started) * 1000),
             }
         except Exception as exc:
