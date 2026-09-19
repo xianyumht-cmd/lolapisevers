@@ -11,13 +11,14 @@ from typing import Any
 
 def default_state() -> dict[str, Any]:
     return {
-        "version": 5,
+        "version": 6,
         "snapshots": {},
         "events": [],
         "last_scan": {},
         "pending_deliveries": {},
         "orphaned_watchers": {},
         "guard_candidates": {},
+        "content_risk": {},
     }
 
 
