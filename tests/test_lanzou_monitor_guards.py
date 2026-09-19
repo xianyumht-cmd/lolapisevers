@@ -390,9 +390,10 @@ class LanzouMonitorGuardTests(unittest.TestCase):
     def test_default_state_uses_orphan_aware_schema(self):
         state = default_state()
 
-        self.assertEqual(state["version"], 5)
+        self.assertEqual(state["version"], 6)
         self.assertEqual(state["orphaned_watchers"], {})
         self.assertEqual(state["guard_candidates"], {})
+        self.assertEqual(state["content_risk"], {})
 
     def test_existing_state_schema_is_migrated_on_load(self):
         with TemporaryDirectory() as temp_dir:
