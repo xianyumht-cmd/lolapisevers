@@ -32,6 +32,7 @@ MAIN_CONFIG_FIELDS: list[dict[str, Any]] = [
     {"key": "PYTHONIOENCODING", "label": "Python 输出编码", "section": "主接口", "type": "text"},
     {"key": "REQUIRE_BUILD_INFO", "label": "托管启动强制构建追踪", "section": "主接口", "type": "bool"},
     {"key": "GROUPGUARD_WRITE_TOKEN", "label": "举报与人工登录写入令牌", "section": "安全", "type": "secret"},
+    {"key": "WEBSITE_GITHUB_TOKEN", "label": "website 私有仓库 GitHub 只读令牌", "section": "安全", "type": "secret"},
     {"key": "CACHE_SECONDS", "label": "通用缓存秒数", "section": "缓存", "type": "int", "min": 1, "max": 86400},
     {"key": "SHARD_CACHE_SECONDS", "label": "云顶合集缓存秒数", "section": "缓存", "type": "int", "min": 1, "max": 86400},
     {"key": "ARAM_AUGMENT_CACHE_SECONDS", "label": "大乱斗缓存秒数", "section": "缓存", "type": "int", "min": 1, "max": 86400},
