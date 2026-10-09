@@ -90,8 +90,13 @@ def _snapshot_store(ctx: AppContext) -> PersistentSnapshotStore:
 def _validate_shard_data(value: Any) -> None:
     if not isinstance(value, dict) or not value:
         raise ValueError("shard data must be a non-empty object")
-    if not any(isinstance(item, dict) for item in value.values()):
-        raise ValueError("shard data has no champion records")
+    if not any(
+        isinstance(item, dict)
+        and isinstance(item.get("shards"), list)
+        and isinstance(item.get("pick_rate"), (int, float))
+        for item in value.values()
+    ):
+        raise ValueError("shard data has no valid champion records")
 
 
 def _validate_hero_data(value: Any) -> None:
