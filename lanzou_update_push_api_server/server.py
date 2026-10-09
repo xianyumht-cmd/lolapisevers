@@ -257,7 +257,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
         sha = str(payload.get("sha") or "")
         original_revision = str(payload.get("revision") or "")
-        if not all(re.fullmatch(r"[a-fA-F0-9]{40}", sha) and re.fullmatch(r"[a-fA-F0-9]{64}", original_revision) for _ in [0]):
+        if not re.fullmatch(r"[a-fA-F0-9]{40}", sha) or not re.fullmatch(r"[a-fA-F0-9]{64}", original_revision):
             raise WebsiteSyncError("同步预览信息不完整，请重新检查")
         raw = management.read_lanzou_config()
         current = [entry for entry in raw.get("watchers", []) if isinstance(entry, dict)]
