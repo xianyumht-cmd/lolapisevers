@@ -85,6 +85,44 @@ http://127.0.0.1:6178
 - `diff.added` / `diff.removed` / `diff.changed`：新增、删除、信息变化的文件。
 - `files`：当前文件列表快照。
 
+
+## 从 website 私有仓库同步监控目标
+
+6178 控制台 → **蓝奏监控 / 监控项目** → **同步 website-main**。该功能读取
+xianyumht-cmd/website 的 source 分支，使用当前唯一导航数据源
+src/assets/data/nav-catalog.js，只解析中文导航里的蓝奏分享链接。
+website 仓库只读，不会修改网站数据。
+
+**首次使用必须配置私有仓库访问凭据：**
+
+1. 在 GitHub 生成 Fine-grained Personal Access Token，只选择 website
+   仓库，仓库权限只开启 **Contents: Read-only**。
+2. 打开同步弹窗，把 Token 输入“GitHub 私有仓库只读 Token”，点击
+   **保存访问凭据**。6178 后端把值写到 Git 忽略的本机
+   ops/app_env.local.ps1，不返回 Token；立即生效，不需要重新启动服务。
+3. 点击“重新检查”预览变更，确认新增、更新与删除项目，再点击“确认同步”。
+
+也可通过本机运行环境配置 WEBSITE_GITHUB_TOKEN，但不要把真实令牌
+写进仓库、Issue、日志或截图。远程使用 6178 管理接口时，应配置
+WEBUI_ADMIN_TOKEN 并通过可信网络访问。
+
+同步仅更新 watchers：扫描间隔、Provider、通知目标和回调不变；
+同一分享链接保留原来的 ID、启用状态、最大页数，网站没有提供密码时
+保留本机已有密码。正式写入之前，后端再次确认网站提交和监控配置
+未在预览后变化；大规模删除需要额外确认；写入自动备份配置并热更新。
+GitHub 授权不足、导航格式变更或读取异常时，直接拒绝同步。
+
+管理接口均由现有的 6178 管理鉴权保护：
+
+- GET /admin/website-watch-sync/status：仅返回凭据是否配置。
+- POST /admin/website-watch-sync/token：本地保存凭据，绝不返回原文。
+- GET /admin/website-watch-sync/preview：对比变更，不写磁盘。
+- POST /admin/website-watch-sync/apply：携带预览中的 sha、revision，
+  重新验证后保存及热更新。
+
+命令行 scripts/sync_lanzou_watchers_from_website.py --preview 使用相同的
+私有仓库读取和导航解析器。
+
 ## SnowLuma 对接
 
 1. 启动 SnowLuma WebUI，打开 `http://192.168.3.89:6108/lanzou-update.html?token=你的WebUIToken`。
