@@ -15,15 +15,13 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
-# Use the same authenticated catalog reader as the 6178 WebUI.
-import sys
+def _website_sync_module():
+    # CLI invocation from scripts/ does not put the repository root on sys.path.
+    import importlib
+    import sys
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from lanzou_update_push_api_server.website_watch_sync import (
-    CATALOG as WEBSITE_CATALOG,
-    fetch_manifest,
-    plan_sync,
-)
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    return importlib.import_module("lanzou_update_push_api_server.website_watch_sync")
 
 SOURCE_REPO = "xianyumht-cmd/website"
 SOURCE_BRANCH = "source"
@@ -423,8 +421,9 @@ def _final_targets(base_data: dict[str, Any], ordered_sources: list[tuple[str, s
 
 
 def fetch_website_targets() -> tuple[str, list[str], list[dict[str, str]]]:
-    manifest = fetch_manifest()
-    return manifest["sha"], [WEBSITE_CATALOG], manifest["targets"]
+    sync = _website_sync_module()
+    manifest = sync.fetch_manifest()
+    return manifest["sha"], [sync.CATALOG], manifest["targets"]
 
 
 def stable_id(url: str, used: set[str]) -> str:
@@ -446,7 +445,7 @@ def read_json(path: Path) -> dict[str, Any]:
 
 def build_watchers(raw_watchers: Any, targets: list[dict[str, str]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     old = [item for item in raw_watchers if isinstance(item, dict)] if isinstance(raw_watchers, list) else []
-    plan = plan_sync(old, {"targets": targets})
+    plan = _website_sync_module().plan_sync(old, {"targets": targets})
     diff = plan["diff"]
     return plan["watchers"], {
         "before": diff["before"],
