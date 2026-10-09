@@ -140,6 +140,14 @@ jobs:
               exit $LASTEXITCODE
           }
 
+      - name: Exercise V3 GroupGuard verifier with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          .\ops\Test-V3-GroupGuardProbe.ps1 -DistRoot "$pwd\dist-v3"
+          if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+          }
+
       - name: Verify V3 package hashes and safety flags
         shell: pwsh
         run: |
