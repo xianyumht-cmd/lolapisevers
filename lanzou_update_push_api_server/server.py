@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -24,6 +25,7 @@ from .management import (
     run_diagnostics,
     update_lanzou_config,
 )
+from .website_watch_sync import WebsiteSyncError, configured_token, fetch_manifest, plan_sync
 from .monitor import LanzouMonitorService
 from .security import control_api_guard
 from .state_recovery import recover_state_file
@@ -108,6 +110,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     app.state.main_base_url = main_base_url
     app.state.lanzou_base_url = lanzou_base_url
     app.state.build_info = build_info
+    config_write_lock = asyncio.Lock()
 
     @app.get("/", response_class=HTMLResponse)
     async def dashboard() -> str:
@@ -184,24 +187,113 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
 
     @app.post("/admin/lanzou-config")
     async def admin_save_lanzou_config(patch: dict[str, Any]) -> dict[str, Any]:
+        async with config_write_lock:
+            try:
+                next_config, backup_path = await asyncio.to_thread(update_lanzou_config, patch)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            except OSError as exc:
+                raise HTTPException(status_code=500, detail="蓝奏配置文件写入失败") from exc
+            if service.store.path != next_config.state_path:
+                app.state.state_recovery = await asyncio.to_thread(recover_state_file, next_config.state_path)
+            service.reload_config(next_config)
+            app.state.config = next_config
+            return {
+                "ok": True,
+                "message": "蓝奏监控配置已保存并刷新运行时配置。监听地址或端口变化需要重启服务。",
+                "config": sanitized_config(next_config),
+                "backup_path": backup_path,
+                "state_recovery": app.state.state_recovery,
+                "environment_overrides": lanzou_environment_overrides(),
+            }
+
+    @app.get("/admin/website-watch-sync/status")
+    async def website_sync_status() -> dict[str, Any]:
+        return {"ok": True, "token_configured": bool(configured_token()), "source": "website/source"}
+
+    @app.post("/admin/website-watch-sync/token")
+    async def website_sync_save_token(payload: dict[str, Any]) -> dict[str, Any]:
+        from . import management
+
+        token = str(payload.get("token") or "").strip()
+        if not 12 <= len(token) <= 4096 or any(ord(c) < 33 or ord(c) > 126 for c in token):
+            raise HTTPException(status_code=400, detail="GitHub Token 必须是有效的非空 ASCII 字符串")
         try:
-            next_config, backup_path = await asyncio.to_thread(update_lanzou_config, patch)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except OSError as exc:
-            raise HTTPException(status_code=500, detail="蓝奏配置文件写入失败") from exc
-        if service.store.path != next_config.state_path:
-            app.state.state_recovery = await asyncio.to_thread(recover_state_file, next_config.state_path)
-        service.reload_config(next_config)
-        app.state.config = next_config
+            result = await asyncio.to_thread(management.update_main_config, {"WEBSITE_GITHUB_TOKEN": token})
+        except (ValueError, OSError) as exc:
+            raise HTTPException(status_code=500, detail="本地 GitHub Token 保存失败") from exc
+        # Available to this 6178 process immediately; the token is never returned.
+        os.environ["WEBSITE_GITHUB_TOKEN"] = token
         return {
-            "ok": True,
-            "message": "蓝奏监控配置已保存并刷新运行时配置。监听地址或端口变化需要重启服务。",
-            "config": sanitized_config(next_config),
-            "backup_path": backup_path,
-            "state_recovery": app.state.state_recovery,
-            "environment_overrides": lanzou_environment_overrides(),
+            "ok": True, "token_configured": True,
+            "backup_path": result.get("backup_path") or "",
+            "message": "访问令牌已保存在本机配置，可以立即重新检查。",
         }
+
+    def website_sync_preview_plan() -> dict[str, Any]:
+        from . import management
+
+        manifest = fetch_manifest()
+        raw = management.read_lanzou_config()
+        current = [entry for entry in raw.get("watchers", []) if isinstance(entry, dict)]
+        plan = plan_sync(current, manifest)
+        return {
+            "ok": True, "sha": manifest["sha"],
+            "source": "website/source", "count": len(manifest["targets"]),
+            "revision": plan["revision"], "diff": plan["diff"],
+        }
+
+    @app.get("/admin/website-watch-sync/preview")
+    async def website_sync_preview() -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(website_sync_preview_plan)
+        except WebsiteSyncError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except (ValueError, OSError) as exc:
+            raise HTTPException(status_code=500, detail="读取蓝奏配置失败") from exc
+
+    def website_sync_commit(payload: dict[str, Any]):
+        from . import management
+
+        sha = str(payload.get("sha") or "")
+        original_revision = str(payload.get("revision") or "")
+        if not all(re.fullmatch(r"[a-fA-F0-9]{40}", sha) and re.fullmatch(r"[a-fA-F0-9]{64}", original_revision) for _ in [0]):
+            raise WebsiteSyncError("同步预览信息不完整，请重新检查")
+        raw = management.read_lanzou_config()
+        current = [entry for entry in raw.get("watchers", []) if isinstance(entry, dict)]
+        manifest = fetch_manifest()
+        plan = plan_sync(current, manifest)
+        if manifest["sha"] != sha or plan["revision"] != original_revision:
+            raise RuntimeError("网站数据或本地监控配置在预览后发生变化，请重新检查")
+        removed = len(plan["diff"]["removed"])
+        if removed > max(10, int(len(current) * 0.4)) and payload.get("allow_large_removal") is not True:
+            raise RuntimeError("本次需要删除大量监控项目，请确认删除列表后重新提交")
+        if not any(plan["diff"][name] for name in ("added", "removed", "updated")):
+            return None, "", plan["diff"]
+        next_config, backup_path = management.update_lanzou_config({"watchers": plan["watchers"]})
+        return next_config, backup_path, plan["diff"]
+
+    @app.post("/admin/website-watch-sync/apply")
+    async def website_sync_apply(payload: dict[str, Any]) -> dict[str, Any]:
+        async with config_write_lock:
+            try:
+                next_config, backup_path, diff = await asyncio.to_thread(website_sync_commit, payload)
+            except WebsiteSyncError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            except RuntimeError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            except (ValueError, OSError) as exc:
+                raise HTTPException(status_code=500, detail="蓝奏同步保存失败，原配置未被主动修改") from exc
+            if next_config is not None:
+                if service.store.path != next_config.state_path:
+                    app.state.state_recovery = await asyncio.to_thread(recover_state_file, next_config.state_path)
+                service.reload_config(next_config)
+                app.state.config = next_config
+            return {
+                "ok": True, "backup_path": backup_path,
+                "changed": next_config is not None,
+                "diff": diff, "message": "同步完成，运行时监控配置已刷新。",
+            }
 
     @app.get("/admin/openapi/{service_name}")
     async def admin_openapi(service_name: str) -> dict[str, Any]:
