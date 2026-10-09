@@ -13,6 +13,8 @@ from services.persistent_snapshot_store import PersistentSnapshotStore
 from services.shard_service import (
     SHARD_DATA_SOURCE_ID,
     SHARD_HERO_SOURCE_ID,
+    DEFAULT_SHARD_DATA_URL,
+    SHARD_DATA_MIRRORS,
     load_shard_sources,
     query_shard,
 )
@@ -448,6 +450,74 @@ class ShardResilienceTests(unittest.TestCase):
                 ],
                 "OSError",
             )
+
+
+    def test_public_shard_source_recovers_through_mirror_after_connection_error(self):
+        with tempfile.TemporaryDirectory() as temp:
+            mirror_id = f"{SHARD_DATA_SOURCE_ID}-mirror-1"
+            client = FakeClient({
+                SHARD_DATA_SOURCE_ID: [failed(SHARD_DATA_SOURCE_ID, "connection_error")],
+                mirror_id: [ok(mirror_id, SHARDS, etag='"foreign-etag"')],
+                SHARD_HERO_SOURCE_ID: [ok(SHARD_HERO_SOURCE_ID, HEROES)],
+            })
+            ctx = Context(temp, client)
+            ctx.config.shard_data_url = DEFAULT_SHARD_DATA_URL
+            result = asyncio.run(query_shard(ctx, hero="Kalista"))
+            self.assertEqual("live", result["source"])
+            detail = result["source_details"][SHARD_DATA_SOURCE_ID]
+            self.assertEqual("mirror-1", detail["mirror_used"])
+            self.assertFalse(detail["etag_present"])
+            self.assertEqual([SHARD_DATA_SOURCE_ID, mirror_id, SHARD_HERO_SOURCE_ID],
+                             [call[0] for call in client.calls])
+            self.assertEqual(SHARD_DATA_MIRRORS[0], client.calls[1][1])
+            self.assertEqual(1, client.calls[1][2]["attempts"])
+            self.assertEqual(4, client.calls[1][2]["connect_timeout"])
+            self.assertEqual(10, client.calls[1][2]["read_timeout"])
+            snapshot = ctx.upstream_snapshot_store.load(SHARD_DATA_SOURCE_ID)
+            self.assertTrue(snapshot.ok)
+            self.assertEqual("", snapshot.metadata["etag"])
+
+    def test_mirror_failure_falls_through_to_second_mirror(self):
+        with tempfile.TemporaryDirectory() as temp:
+            first = f"{SHARD_DATA_SOURCE_ID}-mirror-1"
+            second = f"{SHARD_DATA_SOURCE_ID}-mirror-2"
+            client = FakeClient({
+                SHARD_DATA_SOURCE_ID: [failed(SHARD_DATA_SOURCE_ID, "connection_error")],
+                first: [failed(first, "dns_error")],
+                second: [ok(second, SHARDS)],
+                SHARD_HERO_SOURCE_ID: [ok(SHARD_HERO_SOURCE_ID, HEROES)],
+            })
+            ctx = Context(temp, client)
+            ctx.config.shard_data_url = DEFAULT_SHARD_DATA_URL
+            result = asyncio.run(query_shard(ctx, hero="Kalista"))
+            self.assertEqual("mirror-2", result["source_details"][SHARD_DATA_SOURCE_ID]["mirror_used"])
+            self.assertEqual("live", result["source"])
+
+    def test_all_public_shard_mirrors_fail_closed_when_snapshot_expired(self):
+        with tempfile.TemporaryDirectory() as temp:
+            store = PersistentSnapshotStore(Path(temp))
+            old = datetime.now(timezone.utc) - timedelta(days=8)
+            store.save(SHARD_DATA_SOURCE_ID, SHARDS, captured_at=old)
+            ids = [f"{SHARD_DATA_SOURCE_ID}-mirror-{i+1}" for i in range(len(SHARD_DATA_MIRRORS))]
+            client = FakeClient({
+                SHARD_DATA_SOURCE_ID: [failed(SHARD_DATA_SOURCE_ID, "connection_error")],
+                **{i: [failed(i, "read_timeout")] for i in ids},
+            })
+            ctx = Context(temp, client, store=store)
+            ctx.config.shard_data_url = DEFAULT_SHARD_DATA_URL
+            with self.assertRaises(HTTPException) as caught:
+                load_shard_sources(ctx)
+            self.assertEqual(503, caught.exception.status_code)
+            self.assertIn("expired", str(caught.exception.detail))
+            self.assertEqual(1 + len(SHARD_DATA_MIRRORS), len(client.calls))
+
+    def test_custom_shard_data_url_is_never_forwarded_to_public_mirrors(self):
+        with tempfile.TemporaryDirectory() as temp:
+            client = FakeClient({SHARD_DATA_SOURCE_ID: [failed(SHARD_DATA_SOURCE_ID)]})
+            ctx = Context(temp, client)
+            with self.assertRaises(HTTPException):
+                load_shard_sources(ctx)
+            self.assertEqual([SHARD_DATA_SOURCE_ID], [call[0] for call in client.calls])
 
 
 if __name__ == "__main__":
