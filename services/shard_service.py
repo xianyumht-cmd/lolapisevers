@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
@@ -18,6 +18,15 @@ from utils.text_utils import normalize_search_text
 SHARD_DATA_SOURCE_ID = "lol-shard-data"
 SHARD_HERO_SOURCE_ID = "lol-hero-list"
 DEFAULT_SHARD_SNAPSHOT_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
+DEFAULT_SHARD_DATA_URL = (
+    "https://raw.githubusercontent.com/badspacebar/release/master/files/shards.json"
+)
+SHARD_DATA_MIRRORS = (
+    "https://cdn.jsdelivr.net/gh/badspacebar/release@master/files/shards.json",
+    "https://testingcf.jsdelivr.net/gh/badspacebar/release@master/files/shards.json",
+    "https://ghfast.top/https://raw.githubusercontent.com/badspacebar/release/master/files/shards.json",
+)
+
 
 
 @dataclass(frozen=True)
@@ -34,6 +43,7 @@ class _LoadedUpstreamSource:
     snapshot_status: str = ""
     conditional_not_modified: bool = False
     snapshot_write_error: str = ""
+    mirror_used: str = ""
 
 
 def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -158,6 +168,42 @@ def _save_snapshot(
         return "", exc.__class__.__name__
 
 
+def _try_shard_data_mirrors(
+    ctx: AppContext,
+    *,
+    source_id: str,
+    url: str,
+    validate: Callable[[Any], None],
+) -> tuple[UpstreamResponse | None, str]:
+    # Only the canonical public dataset is mirrored. Custom source URLs are
+    # never rewritten or forwarded to a third-party proxy.
+    if source_id != SHARD_DATA_SOURCE_ID or url != DEFAULT_SHARD_DATA_URL:
+        return None, ""
+
+    client = _upstream_client(ctx)
+    for index, mirror_url in enumerate(SHARD_DATA_MIRRORS):
+        mirror_id = f"{source_id}-mirror-{index + 1}"
+        candidate = client.get_json(
+            mirror_id,
+            mirror_url,
+            validate=validate,
+            attempts=1,
+            connect_timeout=4,
+            read_timeout=10,
+        )
+        if candidate.ok and candidate.data is not None:
+            # Validators from another host must not be reused for primary 304s.
+            return replace(candidate, etag="", last_modified=""), f"mirror-{index + 1}"
+        logger = getattr(ctx, "logger", None)
+        if logger is not None:
+            logger.warning(
+                "shard data mirror %s unavailable: %s",
+                index + 1,
+                _safe_error_class(candidate),
+            )
+    return None, ""
+
+
 def _load_one_source(
     ctx: AppContext,
     *,
@@ -177,6 +223,13 @@ def _load_one_source(
         last_modified=last_modified,
         validate=validate,
     )
+    mirror_used = ""
+    if not response.ok:
+        alternate, mirror_used = _try_shard_data_mirrors(
+            ctx, source_id=source_id, url=url, validate=validate,
+        )
+        if alternate is not None:
+            response = alternate
 
     if response.ok:
         if response.status == "not_modified":
@@ -211,6 +264,7 @@ def _load_one_source(
                         last_modified=response.last_modified,
                         snapshot_status=snapshot.status,
                         snapshot_write_error=write_error,
+                        mirror_used=mirror_used,
                     )
             else:
                 captured_at, write_error = _save_snapshot(
@@ -233,6 +287,7 @@ def _load_one_source(
                     snapshot_status=snapshot.status,
                     conditional_not_modified=True,
                     snapshot_write_error=write_error,
+                    mirror_used=mirror_used,
                 )
         elif response.data is not None:
             captured_at, write_error = _save_snapshot(
@@ -254,6 +309,7 @@ def _load_one_source(
                 last_modified=response.last_modified,
                 snapshot_status=snapshot.status,
                 snapshot_write_error=write_error,
+                mirror_used=mirror_used,
             )
 
     _record_refresh_error(store, source_id, response)
@@ -295,6 +351,7 @@ def _source_detail(source: _LoadedUpstreamSource) -> Dict[str, Any]:
         "snapshot_status": source.snapshot_status,
         "conditional_not_modified": source.conditional_not_modified,
         "snapshot_write_error": source.snapshot_write_error,
+        "mirror_used": source.mirror_used,
     }
 
 
