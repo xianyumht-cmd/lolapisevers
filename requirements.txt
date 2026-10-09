@@ -1,5 +1,5 @@
 requests==2.34.2
-urllib3==2.7.0
+urllib3==2.8.0
 PyMySQL==1.1.1
 cryptography==50.0.0
 playwright==1.58.0

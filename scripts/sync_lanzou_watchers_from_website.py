@@ -15,6 +15,14 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
+def _website_sync_module():
+    # CLI invocation from scripts/ does not put the repository root on sys.path.
+    import importlib
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    return importlib.import_module("lanzou_update_push_api_server.website_watch_sync")
+
 SOURCE_REPO = "xianyumht-cmd/website"
 SOURCE_BRANCH = "source"
 ENTRY_PATH = "src/pages/nav/entry.js"
@@ -413,16 +421,9 @@ def _final_targets(base_data: dict[str, Any], ordered_sources: list[tuple[str, s
 
 
 def fetch_website_targets() -> tuple[str, list[str], list[dict[str, str]]]:
-    commit = _source_commit()
-    entry_source = _http_text(_raw_url(commit, ENTRY_PATH))
-    base_data = json.loads(_http_text(_raw_url(commit, BASE_DATA_PATH)))
-    if not isinstance(base_data, dict):
-        raise RuntimeError("website nav data must be a JSON object")
-    imports = _extract_imports(entry_source)
-    if not imports:
-        raise RuntimeError("website entry.js contains no nav patch imports")
-    ordered_sources = [(path, _http_text(_raw_url(commit, path))) for path in imports]
-    return commit, imports, _final_targets(base_data, ordered_sources)
+    sync = _website_sync_module()
+    manifest = sync.fetch_manifest()
+    return manifest["sha"], [sync.CATALOG], manifest["targets"]
 
 
 def stable_id(url: str, used: set[str]) -> str:
@@ -444,60 +445,14 @@ def read_json(path: Path) -> dict[str, Any]:
 
 def build_watchers(raw_watchers: Any, targets: list[dict[str, str]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     old = [item for item in raw_watchers if isinstance(item, dict)] if isinstance(raw_watchers, list) else []
-    by_url = {
-        normalized_url(str(item.get("url") or "")): item
-        for item in old
-        if str(item.get("url") or "").strip()
-    }
-    used = {str(item.get("id") or "").strip() for item in old if str(item.get("id") or "").strip()}
-    target_urls = {normalized_url(item["url"]) for item in targets}
-    result: list[dict[str, Any]] = []
-    added: list[str] = []
-    updated: list[str] = []
-
-    for target in targets:
-        title, url, password = target["title"], target["url"], target.get("password", "")
-        previous = by_url.get(normalized_url(url))
-        if previous is None:
-            watcher_id = stable_id(url, used)
-            enabled, max_pages = True, 20
-            added.append(title)
-        else:
-            watcher_id = str(previous.get("id") or "").strip() or stable_id(url, used)
-            enabled = previous.get("enabled") is not False
-            try:
-                max_pages = max(1, min(100, int(previous.get("max_pages") or 20)))
-            except (TypeError, ValueError):
-                max_pages = 20
-            if any(
-                str(previous.get(key) or "") != expected
-                for key, expected in (("title", title), ("url", url), ("password", password))
-            ):
-                updated.append(title)
-        used.add(watcher_id)
-        result.append(
-            {
-                "id": watcher_id,
-                "title": title,
-                "url": url,
-                "password": password,
-                "enabled": enabled,
-                "max_pages": max_pages,
-            }
-        )
-
-    removed = [
-        str(item.get("title") or item.get("id") or "")
-        for item in old
-        if str(item.get("url") or "").strip()
-        and normalized_url(str(item.get("url") or "")) not in target_urls
-    ]
-    return result, {
-        "before": len(old),
-        "after": len(result),
-        "added": added,
-        "removed": removed,
-        "updated": updated,
+    plan = _website_sync_module().plan_sync(old, {"targets": targets})
+    diff = plan["diff"]
+    return plan["watchers"], {
+        "before": diff["before"],
+        "after": diff["after"],
+        "added": [item["title"] for item in diff["added"]],
+        "removed": [item["title"] for item in diff["removed"]],
+        "updated": [item["title"] for item in diff["updated"]],
     }
 
 
