@@ -132,6 +132,22 @@ jobs:
               exit $LASTEXITCODE
           }
 
+      - name: Patch V3 GroupGuard production verification
+        shell: powershell
+        run: |
+          .\ops\Patch-V3-GroupGuardVerification.ps1 -DistRoot "$pwd\dist-v3"
+          if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+          }
+
+      - name: Exercise V3 GroupGuard verifier with Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          .\ops\Test-V3-GroupGuardProbe.ps1 -DistRoot "$pwd\dist-v3"
+          if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+          }
+
       - name: Verify V3 package hashes and safety flags
         shell: pwsh
         run: |
@@ -157,7 +173,10 @@ jobs:
             "runtime_listener_bootstrap_discovery",
             "production_venv_acl_recovery",
             "installed_venv_acl_normalized",
-            "venv_acl_well_known_sids"
+            "venv_acl_well_known_sids",
+            "groupguard_bounded_probe",
+            "groupguard_fresh_connection",
+            "groupguard_probe_diagnostics"
           )) {
             if (-not [bool]$metadata.$flag) {
               throw "V3 metadata safety flag is missing: $flag"
@@ -196,7 +215,10 @@ jobs:
             "runtime_listener_bootstrap_discovery",
             "production_venv_acl_recovery",
             "installed_venv_acl_normalized",
-            "venv_acl_well_known_sids"
+            "venv_acl_well_known_sids",
+            "groupguard_bounded_probe",
+            "groupguard_fresh_connection",
+            "groupguard_probe_diagnostics"
           )) {
             if (-not [bool]$manifest.deployment.$flag) {
               throw "V3 safety flag is missing: $flag"
@@ -302,6 +324,23 @@ jobs:
             if (-not $verifyText.Contains($marker)) {
               throw "V3 baseline-aware verifier marker is missing: $marker"
             }
+          }
+
+          foreach ($marker in @(
+            "function Invoke-VerifiedGroupGuardRequest {",
+            "-DisableKeepAlive",
+            "GroupGuard production verification failed",
+            'Invoke-VerifiedGroupGuardRequest -Uri "$BaseUrl/api/v1/groupguard/query"',
+            'Assert-True ($result.Body.protocol -eq "groupguard-query-delivery.v1")',
+            'Assert-True ($result.Body.ok -eq $true)',
+            'Assert-True (@($result.Body.delivery.segments).Count -ge 1)'
+          )) {
+            if (-not $verifyText.Contains($marker)) {
+              throw "V3 GroupGuard probe safety marker missing: $marker"
+            }
+          }
+          if ($verifyText.Contains('Invoke-JsonRequest -Uri "$BaseUrl/api/v1/groupguard/query" -Method POST')) {
+            throw "V3 verifier still uses the unsafe generic GroupGuard request."
           }
 
           Get-Content $metadataFile.FullName -Raw
